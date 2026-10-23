@@ -306,3 +306,46 @@ CE = {
 
 CE_LONG_CPP = "int main() {\n" + "".join(f"    int v{i} = ;\n" for i in range(300)) + "}\n"
 CE_VIETNAMESE_CPP = "#error " + "Lỗi biên dịch tiếng Việt rất dài " * 400 + "\nint main() {}\n"
+
+SUB["java_libs"] = {  # nhiều thư viện chuẩn: collections, streams, regex, BufferedReader, thread pool (kiểm RLIMIT_NOFILE)
+    "java": r'''import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.regex.*;
+import java.util.stream.*;
+
+public class Main {
+    public static void main(String[] args) throws Exception {
+        BufferedReader r = new BufferedReader(new InputStreamReader(System.in));
+        List<String> lines = r.lines().collect(Collectors.toList());
+        Map<String, Integer> freq = new TreeMap<>();
+        Pattern p = Pattern.compile("[a-z]+|\\d+");
+        int digits = 0;
+        for (String line : lines) {
+            Matcher m = p.matcher(line);
+            while (m.find()) {
+                String t = m.group();
+                if (Character.isDigit(t.charAt(0))) digits += Integer.parseInt(t);
+                else freq.merge(t, 1, Integer::sum);
+            }
+        }
+        Deque<String> dq = new ArrayDeque<>();
+        freq.keySet().forEach(dq::addFirst);
+        String top = freq.entrySet().stream()
+            .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
+            .limit(3).map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining(","));
+        ExecutorService ex = Executors.newFixedThreadPool(4);
+        List<Future<Integer>> fs = new ArrayList<>();
+        for (int i = 1; i <= 8; i++) {
+            final int k = i;
+            fs.add(ex.submit(() -> IntStream.rangeClosed(1, k * 1000).sum()));
+        }
+        long total = 0;
+        for (Future<Integer> f : fs) total += f.get();
+        ex.shutdown();
+        System.out.println(String.format("words=%d digits=%d top=%s first=%s total=%d",
+            freq.size(), digits, top, dq.peekFirst(), total));
+    }
+}
+''',
+}

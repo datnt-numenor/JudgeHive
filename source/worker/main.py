@@ -217,6 +217,7 @@ class Grader:
         self._busy = False
         self._current = None
         self._stop = threading.Event()
+        self.after_result_sent = None  # điểm chèn cho test: gọi ngay sau khi gửi RESULT (thread chấm)
         self.thread = threading.Thread(target=self._loop, name="grader", daemon=True)
 
     def start(self):
@@ -275,6 +276,8 @@ class Grader:
             return
         self._release(ctl)
         session.send({"type": "RESULT", "submission_id": job.submission_id, "attempt_id": job.attempt_id, **body})
+        if self.after_result_sent is not None:
+            self.after_result_sent(ctl)
         log.info("xong bài %d lần giao %d: %s", job.submission_id, job.attempt_id, body["verdict"])
 
 

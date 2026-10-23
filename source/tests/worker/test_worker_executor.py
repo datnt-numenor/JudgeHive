@@ -2,7 +2,9 @@
 
 import dataclasses
 import json
+import os
 import resource
+import subprocess
 import time
 
 import pytest
@@ -217,6 +219,15 @@ def test_vietnamese_source_and_output(work_root, lang):
     assert body["verdict"] == "AC", body
 
 
+def test_java_with_many_standard_libraries_runs_under_the_nofile_limit(work_root):
+    """Collections, streams, regex, BufferedReader và thread pool dưới RLIMIT_NOFILE của bài chạy (32)."""
+    assert LANGUAGES["java"].run_limits(262144)["nofile"] == 32
+    text = "the quick brown fox 12 jumps over the lazy dog 30\nthe end 8\n"
+    expected = "words=9 digits=50 top=the=3,brown=1,dog=1 first=the total=102018000\n"
+    body, _ = grade(work_root, "java", SUB["java_libs"]["java"], [case(text, expected, True)], time_limit_ms=5000)
+    assert body["verdict"] == "AC", body
+
+
 # ------------------------------------------------------------------------------------------- an toàn
 
 @pytest.mark.parametrize("lang", LANGS)
@@ -313,3 +324,35 @@ def test_cancel_during_run_kills_program(work_root):
     assert body is None and time.monotonic() - started < 6
     no_leftovers()
     assert sandbox.uid_entries(UID) == 0
+
+
+def test_candidate_cannot_read_environment_of_root_processes_or_root_only_files(work_root):
+    """Không phụ thuộc tên biến môi trường: một tiến trình root mang secret giả trong environ và một file root-only
+    0400; chương trình thí sinh (uid khác) đọc cả hai phải bị từ chối."""
+    canary = "CANARY-5e3a91"
+    secret_file = os.path.join(work_root, "secret-file")
+    with open(secret_file, "w") as f:
+        f.write(canary)
+    os.chmod(secret_file, 0o400)
+    holder = subprocess.Popen(["sleep", "60"], env={"PATH": os.environ["PATH"], "ANY_NAME": canary})
+    code = f'''
+import os
+for path in ("/proc/1/environ", "/proc/{holder.pid}/environ", {secret_file!r}):
+    try:
+        data = open(path, "rb").read()
+        print(path, "READ", "LEAK" if {canary!r}.encode() in data else "noleak")
+    except Exception as e:
+        print(path, type(e).__name__)
+print("env", "LEAK" if any({canary!r} in v for v in os.environ.values()) else "clean")
+'''
+    try:
+        body, _ = grade(work_root, "python", code, [case("", "different", True)])
+    finally:
+        holder.kill()
+        holder.wait()
+    out = body["sample_stdout"]
+    assert canary not in out and "LEAK" not in out, out
+    assert "/proc/1/environ PermissionError" in out
+    assert f"/proc/{holder.pid}/environ PermissionError" in out
+    assert f"{secret_file} PermissionError" in out
+    assert "env clean" in out

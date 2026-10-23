@@ -408,6 +408,30 @@ print("env", "LEAK" if any(canary in v for v in os.environ.values()) else "clean
         proc.wait(timeout=15)
 
 
+def test_job_sent_right_after_result_is_accepted_while_grader_is_still_stalled_after_sending(server, make_worker):
+    """Tất định: ép đúng thứ tự "server nhận RESULT rồi gửi ngay JOB kế tiếp" trong lúc thread chấm còn bị chặn ở điểm
+    ngay sau khi gửi RESULT. Cờ bận phải đã được nhả trước khi gửi RESULT; nếu không worker coi JOB là "đến khi
+    đang bận" và tự đóng kết nối."""
+    worker = make_worker(ok_grade)
+    reached, gate = threading.Event(), threading.Event()
+
+    def stall(ctl):
+        reached.set()
+        gate.wait(15)
+
+    worker.grader.after_result_sent = stall
+    conn = server.accept()
+    conn.register_ok()
+    conn.send(make_job("python", "x", [case("", "")], attempt_id=1))
+    assert conn.recv_all("RESULT")[-1]["attempt_id"] == 1
+    assert reached.wait(5), "thread chấm phải đang dừng ngay sau khi gửi RESULT"
+    conn.send(make_job("python", "x", [case("", "")], attempt_id=2))
+    with pytest.raises(TimeoutError):  # kết nối vẫn mở (EOFError nghĩa là worker đã tự đóng vì cờ bận)
+        conn.recv(1.0)
+    gate.set()
+    assert conn.recv_all("RESULT")[-1]["attempt_id"] == 2
+
+
 def test_next_job_sent_right_after_result_is_never_rejected_as_busy(server, make_worker):
     """Server gửi JOB kế tiếp ngay khi nhận RESULT: worker phải nhả cờ bận trước khi gửi RESULT."""
     _, conn = start(server, make_worker, ok_grade)
