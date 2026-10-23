@@ -2,7 +2,7 @@
 
 from common.protocol import LineDecoder, Message
 
-from helpers import ONE_MB, raw_line
+from _framing_helpers import ONE_MB, raw_line
 
 M1 = {"type": "PING", "seq": 1}
 M2 = {"type": "PONG", "seq": 1}

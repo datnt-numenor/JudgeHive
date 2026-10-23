@@ -7,7 +7,7 @@ import pytest
 
 from common.protocol import LineDecoder, Malformed, Message
 
-from helpers import ONE_MB, feed_chunks, raw_line
+from _framing_helpers import ONE_MB, feed_chunks, raw_line
 
 GOOD = {"type": "PING", "seq": 1}
 

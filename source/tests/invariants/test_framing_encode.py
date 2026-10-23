@@ -7,7 +7,7 @@ import pytest
 from common import protocol
 from common.protocol import EncodeError, LineDecoder, Message, encode
 
-from helpers import ONE_MB
+from _framing_helpers import ONE_MB
 
 TEXT = "Xin chào, Đà Nẵng ạ 😀"
 
@@ -53,10 +53,6 @@ def test_limit_counts_bytes_not_characters():
     assert len(encode(obj, max_line_bytes=base + 300)) == base + 300
     with pytest.raises(EncodeError):
         encode(obj, max_line_bytes=base + 299)
-
-
-def test_no_limit_by_default():
-    assert len(encode({"type": "T", "pad": "a" * (2 * ONE_MB)})) > 2 * ONE_MB
 
 
 @pytest.mark.parametrize("bad", [

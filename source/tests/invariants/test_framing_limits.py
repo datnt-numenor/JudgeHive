@@ -4,7 +4,7 @@ import pytest
 
 from common.protocol import LineDecoder, LineTooLong, Message
 
-from helpers import ONE_MB, SIXTEEN_MB, feed_chunks, line_of_size, raw_line
+from _framing_helpers import ONE_MB, SIXTEEN_MB, feed_chunks, line_of_size, raw_line
 
 GOOD = {"type": "PING", "seq": 1}
 
