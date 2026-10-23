@@ -1,0 +1,68 @@
+{
+ "part": "iso-s1-bomb",
+ "meta": {
+  "hostname": "6e71de75426f",
+  "kernel": "6.18.33.2-microsoft-standard-WSL2",
+  "cpu_model": "13th Gen Intel(R) Core(TM) i5-13500H",
+  "cpu_count": 16,
+  "cgroup_cpu_max": "100000 100000",
+  "cgroup_memory_max": "1073741824",
+  "cgroup_pids_max": "512",
+  "python": "3.11.17",
+  "gxx": "g++ (Debian 14.2.0-19) 14.2.0",
+  "javac": "javac 21.0.12.1",
+  "java": "openjdk version \"21.0.12.1\" 2026-08-18",
+  "os_release": "Debian GNU/Linux 13 (trixie)",
+  "args": {
+   "suite": "iso-bomb",
+   "results": "/results",
+   "quick": false,
+   "name": "s1",
+   "uid": 61000,
+   "nproc": 64,
+   "delay": 20.0,
+   "duration": 45.0
+  },
+  "limit_kib": 262144,
+  "stderr_tail_bytes": 2048,
+  "utc": "2026-10-23T07:12:36Z"
+ },
+ "runs": [
+  {
+   "argv": [
+    "./main"
+   ],
+   "spawn_error": null,
+   "exit_code": null,
+   "signal": 9,
+   "timed_out": true,
+   "output_capped": false,
+   "wall_ms": 12370.985346999987,
+   "outer_wall_ms": 12370.985346999987,
+   "maxrss_kib": 9164,
+   "utime_ms": 5.957,
+   "stime_ms": 184.69,
+   "stdout_bytes": 0,
+   "stderr_tail": "FORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\nFORK_EAGAIN\n",
+   "stdout_head": "",
+   "group_procs_at_kill": 65,
+   "group_threads_at_kill": 65,
+   "group_clear_ms": 5.885601000045426,
+   "group_leftover": 0,
+   "suite": "iso",
+   "t_epoch": 1792739556.1243637,
+   "case": "bomb_window",
+   "lang": "cpp",
+   "variant": "",
+   "limits": {
+    "nproc": 64
+   },
+   "jvm": [],
+   "name": "s1",
+   "role": "bomb",
+   "t_start": 1792739542.3549392,
+   "t_end": 1792739556.1243668,
+   "eagain_seen": true
+  }
+ ]
+}
