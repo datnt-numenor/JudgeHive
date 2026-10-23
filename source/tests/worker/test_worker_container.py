@@ -12,6 +12,7 @@ import pytest
 from _submissions import SUB
 from _worker_helpers import case, grade, make_job
 from worker import sandbox
+from worker.languages import LANGUAGES
 
 UID = sandbox.JUDGE_UID
 CAP_BITS = {"CHOWN": 0, "DAC_OVERRIDE": 1, "DAC_READ_SEARCH": 2, "FOWNER": 3, "KILL": 5, "SETGID": 6, "SETUID": 7}
@@ -164,3 +165,19 @@ def test_failure_to_start_reader_thread_is_retried_after_backoff(server, make_wo
     assert first.expect_closed(5)  # kết nối đầu bị bỏ vì không tạo được thread đọc
     second = server.accept(10)
     assert second.recv()["type"] == "REGISTER"  # worker vẫn sống và đăng ký lại bình thường
+
+
+def test_fork_bomb_result_arrives_within_the_server_watchdog_window(server, make_worker):
+    """Từ PROGRESS(0) đến RESULT không được vượt time_limit × hệ số + PER_TEST_OVERHEAD (D16), kể cả khi bomb
+    chiếm hết pids_limit: nếu vượt, server sẽ gửi DEADLINE_EXCEEDED oan."""
+    from common import protocol
+    make_worker(None, peer_dead_after_s=60)
+    conn = server.accept()
+    conn.register_ok()
+    time_limit_ms = 1000
+    conn.send(make_job("cpp", SUB["fork_bomb"]["cpp"], [case("", "x\n")], time_limit_ms=time_limit_ms))
+    assert conn.recv(30)["type"] == "PROGRESS"
+    started = time.monotonic()
+    assert conn.recv(30)["verdict"] == "TLE"
+    window = time_limit_ms * LANGUAGES["cpp"].time_factor / 1000 + protocol.PER_TEST_OVERHEAD_S
+    assert time.monotonic() - started < window

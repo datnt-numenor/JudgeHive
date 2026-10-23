@@ -406,3 +406,15 @@ print("env", "LEAK" if any(canary in v for v in os.environ.values()) else "clean
     finally:
         proc.send_signal(signal.SIGTERM)
         proc.wait(timeout=15)
+
+
+def test_next_job_sent_right_after_result_is_never_rejected_as_busy(server, make_worker):
+    """Server gửi JOB kế tiếp ngay khi nhận RESULT: worker phải nhả cờ bận trước khi gửi RESULT."""
+    _, conn = start(server, make_worker, ok_grade)
+    for attempt in range(1, 61):
+        conn.send(make_job("python", "x", [case("", "")], attempt_id=attempt))
+        while True:
+            msg = conn.recv(5)
+            if msg["type"] == "RESULT":
+                assert msg["attempt_id"] == attempt
+                break

@@ -18,7 +18,7 @@ OUTPUT_CAP = 16 * 1024 * 1024  # trần stdout của chương trình thí sinh (
 STDERR_TAIL = 2048  # D13: chỉ đọc một đoạn cuối stderr cố định
 COMPILE_CAPTURE = 64 * 1024  # đọc tối đa chừng này byte đầu của thông báo biên dịch rồi mới cắt (D11)
 COMPILE_OUTPUT_CAP = 1024 * 1024
-LAUNCH_ALLOWANCE_S = 0.5  # hạn điều phối = giới hạn đã nhân hệ số + chừng này; TLE xét theo wall của chính chương trình
+LAUNCH_ALLOWANCE_S = 1.0  # hạn điều phối = giới hạn đã nhân hệ số + chừng này; TLE xét theo wall của chính chương trình
 RSS_MLE_RATIO = 0.9  # D13
 
 RE_SIGNALS = {11: "SIGSEGV", 8: "SIGFPE", 6: "SIGABRT", 9: "SIGKILL"}
@@ -148,7 +148,7 @@ class _Workdir:
         """Sau mỗi test: kill mọi tiến trình của uid thí sinh rồi xóa file của nó ở /tmp, /var/tmp, /dev/shm.
         Không xóa thư mục tạm của bài giữa chừng vì file thực thi do uid thí sinh biên dịch nằm ở đó."""
         self.drop_input()
-        for attempt in range(5):  # sát lúc fork bomb bị kill, pids_limit có thể chưa kịp nhả: thử lại
+        for attempt in range(3):  # sát lúc fork bomb bị kill, pids_limit có thể chưa kịp nhả: thử lại
             sandbox.kill_uid(self.uid)
             if sandbox.cleanup_uid_files(self.uid, roots):
                 return
@@ -198,7 +198,7 @@ def grade(job, ctl, *, work_root, uid=sandbox.JUDGE_UID):
         return {"verdict": "SE", "se_detail": str(e)[:200]}
     except Exception as e:  # lỗi lập trình trong worker: SE, không đổ lỗi cho thí sinh
         log.exception("lỗi không lường trước khi chấm bài %s", job.submission_id)
-        return {"verdict": "SE", "se_detail": f"{type(e).__name__}: {e}"[:200]}
+        return {"verdict": "SE", "se_detail": type(e).__name__}  # chỉ tên kiểu: thông điệp có thể chứa dữ liệu bài
     finally:
         wd.remove()
 

@@ -44,7 +44,8 @@ bằng root. Cấu hình đã kiểm chứng ở PR 3 (lệnh test chuẩn dùng
   Thiếu `KILL` thì không kill được chương trình thí sinh khi TLE.
 - `pids_limit` (ví dụ 512): đây là biện pháp chặn fork bomb duy nhất (không đặt `RLIMIT_NPROC`). Khi bomb chiếm hết
   `pids_limit`, worker không tạo được thread hay tiến trình mới cho tới khi bomb bị kill; worker đã tránh việc này
-  trong lúc chạy test (thread đọc và thread chấm tạo sẵn) và khôi phục sau khi kill.
+  trong lúc chạy test (thread đọc và thread chấm tạo sẵn) và khôi phục sau khi kill. Kiểm chứng bằng
+  `tests/worker/test_worker_container.py` (bomb thật làm cạn `pids_limit`: thread và tiến trình đều bị từ chối).
 - `mem_limit`, `cpus`; `init: true` không cần vì image dùng `tini`.
 - Nếu dùng `read_only: true`: mount `tmpfs` cho `/tmp`, `/dev/shm` và `/work`. **`/work` cần `exec`** (tmpfs của
   Docker mặc định là `noexec`, C++ sẽ không chạy được file đã biên dịch): ví dụ `tmpfs: ["/work:exec,mode=755"]`.

@@ -19,7 +19,7 @@ JUDGE_UID = 61000
 LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher.py")
 READ_CHUNK = 256 * 1024
 GROUP_CLEAR_WAIT_S = 2.0
-REAP_WAIT_S = 5.0
+REAP_WAIT_S = 2.0
 POLL_S = 0.02  # chu kỳ kiểm tra hủy/hạn chót
 TMP_ROOTS = ("/tmp", "/var/tmp", "/dev/shm")
 
@@ -114,7 +114,7 @@ _CLEAN_SCRIPT = (
 )
 
 
-def cleanup_uid_files(uid, roots=TMP_ROOTS, timeout_s=15):
+def cleanup_uid_files(uid, roots=TMP_ROOTS, timeout_s=5):
     """Xóa file/thư mục do `uid` sở hữu dưới `roots`. Trả True nếu lệnh dọn chạy xong.
 
     Chạy sau mỗi test để chương trình thí sinh không để lại dữ liệu (kể cả input test ẩn) cho bài nộp sau đọc."""

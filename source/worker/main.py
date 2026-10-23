@@ -185,8 +185,9 @@ class Session:
                     else:
                         self.close(f"message hỏng từ server ({event.reason})")
                         return
-        except (OSError, ValueError) as e:
-            self.close(f"lỗi đọc: {e}")
+        except Exception as e:  # kể cả lỗi bất ngờ trong dispatch: phiên phải đóng, không để thread đọc chết lặng
+            log.exception("lỗi trong thread đọc")
+            self.close(f"lỗi đọc: {type(e).__name__}")
 
 
 class _Ctl:
@@ -250,9 +251,15 @@ class Grader:
             except Exception:
                 log.exception("lỗi trong thread chấm")
             finally:
-                with self._lock:
-                    self._busy, self._current = False, None
-                    self.idle.set()
+                self._release(ctl)
+
+    def _release(self, ctl):
+        """Nhả cờ bận. Phải xảy ra trước khi gửi RESULT: server gửi JOB kế tiếp ngay khi nhận RESULT, và JOB đến
+        lúc worker còn bận thì worker tự đóng kết nối."""
+        with self._lock:
+            if self._current is ctl:
+                self._busy, self._current = False, None
+                self.idle.set()
 
     def _run(self, ctl):
         job, session = ctl.job, ctl.session
@@ -266,6 +273,7 @@ class Grader:
         if body is None or ctl.cancel.is_set() or session.closed.is_set():
             log.info("bỏ kết quả bài %d lần giao %d (đã hủy hoặc mất kết nối)", job.submission_id, job.attempt_id)
             return
+        self._release(ctl)
         session.send({"type": "RESULT", "submission_id": job.submission_id, "attempt_id": job.attempt_id, **body})
         log.info("xong bài %d lần giao %d: %s", job.submission_id, job.attempt_id, body["verdict"])
 
