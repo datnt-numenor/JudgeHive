@@ -318,6 +318,8 @@ Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhấ
 
 Worker không bao giờ gửi stdout/stderr của test ẩn, và không gửi giá trị mã thoát cụ thể của chương trình.
 
+Chương trình in ra stdout vượt 16 MB bị dừng và nhận `WA`.
+
 `SE` do worker báo trong `RESULT` là verdict cuối ngay: server không giao lại bài. Chỉ `SE` do mất kết nối hoặc quá hạn (mục 2.6) đi qua luồng giao lại và đếm tối đa 3 lần giao.
 
 Lưu ý cho client:
