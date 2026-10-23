@@ -18,7 +18,7 @@ OUTPUT_CAP = 16 * 1024 * 1024  # trần stdout của chương trình thí sinh (
 STDERR_TAIL = 2048  # D13: chỉ đọc một đoạn cuối stderr cố định
 COMPILE_CAPTURE = 64 * 1024  # đọc tối đa chừng này byte đầu của thông báo biên dịch rồi mới cắt (D11)
 COMPILE_OUTPUT_CAP = 1024 * 1024
-LAUNCH_ALLOWANCE_S = 1.0  # hạn điều phối = giới hạn đã nhân hệ số + chừng này; TLE xét theo wall của chính chương trình
+LAUNCH_ALLOWANCE_S = 0.75  # hạn điều phối = giới hạn đã nhân hệ số + chừng này; TLE xét theo wall của chính chương trình
 RSS_MLE_RATIO = 0.9  # D13
 
 RE_SIGNALS = {11: "SIGSEGV", 8: "SIGFPE", 6: "SIGABRT", 9: "SIGKILL"}
@@ -186,11 +186,28 @@ def _compile(job, wd, uid, cancel):
 def grade(job, ctl, *, work_root, uid=sandbox.JUDGE_UID):
     """Chấm `job`. `ctl.cancel` (Event) hủy bài; `ctl.progress(n)` gửi PROGRESS và trả False khi kết nối đã mất.
 
-    Trả body của RESULT (verdict và các field, chưa có type/submission_id/attempt_id), hoặc None nếu bị hủy."""
+    Body của RESULT (verdict và các field, chưa có type/submission_id/attempt_id) được giao cho `ctl.deliver(body)`
+    NGAY khi có, trước khi dọn dẹp nặng (kill, xóa file): thời gian dọn không được ăn vào hạn chót của server (D16).
+    Nếu `ctl` không có `deliver` thì trả body. Trả None khi bị hủy hoặc đã giao."""
     try:
         wd = _Workdir(work_root, uid)
     except OSError as e:
-        return {"verdict": "SE", "se_detail": f"không tạo được thư mục tạm: {type(e).__name__}"}
+        return _deliver_or_return(ctl, {"verdict": "SE", "se_detail": f"không tạo được thư mục tạm: {type(e).__name__}"})
+    try:
+        return _deliver_or_return(ctl, _guarded(job, ctl, wd, uid))
+    finally:
+        wd.remove()
+
+
+def _deliver_or_return(ctl, body):
+    deliver = getattr(ctl, "deliver", None)
+    if body is not None and deliver is not None:
+        deliver(body)
+        return None
+    return body
+
+
+def _guarded(job, ctl, wd, uid):
     try:
         return _grade(job, ctl, wd, uid)
     except ExecutorError as e:
@@ -199,8 +216,6 @@ def grade(job, ctl, *, work_root, uid=sandbox.JUDGE_UID):
     except Exception as e:  # lỗi lập trình trong worker: SE, không đổ lỗi cho thí sinh
         log.exception("lỗi không lường trước khi chấm bài %s", job.submission_id)
         return {"verdict": "SE", "se_detail": type(e).__name__}  # chỉ tên kiểu: thông điệp có thể chứa dữ liệu bài
-    finally:
-        wd.remove()
 
 
 def _grade(job, ctl, wd, uid):
@@ -226,7 +241,6 @@ def _grade(job, ctl, wd, uid):
                           stderr_tail=STDERR_TAIL, cancel=ctl.cancel)
         if res.cancelled:
             return None
-        wd.reset_candidate()
         verdict, kind = judge_run(lang, res, test.output, job.memory_limit_kib, scaled_ms)
         max_ms = max(max_ms, round(res.wall_ms))
         max_kib = max(max_kib, res.maxrss_kib)
@@ -234,6 +248,8 @@ def _grade(job, ctl, wd, uid):
             return _failure(verdict, kind, i, test, res, max_ms, max_kib, scaled_ms)
         if not ctl.progress(i):
             return None
+        if i < len(job.tests):
+            wd.reset_candidate()  # sau khi đã báo PROGRESS; test sai thì RESULT đi trước, dọn ở wd.remove()
     return {"verdict": "AC", "time_ms": max_ms, "memory_kib": max_kib}
 
 

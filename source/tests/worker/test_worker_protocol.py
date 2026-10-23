@@ -442,3 +442,19 @@ def test_next_job_sent_right_after_result_is_never_rejected_as_busy(server, make
             if msg["type"] == "RESULT":
                 assert msg["attempt_id"] == attempt
                 break
+
+
+def test_job_is_not_assigned_on_a_session_that_is_already_closed():
+    """Phiên đóng ngay trước khi thread đọc giao JOB: không được chấm trên phiên đã chết (D16: mất kết nối thì hủy)."""
+    from worker import executor
+    from worker.main import Config, Grader
+
+    class ClosedSession:
+        closed = threading.Event()
+
+    session = ClosedSession()
+    session.closed.set()
+    grader = Grader(Config(), ok_grade)
+    job = executor.parse_job(make_job("python", "x", [case("", "")]))
+    assert grader.try_assign(session, job) is False
+    assert grader.idle.is_set()

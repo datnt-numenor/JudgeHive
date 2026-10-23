@@ -356,3 +356,31 @@ print("env", "LEAK" if any({canary!r} in v for v in os.environ.values()) else "c
     assert f"/proc/{holder.pid}/environ PermissionError" in out
     assert f"{secret_file} PermissionError" in out
     assert "env clean" in out
+
+
+def test_result_is_delivered_before_cleanup_and_progress_before_the_cleanup_between_tests(work_root, monkeypatch):
+    """D16: thời gian dọn (kill, xóa file) không được ăn vào hạn chót của server. Test sai: RESULT đi trước mọi
+    việc dọn; test đúng: PROGRESS(i) đi trước việc dọn giữa các test; test cuối: RESULT đi trước việc dọn cuối."""
+    events = []
+    real = sandbox.cleanup_uid_files
+
+    def spy(*args, **kwargs):
+        events.append("cleanup")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sandbox, "cleanup_uid_files", spy)
+
+    class RecordingCtl(FakeCtl):
+        def progress(self, n):
+            events.append(f"progress:{n}")
+            return super().progress(n)
+
+        def deliver(self, body):
+            events.append(f"deliver:{body['verdict']}")
+
+    body, _ = grade(work_root, "python", SUB["ac"]["python"], [case("1 2", "4")], ctl=RecordingCtl())
+    assert body is None and events[:2] == ["progress:0", "deliver:WA"] and events[2:] == ["cleanup"]
+    events.clear()
+    body, _ = grade(work_root, "python", SUB["ac"]["python"], [case("1 2", "3"), case("2 2", "4")], ctl=RecordingCtl())
+    assert body is None
+    assert events == ["progress:0", "progress:1", "cleanup", "progress:2", "deliver:AC", "cleanup"]

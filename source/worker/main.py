@@ -193,9 +193,26 @@ class Session:
 class _Ctl:
     """Điều khiển một lần chấm: cờ hủy và kênh PROGRESS."""
 
-    def __init__(self, session, job):
-        self.session, self.job = session, job
+    def __init__(self, grader, session, job):
+        self.grader, self.session, self.job = grader, session, job
         self.cancel = threading.Event()
+        self.delivered = False
+
+    def deliver(self, body):
+        """Gửi RESULT (hoặc bỏ nếu đã hủy/mất kết nối). Nhả cờ bận TRƯỚC khi gửi: server gửi JOB kế tiếp ngay khi nhận
+        RESULT, và JOB đến lúc worker còn bận thì worker tự đóng kết nối."""
+        job = self.job
+        if self.delivered:
+            return
+        self.delivered = True
+        if self.cancel.is_set() or self.session.closed.is_set():
+            log.info("bỏ kết quả bài %d lần giao %d (đã hủy hoặc mất kết nối)", job.submission_id, job.attempt_id)
+            return
+        self.grader._release(self)
+        self.session.send({"type": "RESULT", "submission_id": job.submission_id, "attempt_id": job.attempt_id, **body})
+        if self.grader.after_result_sent is not None:
+            self.grader.after_result_sent(self)
+        log.info("xong bài %d lần giao %d: %s", job.submission_id, job.attempt_id, body["verdict"])
 
     def progress(self, tests_done):
         if self.cancel.is_set():
@@ -228,11 +245,13 @@ class Grader:
 
     def try_assign(self, session, job):
         with self._lock:
-            if self._busy:
+            # phiên đã đóng thì từ chối: nếu không, cancel_session có thể chạy trước khi _current được đặt và bài
+            # được chấm trên phiên đã chết
+            if self._busy or session.closed.is_set():
                 return False
             self._busy = True
             self.idle.clear()
-            ctl = self._current = _Ctl(session, job)
+            ctl = self._current = _Ctl(self, session, job)
         self.inbox.put_nowait(ctl)
         return True
 
@@ -263,7 +282,7 @@ class Grader:
                 self.idle.set()
 
     def _run(self, ctl):
-        job, session = ctl.job, ctl.session
+        job = ctl.job
         log.info("bắt đầu chấm bài %d lần giao %d (%s, %d test)", job.submission_id, job.attempt_id,
                  job.language.name, len(job.tests))
         try:
@@ -271,14 +290,10 @@ class Grader:
         except Exception as e:
             log.exception("grade_fn lỗi")
             body = {"verdict": "SE", "se_detail": f"{type(e).__name__}"}
-        if body is None or ctl.cancel.is_set() or session.closed.is_set():
+        if body is not None:  # grade_fn không tự gọi ctl.deliver (executor thật gọi sớm để dọn dẹp không chặn RESULT)
+            ctl.deliver(body)
+        elif not ctl.delivered:
             log.info("bỏ kết quả bài %d lần giao %d (đã hủy hoặc mất kết nối)", job.submission_id, job.attempt_id)
-            return
-        self._release(ctl)
-        session.send({"type": "RESULT", "submission_id": job.submission_id, "attempt_id": job.attempt_id, **body})
-        if self.after_result_sent is not None:
-            self.after_result_sent(ctl)
-        log.info("xong bài %d lần giao %d: %s", job.submission_id, job.attempt_id, body["verdict"])
 
 
 class Worker:

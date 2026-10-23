@@ -18,8 +18,8 @@ from dataclasses import dataclass
 JUDGE_UID = 61000
 LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher.py")
 READ_CHUNK = 256 * 1024
-GROUP_CLEAR_WAIT_S = 2.0
-REAP_WAIT_S = 2.0
+GROUP_CLEAR_WAIT_S = 1.0
+REAP_WAIT_S = 1.0
 POLL_S = 0.02  # chu kỳ kiểm tra hủy/hạn chót
 TMP_ROOTS = ("/tmp", "/var/tmp", "/dev/shm")
 
@@ -59,13 +59,14 @@ def group_members(pgid):
         try:
             with open(f"/proc/{name}/stat") as f:
                 data = f.read()
-        except OSError:
-            continue
-        rest = data[data.rindex(")") + 2:].split()
-        if rest[0] == "Z" or int(rest[2]) != pgid:
+            rest = data[data.rindex(")") + 2:].split()
+            if rest[0] == "Z" or int(rest[2]) != pgid:
+                continue
+            nthreads = int(rest[17])
+        except (OSError, ValueError, IndexError):  # tiến trình đang thoát: /proc đọc dở
             continue
         procs += 1
-        threads += int(rest[17])
+        threads += nthreads
     return procs, threads
 
 
@@ -78,12 +79,13 @@ def uid_pids(uid):
         try:
             with open(f"/proc/{name}/status") as f:
                 status = f.read()
-        except OSError:
+            fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+            if fields.get("State", "").strip().startswith("Z"):
+                continue
+            match = int(fields["Uid"].split()[0]) == uid
+        except (OSError, KeyError, ValueError, IndexError):  # tiến trình đang thoát: /proc đọc dở
             continue
-        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
-        if fields.get("State", "").strip().startswith("Z"):
-            continue
-        if int(fields["Uid"].split()[0]) == uid:
+        if match:
             pids.append(int(name))
     return pids
 

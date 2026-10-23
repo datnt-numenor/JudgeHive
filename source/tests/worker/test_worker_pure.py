@@ -300,3 +300,13 @@ def test_backoff_jitter_is_added_within_bounds():
     for expected in (1, 2, 4, 8, 10, 10):
         d = b.next_delay()
         assert expected <= d <= expected * 1.25
+
+
+def test_main_returns_nonzero_when_language_config_violates_max(monkeypatch):
+    from worker import main as worker_main
+
+    def invalid(*args, **kwargs):
+        raise languages.ConfigError("hệ số vượt MAX_TIME_FACTOR")
+
+    monkeypatch.setattr(worker_main.languages, "validate", invalid)
+    assert worker_main.main() == 2
