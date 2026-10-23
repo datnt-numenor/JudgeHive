@@ -292,7 +292,7 @@ Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhấ
 - Quá hạn, kể cả khi chưa nhận được `PROGRESS` với `tests_done = 0` trong cửa sổ biên dịch, thì server coi worker đã mất, đóng kết nối và giao lại bài (mục 2.6); lần giao đó vẫn tính vào số lần giao tối đa. Trước khi đóng, server cố gửi `ERROR` `DEADLINE_EXCEEDED` (best-effort: gửi không được thì vẫn đóng).
 - Chỉ `PROGRESS` khớp `JOB` mà `tests_done` bằng giá trị của `PROGRESS` khớp trước đó cộng 1 (bắt đầu từ 0, và `0 ≤ tests_done ≤ tests_total`) mới làm mới hạn.
 - `PROGRESS` không khớp `JOB` thì bị bỏ, không làm mới hạn. `PROGRESS` khớp `JOB` nhưng `tests_done` sai thứ tự (lặp lại, nhảy cóc, vượt `tests_total`) bị coi là sai định dạng: server gửi `ERROR` `BAD_MESSAGE`, bỏ message, không làm mới hạn, giữ kết nối.
-- Giá trị **[ĐỀ XUẤT]**, sẽ chỉnh sau khi đo thực tế: `COMPILE_TIMEOUT_MAX` = 10 giây, `SLACK` = 5 giây, `MAX_TIME_FACTOR` = 3, `PER_TEST_OVERHEAD` = 3 giây (trùm thời gian khởi động JVM, đọc và so output). Hệ số thời gian theo ngôn ngữ: xem mục "Lưu ý cho client" ở `RESULT`.
+- Giá trị **[ĐỀ XUẤT]**, đã đo ở spike, chốt tạm: `COMPILE_TIMEOUT_MAX` = 20 giây (xem lại sau khi đo trên máy khác), `SLACK` = 5 giây, `MAX_TIME_FACTOR` = 5, `PER_TEST_OVERHEAD` = 3 giây (trùm thời gian khởi động JVM, đọc và so output). Hệ số thời gian theo ngôn ngữ: xem mục "Lưu ý cho client" ở `RESULT`.
 - Ràng buộc với worker: mọi hệ số thời gian theo ngôn ngữ phải ≤ `MAX_TIME_FACTOR` và mọi timeout biên dịch phải ≤ `COMPILE_TIMEOUT_MAX`. Worker kiểm tra lúc khởi động; vi phạm thì thoát với mã ≠ 0 kèm log.
 
 ```json
@@ -322,16 +322,18 @@ Worker không bao giờ gửi stdout/stderr của test ẩn, và không gửi gi
 
 Lưu ý cho client:
 
-- Giới hạn bộ nhớ chặn theo không gian địa chỉ ảo, nên một lần cấp phát lớn có thể thất bại khi bộ nhớ thực còn thấp. Vì vậy UI hiển thị `MLE` là "vượt giới hạn bộ nhớ", không hiện con số `memory_kib`.
+- Với Python và C++, giới hạn bộ nhớ chặn theo không gian địa chỉ ảo, nên một lần cấp phát lớn có thể thất bại khi bộ nhớ thực còn thấp; Java bị giới hạn theo heap. Vì vậy UI hiển thị `MLE` là "vượt giới hạn bộ nhớ", không hiện con số `memory_kib`.
 - `time_ms` so với giới hạn **đã nhân hệ số ngôn ngữ**, không phải giới hạn gốc của đề. Hệ số thời gian theo ngôn ngữ **[ĐỀ XUẤT]**:
 
   | Ngôn ngữ | Hệ số |
   |----------|-------|
   | `cpp` | 1 |
   | `java` | 2 |
-  | `python` | 3 |
+  | `python` | 5 |
 
-  Ví dụ: `time_limit_ms` = 1000 với `python` thì giới hạn thực tế là 3000 ms.
+  Ví dụ: `time_limit_ms` = 1000 với `python` thì giới hạn thực tế là 5000 ms.
+
+  Hạn chế: hệ số không bù đủ cho Python ở bài thiên về CPU (đo được khoảng 22 lần so với C++ ở vòng lặp lồng, với hệ số 5), nên giới hạn thời gian của đề phải đủ cho lời giải Python chuẩn.
 
 ```json
 {"type": "RESULT", "submission_id": 42, "attempt_id": 7, "verdict": "WA", "time_ms": 31, "memory_kib": 9216, "failed_test": 2, "failed_is_sample": false}

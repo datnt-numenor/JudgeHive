@@ -1,0 +1,83 @@
+# Chạy toàn bộ spike bằng một lệnh (từ source/):
+#   docker compose -f worker/spike/compose.yml up --build
+# Các service chạy tuần tự qua depends_on; kết quả nằm ở worker/spike/results/<thời điểm>-<host>/summary.md
+x-spike: &spike
+  image: judgehive-spike:trixie-jdk21
+  init: true
+  cpus: 1
+  mem_limit: 1g
+  pids_limit: 512
+  volumes:
+    - ./results:/results
+
+services:
+  main:
+    <<: *spike
+    build: .
+    command: ["--suite", "main"]
+
+  cold3:
+    <<: *spike
+    command: ["--suite", "cold3"]
+    depends_on: {main: {condition: service_completed_successfully}}
+
+  # s1: cùng uid, bomb bị chặn bằng RLIMIT_NPROC=64, victim cũng đặt NPROC=64
+  s1_victim:
+    <<: *spike
+    command: ["--suite", "iso-victim", "--name", "s1", "--uid", "61000", "--nproc", "64"]
+    depends_on: {cold3: {condition: service_completed_successfully}}
+  s1_bomb:
+    <<: *spike
+    command: ["--suite", "iso-bomb", "--name", "s1", "--uid", "61000", "--nproc", "64"]
+    depends_on: {cold3: {condition: service_completed_successfully}}
+
+  # s2: đối chứng, bomb dùng uid khác
+  s2_victim:
+    <<: *spike
+    command: ["--suite", "iso-victim", "--name", "s2", "--uid", "61000", "--nproc", "64"]
+    depends_on:
+      s1_victim: {condition: service_completed_successfully}
+      s1_bomb: {condition: service_completed_successfully}
+  s2_bomb:
+    <<: *spike
+    command: ["--suite", "iso-bomb", "--name", "s2", "--uid", "61001", "--nproc", "64"]
+    depends_on:
+      s1_victim: {condition: service_completed_successfully}
+      s1_bomb: {condition: service_completed_successfully}
+
+  # s3: cùng uid, bomb chỉ bị chặn bằng pids_limit=128 của container, victim không đặt NPROC
+  s3_victim:
+    <<: *spike
+    command: ["--suite", "iso-victim", "--name", "s3", "--uid", "61000"]
+    depends_on:
+      s2_victim: {condition: service_completed_successfully}
+      s2_bomb: {condition: service_completed_successfully}
+  s3_bomb:
+    <<: *spike
+    pids_limit: 128
+    command: ["--suite", "iso-bomb", "--name", "s3", "--uid", "61000"]
+    depends_on:
+      s2_victim: {condition: service_completed_successfully}
+      s2_bomb: {condition: service_completed_successfully}
+
+  # s4: như s3 nhưng victim có đặt NPROC=64 (RLIMIT_NPROC của victim so với số tiến trình của cả uid)
+  s4_victim:
+    <<: *spike
+    command: ["--suite", "iso-victim", "--name", "s4", "--uid", "61000", "--nproc", "64"]
+    depends_on:
+      s3_victim: {condition: service_completed_successfully}
+      s3_bomb: {condition: service_completed_successfully}
+  s4_bomb:
+    <<: *spike
+    pids_limit: 128
+    command: ["--suite", "iso-bomb", "--name", "s4", "--uid", "61000"]
+    depends_on:
+      s3_victim: {condition: service_completed_successfully}
+      s3_bomb: {condition: service_completed_successfully}
+
+  report:
+    <<: *spike
+    command: ["--suite", "report"]
+    depends_on:
+      s4_victim: {condition: service_completed_successfully}
+      s4_bomb: {condition: service_completed_successfully}
