@@ -144,19 +144,21 @@ class _Workdir:
                 pass
             self._input = None
 
-    def reset_candidate(self, roots=sandbox.TMP_ROOTS):
-        """Sau mỗi test: kill mọi tiến trình của uid thí sinh rồi xóa file của nó ở /tmp, /var/tmp, /dev/shm.
-        Không xóa thư mục tạm của bài giữa chừng vì file thực thi do uid thí sinh biên dịch nằm ở đó."""
+    def reset_candidate(self, roots=sandbox.TMP_ROOTS, budget_s=1.5):
+        """Kill mọi tiến trình của uid thí sinh rồi xóa file của nó ở /tmp, /var/tmp, /dev/shm, trong `budget_s` giây.
+        Giữa các test, thời gian này nằm trong cửa sổ watchdog của test kế tiếp (D16) nên phải có chặn trên; việc dọn
+        triệt để làm ở `remove()` sau khi RESULT đã đi. Không xóa thư mục tạm của bài giữa chừng vì file thực thi do
+        uid thí sinh biên dịch nằm ở đó. Trả (không còn tiến trình, dọn file xong)."""
         self.drop_input()
-        for attempt in range(3):  # sát lúc fork bomb bị kill, pids_limit có thể chưa kịp nhả: thử lại
-            sandbox.kill_uid(self.uid)
-            if sandbox.cleanup_uid_files(self.uid, roots):
-                return
-            time.sleep(0.1 * (attempt + 1))
-        log.warning("không dọn hết file của uid thí sinh")
+        started = time.monotonic()
+        clean = sandbox.kill_uid(self.uid, timeout_s=budget_s)
+        files_ok = sandbox.cleanup_uid_files(self.uid, roots, timeout_s=max(0.3, budget_s - (time.monotonic() - started)))
+        if not (clean and files_ok):
+            log.warning("chưa dọn sạch uid thí sinh (tiến trình sạch=%s, file sạch=%s)", clean, files_ok)
+        return clean, files_ok
 
     def remove(self):
-        self.reset_candidate((self.path, *sandbox.TMP_ROOTS))
+        self.reset_candidate((self.path, *sandbox.TMP_ROOTS), budget_s=10)
         shutil.rmtree(self.path, ignore_errors=True)
         if os.path.exists(self.path):
             log.warning("không xóa được thư mục tạm của bài")
@@ -249,7 +251,10 @@ def _grade(job, ctl, wd, uid):
         if not ctl.progress(i):
             return None
         if i < len(job.tests):
-            wd.reset_candidate()  # sau khi đã báo PROGRESS; test sai thì RESULT đi trước, dọn ở wd.remove()
+            # sau khi đã báo PROGRESS (test sai thì RESULT đi trước, dọn ở wd.remove()); tiến trình thí sinh còn sống
+            # sang test sau thì không chấm tiếp được một cách tin cậy
+            if not wd.reset_candidate()[0]:
+                raise ExecutorError("không kill hết được tiến trình của uid thí sinh sau test")
     return {"verdict": "AC", "time_ms": max_ms, "memory_kib": max_kib}
 
 

@@ -186,6 +186,8 @@ class Session:
                         self.close(f"message hỏng từ server ({event.reason})")
                         return
         except Exception as e:  # kể cả lỗi bất ngờ trong dispatch: phiên phải đóng, không để thread đọc chết lặng
+            if self.closed.is_set():  # thread khác đóng socket đúng lúc select/recv: bình thường, không cần traceback
+                return
             log.exception("lỗi trong thread đọc")
             self.close(f"lỗi đọc: {type(e).__name__}")
 
@@ -312,6 +314,11 @@ class Worker:
         if session is not None:
             session.close("worker dừng")
 
+    def request_stop(self):
+        """Dùng trong signal handler: chỉ đặt cờ (không lấy lock nào, tránh deadlock với thread chính đang giữ lock);
+        vòng chạy thấy cờ trong tối đa 0,5 giây rồi tự đóng phiên."""
+        self._stop.set()
+
     def run(self):
         self.grader.start()
         try:
@@ -433,7 +440,7 @@ def main():
     startup_cleanup(cfg)
     worker = Worker(cfg)
     for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda *_: worker.stop())
+        signal.signal(sig, lambda *_: worker.request_stop())
     log.info("worker %r kết nối tới %s:%d", cfg.name, cfg.host, cfg.port)
     worker.run()
     return 0

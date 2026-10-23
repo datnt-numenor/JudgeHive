@@ -63,5 +63,8 @@ image test có `g++`, JDK 21, `setpriv`, `tini` và chạy với đúng cấu h�
   thì không. Mạng không bị chặn (xem PLAN mục 4).
 - `memory_kib` có sàn khoảng 9 MB (RSS của launcher Python); Python/C++ dưới `RLIMIT_AS` và Java dưới `-Xmx`.
 - Hệ số Python 5 không bù đủ cho bài thiên về CPU; giới hạn thời gian của đề phải đủ cho lời giải Python chuẩn.
+- Chương trình thí sinh chạy với `chrt --idle 0` (SCHED_IDLE) để fork bomb không làm chính worker đói CPU (TLE mất 33 giây
+  dưới `--cpus=2` nếu không có). Đánh đổi: khi máy có tải tranh CPU, wall time của thí sinh dài hơn (đo ở PR 3: Java median
+  798 ms so với 492 ms khi không đặt gì; `nice -n 19` ở giữa: 531 ms), nên có thể TLE oan. Chưa chốt; xem `STATE.md`.
 - `RLIMIT_CORE` đặt 1 chứ không phải 0: khi `core_pattern` là một pipe (WSL2, apport), giá trị 0 vẫn để kernel đẩy
   core dump qua pipe và làm `abort()` với RSS lớn mất vài giây.

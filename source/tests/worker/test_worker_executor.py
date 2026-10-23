@@ -384,3 +384,48 @@ def test_result_is_delivered_before_cleanup_and_progress_before_the_cleanup_betw
     body, _ = grade(work_root, "python", SUB["ac"]["python"], [case("1 2", "3"), case("2 2", "4")], ctl=RecordingCtl())
     assert body is None
     assert events == ["progress:0", "progress:1", "cleanup", "progress:2", "deliver:AC", "cleanup"]
+
+
+def test_kill_uid_reports_whether_the_uid_is_clean():
+    assert sandbox.kill_uid(UID) is True  # không có gì để kill
+    holder = subprocess.Popen(["setpriv", "--reuid=61000", "--regid=61000", "--clear-groups", "sleep", "60"])
+    deadline = time.monotonic() + 5
+    while not sandbox.uid_pids(UID) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert sandbox.uid_pids(UID)
+    assert sandbox.kill_uid(UID) is True and sandbox.uid_pids(UID) == []
+    holder.wait()
+
+
+def test_spawn_is_retried_when_pids_are_briefly_exhausted(work_root, monkeypatch):
+    calls = {"n": 0}
+    real = subprocess.Popen
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sandbox.subprocess, "Popen", flaky)
+    body, _ = grade(work_root, "python", SUB["ac"]["python"], [case("1 2", "3")])
+    assert body["verdict"] == "AC" and calls["n"] >= 3
+
+
+def test_cleanup_between_tests_is_bounded_by_its_budget(work_root, monkeypatch):
+    """D16: việc dọn giữa các test nằm trong cửa sổ watchdog của test kế tiếp nên phải có chặn trên."""
+    kills, cleans = [], []
+    monkeypatch.setattr(sandbox, "kill_uid", lambda uid, timeout_s=2.0: kills.append(timeout_s) or True)
+    monkeypatch.setattr(sandbox, "cleanup_uid_files",
+                        lambda uid, roots=(), timeout_s=5: cleans.append(timeout_s) or True)
+    body, _ = grade(work_root, "python", SUB["ac"]["python"], [case("1 2", "3"), case("2 2", "4")])
+    assert body["verdict"] == "AC"
+    assert len(kills) == 2 and len(cleans) == 2  # một lần giữa hai test, một lần cuối bài (sau RESULT)
+    assert kills[0] <= 1.5 and cleans[0] <= 1.5  # giữa các test: có chặn trên
+    assert kills[1] > kills[0]  # dọn cuối bài rộng rãi hơn vì RESULT đã đi
+
+
+def test_surviving_candidate_process_between_tests_is_se(work_root, monkeypatch):
+    monkeypatch.setattr(sandbox, "kill_uid", lambda uid, timeout_s=2.0: False)
+    body, _ = grade(work_root, "python", SUB["ac"]["python"], [case("1 2", "3"), case("2 2", "4")])
+    assert body["verdict"] == "SE"

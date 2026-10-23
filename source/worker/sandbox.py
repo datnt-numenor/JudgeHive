@@ -18,9 +18,10 @@ from dataclasses import dataclass
 JUDGE_UID = 61000
 LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher.py")
 READ_CHUNK = 256 * 1024
-GROUP_CLEAR_WAIT_S = 1.0
-REAP_WAIT_S = 1.0
+GROUP_CLEAR_WAIT_S = 0.5
+REAP_WAIT_S = 0.5
 POLL_S = 0.02  # chu kỳ kiểm tra hủy/hạn chót
+SPAWN_RETRIES = 4
 TMP_ROOTS = ("/tmp", "/var/tmp", "/dev/shm")
 
 _PRLIMIT_FLAGS = {"as": "--as", "nofile": "--nofile", "fsize": "--fsize", "core": "--core"}
@@ -90,21 +91,22 @@ def uid_pids(uid):
     return pids
 
 
-def kill_uid(uid, rounds=10):
-    """SIGKILL mọi tiến trình của `uid`, lặp đến khi không còn (tiến trình có thể fork giữa các vòng quét)."""
-    killed = 0
-    for _ in range(rounds):
+def kill_uid(uid, timeout_s=2.0):
+    """SIGKILL mọi tiến trình của `uid`, lặp đến khi không còn (tiến trình có thể fork giữa các vòng quét) hoặc hết
+    `timeout_s`. Trả True nếu sau đó không còn tiến trình nào của uid."""
+    deadline = time.monotonic() + timeout_s
+    while True:
         pids = uid_pids(uid)
         if not pids:
-            return killed
+            return True
         for pid in pids:
             try:
                 os.kill(pid, signal.SIGKILL)
-                killed += 1
             except OSError:
                 pass
+        if time.monotonic() >= deadline:
+            return not uid_pids(uid)
         time.sleep(0.02)
-    return killed
 
 
 # Chạy dưới chính uid thí sinh để xóa file của nó: không cần CAP_DAC_OVERRIDE/CAP_FOWNER (root bị bỏ các cap này
@@ -145,9 +147,9 @@ def uid_entries(uid, roots=TMP_ROOTS):
 
 
 def reset_uid(uid, roots=TMP_ROOTS):
-    """Dọn trạng thái của uid thí sinh: kill mọi tiến trình rồi xóa file của nó. Trả True nếu dọn file xong."""
-    kill_uid(uid)
-    return cleanup_uid_files(uid, roots)
+    """Dọn trạng thái của uid thí sinh: kill mọi tiến trình rồi xóa file của nó. Trả True nếu dọn sạch cả hai."""
+    killed = kill_uid(uid)
+    return cleanup_uid_files(uid, roots) and killed
 
 
 def _wrap(argv, limits, uid):
@@ -188,9 +190,17 @@ def run(argv, *, cwd, timeout_s, limits=None, uid=JUDGE_UID, stdin_path=None, st
     full = [sys.executable, "-S", "-I", LAUNCHER, str(wfd), *_wrap(argv, limits, uid)]
     stdin = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL
     t0 = time.monotonic()
+    proc = None
     try:
-        proc = subprocess.Popen(full, cwd=cwd, env=_env(cwd), stdin=stdin, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, start_new_session=True, pass_fds=(wfd,))
+        for attempt in range(SPAWN_RETRIES):
+            try:
+                proc = subprocess.Popen(full, cwd=cwd, env=_env(cwd), stdin=stdin, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, start_new_session=True, pass_fds=(wfd,))
+                break
+            except BlockingIOError:  # EAGAIN: pids_limit chưa kịp nhả sau fork bomb (zombie chưa được reap)
+                if attempt == SPAWN_RETRIES - 1:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
     except OSError as e:
         res.spawn_error = repr(e)
         os.close(rfd)
