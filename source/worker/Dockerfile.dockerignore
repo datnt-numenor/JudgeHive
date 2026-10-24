@@ -1,0 +1,8 @@
+client
+server
+tests
+tools
+worker/spike
+**/__pycache__
+**/.pytest_cache
+**/*.pyc

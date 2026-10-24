@@ -1,0 +1,254 @@
+"""Bài nộp mẫu (bộ bài phá hoại, PLAN mục 8) theo ngôn ngữ. Mọi chuỗi là raw để giữ nguyên `\\n` cho C++/Java."""
+
+SUB = {}
+
+SUB["ac"] = {
+    "python": r'''import sys
+print(sum(map(int, sys.stdin.read().split())))
+''',
+    "cpp": r'''#include <iostream>
+int main() { long long s = 0, x; while (std::cin >> x) s += x; std::cout << s << "\n"; }
+''',
+    "java": r'''import java.util.*;
+public class Main {
+    public static void main(String[] a) {
+        Scanner in = new Scanner(System.in);
+        long s = 0;
+        while (in.hasNextLong()) s += in.nextLong();
+        System.out.println(s);
+    }
+}
+''',
+}
+
+SUB["ws"] = {  # đúng nhưng thừa khoảng trắng cuối dòng và dòng trống cuối
+    "python": r'''import sys
+sys.stdout.write(str(sum(map(int, sys.stdin.read().split()))) + "   \n\n\n")
+''',
+    "cpp": r'''#include <iostream>
+int main() { long long s = 0, x; while (std::cin >> x) s += x; std::cout << s << "   \n\n\n"; }
+''',
+    "java": r'''import java.util.*;
+public class Main {
+    public static void main(String[] a) {
+        Scanner in = new Scanner(System.in);
+        long s = 0;
+        while (in.hasNextLong()) s += in.nextLong();
+        System.out.print(s + "   \n\n\n");
+    }
+}
+''',
+}
+
+SUB["crlf"] = {
+    "python": r'''import sys
+sys.stdout.write(str(sum(map(int, sys.stdin.read().split()))) + "\r\n")
+''',
+}
+
+SUB["loop"] = {
+    "python": "while True:\n    pass\n",
+    "cpp": "int main() { volatile long x = 0; for (;;) x = x + 1; }\n",
+    "java": r'''public class Main {
+    public static void main(String[] a) { long x = 0; while (true) x++; }
+}
+''',
+}
+
+SUB["big_block"] = {
+    "python": "x = bytearray(4 << 30)\nprint(len(x))\n",
+    "cpp": r'''#include <cstdio>
+int main() {
+    volatile char* p = new char[4ULL << 30];
+    p[0] = 1;
+    printf("%d\n", (int)p[0]);
+}
+''',
+    "java": r'''public class Main {
+    public static void main(String[] a) {
+        long[] x = new long[1 << 28];
+        System.out.println(x.length);
+    }
+}
+''',
+}
+
+SUB["fake_oom"] = {
+    "python": 'import sys\nsys.stderr.write("MemoryError\\n")\nsys.exit(1)\n',
+    "cpp": r'''#include <cstdio>
+int main() { fputs("std::bad_alloc\n", stderr); return 1; }
+''',
+    "java": r'''public class Main {
+    public static void main(String[] a) {
+        System.err.println("java.lang.OutOfMemoryError");
+        System.exit(1);
+    }
+}
+''',
+}
+
+SUB["div0"] = {  # đọc "a b" rồi in a / b
+    "python": "a, b = map(int, input().split())\nprint(a // b)\n",
+    "cpp": r'''#include <cstdio>
+int main() { int a, b; scanf("%d %d", &a, &b); printf("%d\n", a / b); }
+''',
+    "java": r'''public class Main {
+    public static void main(String[] args) {
+        java.util.Scanner in = new java.util.Scanner(System.in);
+        int a = in.nextInt(), b = in.nextInt();
+        System.out.println(a / b);
+    }
+}
+''',
+}
+
+SUB["segv"] = {
+    "python": "import ctypes\nctypes.string_at(0)\n",
+    "cpp": "int main() { volatile int* p = nullptr; *p = 1; }\n",
+}
+
+SUB["oob"] = {  # truy cập ngoài mảng
+    "python": "a = [1, 2, 3]\nprint(a[5])\n",
+    "cpp": r'''#include <vector>
+#include <cstdio>
+int main() { std::vector<int> v(3); printf("%d\n", v.at(5)); }
+''',
+    "java": r'''public class Main {
+    public static void main(String[] a) {
+        int[] x = new int[3];
+        System.out.println(x[5]);
+    }
+}
+''',
+}
+
+SUB["exit_byte"] = {  # exit(byte đầu của input): kênh rò mã thoát
+    "python": "import sys\nsys.exit(ord(sys.stdin.read(1)))\n",
+    "cpp": r'''#include <cstdio>
+#include <cstdlib>
+int main() { int c = getchar(); exit(c); }
+''',
+    "java": r'''public class Main {
+    public static void main(String[] a) throws Exception {
+        System.exit(System.in.read());
+    }
+}
+''',
+}
+
+SUB["echo_streams"] = {  # in input ra cả stdout lẫn stderr rồi thoát lỗi
+    "python": "import sys\ndata = sys.stdin.read()\nsys.stdout.write(data)\nsys.stderr.write(data)\nsys.exit(3)\n",
+    "cpp": r'''#include <iostream>
+#include <string>
+int main() { std::string s, all; while (std::getline(std::cin, s)) all += s + "\n"; std::cout << all; std::cerr << all; return 3; }
+''',
+    "java": r'''import java.io.*;
+public class Main {
+    public static void main(String[] a) throws Exception {
+        String s = new String(System.in.readAllBytes());
+        System.out.print(s);
+        System.err.print(s);
+        System.exit(3);
+    }
+}
+''',
+}
+
+SUB["vietnamese"] = {
+    "python": '# Chương trình in lời chào bằng tiếng Việt\nprint("Xin chào Việt Nam")\n',
+    "cpp": '// Chương trình in lời chào bằng tiếng Việt\n#include <cstdio>\nint main() { puts("Xin chào Việt Nam"); }\n',
+    "java": ('// Chương trình in lời chào bằng tiếng Việt\npublic class Main {\n'
+             '    public static void main(String[] a) { System.out.println("Xin chào Việt Nam"); }\n}\n'),
+}
+
+SUB["alloc_mb"] = {  # chạm N MiB theo input
+    "python": ("import sys\nn = int(sys.stdin.read())\nb = bytearray(n << 20)\n"
+               "for i in range(0, len(b), 4096):\n    b[i] = 1\nprint('ok')\n"),
+}
+
+SUB["touch_then_fail"] = {  # chạm N MiB (N đọc từ input) rồi thoát với mã lỗi
+    "python": ("import sys\nn = int(sys.stdin.read())\nb = bytearray(n << 20)\n"
+               "for i in range(0, len(b), 4096):\n    b[i] = 1\nsys.exit(1)\n"),
+    "cpp": r'''#include <cstdio>
+#include <cstdlib>
+int main() {
+    long n;
+    scanf("%ld", &n);
+    volatile char* p = new char[(size_t)n << 20];
+    for (size_t i = 0; i < ((size_t)n << 20); i += 4096) p[i] = 1;
+    return 1;
+}
+''',
+}
+
+SUB["print_big_vietnamese"] = {
+    "python": 'print("ệ" * 5000)\n',
+}
+
+SUB["fs_attack"] = {  # ghi/xóa ngoài thư mục tạm của mình
+    "python": r'''import os
+def attempt(fn):
+    try:
+        fn()
+        return "ALLOWED"
+    except PermissionError:
+        return "denied"
+    except OSError as e:
+        return "oserror"
+print(attempt(lambda: open("/etc/jh-pwned", "w")))
+print(attempt(lambda: os.remove("/etc/hostname")))
+print(attempt(lambda: open(os.path.dirname(os.getcwd()) + "/jh-pwned", "w")))
+print(attempt(lambda: os.rename("/usr/bin/env", "/usr/bin/env.bak")))
+''',
+}
+
+CE = {
+    "cpp": "int main( { return 0 }\n",
+    "java": "public class Main { public static void main(String[] a) { int x = ; } }\n",
+}
+
+CE_LONG_CPP = "int main() {\n" + "".join(f"    int v{i} = ;\n" for i in range(300)) + "}\n"
+CE_VIETNAMESE_CPP = "#error " + "Lỗi biên dịch tiếng Việt rất dài " * 400 + "\nint main() {}\n"
+
+SUB["java_libs"] = {  # nhiều thư viện chuẩn: collections, streams, regex, BufferedReader, thread pool (kiểm RLIMIT_NOFILE)
+    "java": r'''import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.regex.*;
+import java.util.stream.*;
+
+public class Main {
+    public static void main(String[] args) throws Exception {
+        BufferedReader r = new BufferedReader(new InputStreamReader(System.in));
+        List<String> lines = r.lines().collect(Collectors.toList());
+        Map<String, Integer> freq = new TreeMap<>();
+        Pattern p = Pattern.compile("[a-z]+|\\d+");
+        int digits = 0;
+        for (String line : lines) {
+            Matcher m = p.matcher(line);
+            while (m.find()) {
+                String t = m.group();
+                if (Character.isDigit(t.charAt(0))) digits += Integer.parseInt(t);
+                else freq.merge(t, 1, Integer::sum);
+            }
+        }
+        Deque<String> dq = new ArrayDeque<>();
+        freq.keySet().forEach(dq::addFirst);
+        String top = freq.entrySet().stream()
+            .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
+            .limit(3).map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining(","));
+        ExecutorService ex = Executors.newFixedThreadPool(4);
+        List<Future<Integer>> fs = new ArrayList<>();
+        for (int i = 1; i <= 8; i++) {
+            final int k = i;
+            fs.add(ex.submit(() -> IntStream.rangeClosed(1, k * 1000).sum()));
+        }
+        long total = 0;
+        for (Future<Integer> f : fs) total += f.get();
+        ex.shutdown();
+        System.out.println(String.format("words=%d digits=%d top=%s first=%s total=%d",
+            freq.size(), digits, top, dq.peekFirst(), total));
+    }
+}
+''',
+}
