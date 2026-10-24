@@ -116,3 +116,34 @@ def test_progress_for_another_attempt_does_not_renew_the_window(fast):
         break
     else:
         pytest.fail("PROGRESS không khớp đã làm mới hạn")
+
+
+def test_progress_zero_arriving_before_send_returns_keeps_its_own_window(make_stack):
+    """PROGRESS(0) về đúng giữa lúc sendall(JOB) xong và lúc đặt mốc watchdog: mốc của send_job không được đè cửa sổ
+    của PROGRESS(0). Cửa sổ biên dịch dài (3 s), cửa sổ test ngắn (0,7 s): nếu bị đè thì DEADLINE_EXCEEDED tới trễ."""
+    import threading
+
+    from _support import wait_until
+
+    stack = make_stack(compile_timeout_max_s=2.5, slack_s=0.5, max_time_factor=1, per_test_overhead_s=0.6,
+                       ping_interval_s=30, peer_dead_after_s=60)
+    add_problem(stack.db, "quick", tests=[problems.TestCase(False, b"1\n", b"1\n")] * 3, time_limit_ms=100)
+    sent, release = threading.Event(), threading.Event()
+
+    def hook(conn):
+        sent.set()
+        release.wait(10)
+
+    stack.server.after_send_hook = hook
+    w = stack.worker()
+    sid = stack.submit(problem_id="quick")
+    try:
+        job = w.take_job()
+        assert sent.wait(5)  # dispatcher đang dừng giữa sendall xong và đặt mốc
+        started = time.monotonic()
+        w.progress(job, 0)
+        assert wait_until(lambda: "progress" in stack.hooks.names(sid))  # server đã xử lý PROGRESS(0)
+    finally:
+        release.set()
+    w.expect_error("DEADLINE_EXCEEDED", timeout=4)
+    assert time.monotonic() - started < 2.0

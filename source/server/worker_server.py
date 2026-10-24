@@ -152,6 +152,7 @@ class WorkerServer:
         self._listener = None
         self._threads = []
         self.port = None
+        self.after_send_hook = None  # điểm chèn cho test: gọi ngay sau khi sendall(JOB) xong, trước khi đặt mốc watchdog
 
     def set_handler(self, handler):
         self.handler = handler
@@ -231,6 +232,9 @@ class WorkerServer:
         except OSError as e:
             self.mark_dead(conn, f"gửi JOB lỗi: {type(e).__name__}")
             return False
+        hook = self.after_send_hook
+        if hook is not None:
+            hook(conn)
         now = time.monotonic()
         with self._lock:
             if conn.state == "dead":

@@ -149,3 +149,68 @@ def test_failure_before_the_job_is_attached_to_a_worker_still_requeues_it(stack)
     job = second.take_job(timeout=10)
     assert job["submission_id"] == sid and job["attempt_id"] == 2
     assert first.closed()
+
+
+def test_retry_delay_doubles_up_to_the_cap():
+    from server import dispatcher
+
+    delays = [dispatcher.retry_delay(n) for n in range(1, 10)]
+    assert delays[:4] == [0.5, 1.0, 2.0, 4.0]
+    assert delays[-1] == dispatcher.RETRY_CAP_S == 30.0
+    assert delays == sorted(delays)
+
+
+def test_lost_job_writes_back_off_and_every_failure_is_logged(stack, monkeypatch, caplog):
+    from server import dispatcher
+
+    monkeypatch.setattr(dispatcher, "RETRY_BASE_S", 0.05)
+    monkeypatch.setattr(dispatcher, "RETRY_CAP_S", 0.2)
+    original = stack.dispatcher._job_lost
+    started = time.monotonic()
+    calls = []
+
+    def broken_for_a_while(job, reason):
+        calls.append(time.monotonic() - started)
+        if time.monotonic() - started < 1.2:
+            raise sqlite3.OperationalError("database is locked")
+        return original(job, reason)
+
+    stack.dispatcher._job_lost = broken_for_a_while
+    first = stack.worker("a")
+    sid = stack.submit()
+    job = first.take_job()
+    second = stack.worker("b")
+    first.close()
+    again = second.take_job(timeout=10)
+    assert again["submission_id"] == sid and again["attempt_id"] == job["attempt_id"] + 1
+    failures = [t for t in calls if t < 1.2]
+    assert 4 <= len(failures) <= 12  # có chờ giữa các lần thử (vòng nóng sẽ là hàng nghìn lần)
+    logged = [r for r in caplog.records if "bị mất worker lỗi" in r.getMessage() and r.levelname == "ERROR"]
+    assert len(logged) == len(failures)  # mỗi lần thất bại đều có log
+    assert all(r.exc_info for r in logged)
+
+
+def test_delivery_loop_failures_back_off_too(stack, monkeypatch, caplog):
+    from server import dispatcher
+
+    monkeypatch.setattr(dispatcher, "RETRY_BASE_S", 0.05)
+    monkeypatch.setattr(dispatcher, "RETRY_CAP_S", 0.2)
+    original = stack.dispatcher._deliver
+    started = time.monotonic()
+    calls = []
+
+    def broken_for_a_while(conn, item):
+        calls.append(1)
+        if time.monotonic() - started < 1.0:
+            raise sqlite3.OperationalError("database is locked")
+        return original(conn, item)
+
+    stack.dispatcher._deliver = broken_for_a_while
+    w = stack.worker()
+    sid = stack.submit()
+    job = w.take_job(timeout=10)
+    assert job["submission_id"] == sid and job["attempt_id"] == 1  # lỗi trước commit không tính lần giao
+    failures = len(calls) - 1
+    assert 3 <= failures <= 12
+    logged = [r for r in caplog.records if "vòng giao bài" in r.getMessage() and r.levelname == "ERROR"]
+    assert len(logged) == failures
