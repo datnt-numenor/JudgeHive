@@ -246,8 +246,9 @@ class Dispatcher:
                        None if sample is None else int(sample), body["re_kind"], body["ce_message"],
                        body["sample_stdout"], now, now, row["id"]))
         if row["rejudge_requested"]:
-            c.execute("UPDATE submissions SET state = 'queued', is_rejudge = 1, rejudge_requested = 0 WHERE id = ?",
-                      (row["id"],))
+            # mỗi lần rejudge đếm lại từ đầu số lần giao tối đa (README 2.6, D1, D6)
+            c.execute("UPDATE submissions SET state = 'queued', is_rejudge = 1, rejudge_requested = 0, "
+                      "delivery_count = 0 WHERE id = ?", (row["id"],))
             return LEVEL_REJUDGE
         return None
 
