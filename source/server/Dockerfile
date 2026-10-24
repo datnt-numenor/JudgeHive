@@ -18,15 +18,15 @@ ENV PYTHONUNBUFFERED=1 \
     JH_DB_PATH=/data/judgehive.db
 
 WORKDIR /app
-COPY server/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY server/requirements.txt server/constraints.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements.txt -c /tmp/constraints.txt
 
 
 FROM base AS test
 
 # Mã nguồn được bind mount vào /src lúc chạy (không COPY), nên image test chỉ build lại khi đổi phụ thuộc.
 COPY requirements-dev.txt /tmp/requirements-dev.txt
-RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt -c /tmp/constraints.txt
 ENV PYTHONPATH=/src
 WORKDIR /src
 ENTRYPOINT ["tini", "--"]

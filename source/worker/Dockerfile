@@ -27,8 +27,8 @@ WORKDIR /app
 FROM base AS test
 
 # Mã nguồn được bind mount vào /src lúc chạy (không COPY), nên image test chỉ build lại khi đổi toolchain.
-COPY requirements-dev.txt /tmp/requirements-dev.txt
-RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt
+COPY requirements-dev.txt constraints-dev.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt -c /tmp/constraints-dev.txt
 WORKDIR /src
 ENTRYPOINT ["tini", "--"]
 CMD ["python", "-m", "pytest", "tests", "-q"]
