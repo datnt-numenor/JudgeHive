@@ -429,7 +429,7 @@ Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 **Định dạng.**
 
 - Request có body và response đều là JSON UTF-8. Response có `Content-Type: application/json; charset=utf-8` và `Cache-Control: no-store` **[ĐỀ XUẤT]**.
-- Mọi `POST` phải có `Content-Type: application/json` (cho phép tham số `charset`). Thiếu hoặc khác thì trả 415. Body phải là một object JSON, kể cả khi endpoint không cần field nào (`/api/logout` gửi `{}`) **[ĐỀ XUẤT]**.
+- Mọi `POST` phải có `Content-Type: application/json` (cho phép tham số `charset`). Thiếu hoặc khác thì trả 415. Body phải là một object JSON, kể cả khi endpoint không cần field nào (`/api/logout` gửi `{}`).
 - Field thừa trong request bị bỏ qua. Server không bao giờ dùng `user_id`, `role` hay field tương tự do client gửi; danh tính và quyền chỉ lấy từ phiên.
 - Quy ước ở mục 1 áp dụng: thời điểm ISO 8601 UTC có mili giây, thời gian `_ms`, bộ nhớ `_kib`, ngôn ngữ `python`/`cpp`/`java`, verdict `AC`/`WA`/`TLE`/`MLE`/`RE`/`CE`/`SE`.
 - Mã đề (`problem_id`) là chuỗi 1–64 ký tự trong `[A-Za-z0-9_-]` **[ĐỀ XUẤT]**; `submission_id` là số nguyên dương.
@@ -452,7 +452,7 @@ Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
 - `code` là mã máy đọc (mục 3.5), client chỉ rẽ nhánh theo `code` và HTTP status. `message` chỉ để người đọc.
 - `message` không bao giờ chứa lại giá trị client đã gửi (mật khẩu, mã nguồn, token…), chỉ có thể nêu tên field.
-- Validation sai luôn là 400, không có 422 **[ĐỀ XUẤT]**.
+- Validation sai luôn là 400, không có 422.
 - Server không ghi mật khẩu hay body của `POST /api/login` vào log.
 
 **Giới hạn body (413).** Giới hạn tính theo byte của body như nhận từ mạng. Quá giới hạn thì 413 `BODY_TOO_LARGE`; server có thể đóng kết nối sau khi trả lời.
@@ -469,7 +469,7 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 - Mỗi người được nộp tối đa 10 bài trong bất kỳ khoảng 60 giây nào (cửa sổ trượt, tính cả admin) **[ĐỀ XUẤT]**. Vượt thì 429 `RATE_LIMITED` kèm header `Retry-After` là số giây nguyên ≥ 1 cần chờ.
 - Chỉ bài được chấp nhận mới tính vào giới hạn. Request lỗi (400, 404, 413, 415) không tính. Request trùng `client_token` (mục 3.3) không tính và không bị chặn.
 - Các endpoint khác trong phần này không có rate limit.
-- **[CẦN CHỐT]** Chưa có giới hạn số lần đăng nhập sai (PLAN chỉ quy định rate limit nộp bài). Đến khi chốt, `POST /api/login` không bị 429.
+- `POST /api/login`: tối đa 10 lần thử trong bất kỳ khoảng 60 giây nào cho mỗi `username` (cửa sổ trượt) **[ĐỀ XUẤT]**. Vượt thì 429 `RATE_LIMITED` kèm `Retry-After`, kể cả khi mật khẩu đúng. Mọi lần thử hợp lệ về định dạng đều tính (đúng, sai, hay username không tồn tại, để không lộ username nào có thật); request 400 hoặc 413 không tính. Server kiểm tra giới hạn trước khi kiểm tra mật khẩu. Hạn chế: người khác có thể cố ý khóa tạm một username bằng cách thử liên tục, nhưng chỉ tối đa mỗi lần 60 giây và không ảnh hưởng username khác.
 
 **Thứ tự kiểm tra của `POST /api/submissions`** (lỗi đầu tiên gặp được trả về): phiên (401) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → kích thước mã (413 `CODE_TOO_LARGE`) → trùng `client_token` (200) → đề tồn tại và hiện với người gọi (404) → rate limit (429) → chấp nhận (201).
 
@@ -485,6 +485,7 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 - Thành công: 200, header `Set-Cookie` như mục 3.2, body `{"user": {"id": 5, "username": "alice", "role": "user"}}`. `role` là `user` hoặc `admin` **[ĐỀ XUẤT]**.
 - Username không tồn tại, mật khẩu sai, và mật khẩu vượt độ dài tối đa: cùng 401 `INVALID_CREDENTIALS`, cùng `message`, thời gian trả lời xấp xỉ nhau; response không cho biết trường hợp nào.
 - Thiếu field, sai kiểu, username rỗng hoặc quá dài: 400 `INVALID_REQUEST`.
+- Quá 10 lần thử cho cùng `username` trong 60 giây: 429 `RATE_LIMITED` (mục 3.2).
 
 ```json
 {"username": "alice", "password": "…"}
@@ -502,7 +503,7 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 ##### `GET /api/problems`
 
 - Người không phải admin chỉ thấy đề không ẩn. Admin thấy mọi đề.
-- Sắp theo `id` tăng dần **[ĐỀ XUẤT]**, không phân trang.
+- Sắp theo `id` tăng dần, không phân trang.
 
 | Field của mỗi phần tử | Kiểu | Ghi chú |
 |-----------------------|------|---------|
@@ -523,7 +524,7 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 
 | Field thêm | Kiểu | Ghi chú |
 |------------|------|---------|
-| `statement` | string | Đề bài dạng văn bản thường, client hiển thị bằng cơ chế escape mặc định **[CẦN CHỐT]**: có dùng Markdown không (PLAN mục 5) |
+| `statement` | string | Đề bài là văn bản thường (không Markdown). Client hiển thị giữ nguyên xuống dòng, bằng cơ chế escape mặc định |
 | `samples` | array | Test mẫu theo đúng thứ tự chạy; mỗi phần tử `{"input": string, "output": string}`. Không bao giờ chứa test ẩn |
 
 ```json
@@ -540,7 +541,7 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 | `client_token` | string | có | UUID dạng `8-4-4-4-12` chữ số hex, không phân biệt hoa thường **[ĐỀ XUẤT]** |
 
 - Thành công: **201** `{"submission_id": 42, "state": "queued", "received_at": "2026-10-24T08:15:30.123Z"}`. Bài đã được lưu và nằm trong hàng đợi; từ lúc này worker có chết thì bài vẫn được chấm (mục 2.6).
-- Trùng `client_token` của chính người gọi (mỗi người một không gian token riêng): **200**, cùng dạng body, với `submission_id` và `received_at` của bài cũ và `state` hiện tại của nó; không tạo bài mới, không đưa vào hàng đợi, không tính rate limit. Các field khác trong request lần sau bị bỏ qua. Client phân biệt "mới" và "trùng" bằng status 201/200 **[ĐỀ XUẤT]**.
+- Trùng `client_token` của chính người gọi (mỗi người một không gian token riêng): **200**, cùng dạng body, với `submission_id` và `received_at` của bài cũ và `state` hiện tại của nó; không tạo bài mới, không đưa vào hàng đợi, không tính rate limit. Các field khác trong request lần sau bị bỏ qua. Client phân biệt "mới" và "trùng" bằng status 201/200.
 - Thiếu field, sai kiểu, `language` lạ, `code` rỗng, `client_token` thiếu hoặc không phải UUID: 400 `INVALID_REQUEST`.
 - Đề không tồn tại, hoặc đề ẩn mà người gọi không phải admin: 404 `PROBLEM_NOT_FOUND` (giống `GET /api/problems/{id}`). Admin nộp được vào đề ẩn; bài của admin không vào bảng xếp hạng.
 - Quy tắc client: giữ nguyên `client_token` khi request lỗi mạng hoặc hết thời gian chờ mà chưa nhận phản hồi; sinh token mới sau khi đã nhận `submission_id`; vô hiệu hóa nút nộp trong lúc chờ phản hồi.
@@ -551,7 +552,7 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 
 ##### Đối tượng bài nộp (dùng cho hai endpoint `GET` dưới đây)
 
-Mọi field luôn có mặt; field không áp dụng có giá trị `null` **[ĐỀ XUẤT]**.
+Mọi field luôn có mặt; field không áp dụng có giá trị `null`.
 
 | Field | Kiểu | Ghi chú |
 |-------|------|---------|
@@ -573,8 +574,8 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 
 ##### `GET /api/submissions`
 
-- Chỉ trả bài nộp của chính người gọi (kể cả admin), kể cả bài trên đề hiện đang ẩn. Sắp theo `submission_id` giảm dần (mới nhất trước). Mỗi phần tử là đối tượng bài nộp ở trên, không có `ce_message` và không có field `sample_*`.
-- Query **[ĐỀ XUẤT]**: `limit` (1–200, mặc định 50), `before_id` (chỉ lấy bài có `submission_id` nhỏ hơn giá trị này). Giá trị sai kiểu hoặc ngoài khoảng: 400 `INVALID_REQUEST`.
+- Chỉ trả bài nộp của chính người gọi (kể cả admin), kể cả bài trên đề hiện đang ẩn. Sắp theo `submission_id` giảm dần (mới nhất trước). Mỗi phần tử là đối tượng bài nộp ở trên, không có `code`, `ce_message` và các field `sample_*`.
+- Query: `limit` (1–200, mặc định 50), `before_id` (chỉ lấy bài có `submission_id` nhỏ hơn giá trị này). Giá trị sai kiểu hoặc ngoài khoảng: 400 `INVALID_REQUEST`.
 - Response: `{"submissions": [...], "next_before_id": 17}`; `next_before_id` là `submission_id` nhỏ nhất của trang này nếu còn bài cũ hơn, ngược lại là `null`. Muốn trang kế, gọi lại với `before_id` = giá trị đó.
 - Client gọi endpoint này sau khi mất kết nối để lấy kết quả bị lỡ.
 
@@ -586,20 +587,22 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 
 - Trả đối tượng bài nộp (không bọc trong object khác) cộng các field chi tiết dưới đây.
 - Bài không tồn tại và bài của người khác (kể cả khi người gọi là admin) trả cùng 404 `SUBMISSION_NOT_FOUND`, cùng `message`. Xem bài của người khác là việc của endpoint admin (PR sau).
-- Không có field `code`: xem lại mã nguồn của chính mình chưa nằm trong tập tối thiểu **[CẦN CHỐT]**.
+- Có field `code`: mã nguồn của chính người gọi, đúng như đã nộp.
 
 | Field thêm | Kiểu | Ghi chú |
 |------------|------|---------|
+| `code` | string | Mã nguồn đã nộp |
 | `ce_message` | string hoặc null | Có khi `CE`: lỗi biên dịch đã rút gọn (mục 2.5, `RESULT`) |
 | `sample_stdout` | string hoặc null | Có khi `failed_is_sample` là `true`: stdout của chương trình trên test mẫu sai, tối đa 4 KB; `AC` không có |
 | `sample_input` | string hoặc null | Input của test mẫu sai |
 | `sample_expected_output` | string hoặc null | Output mong đợi của test mẫu sai |
 
-- `sample_input` và `sample_expected_output` lấy từ test mẫu số `failed_test` của đề. Chúng là `null` khi đề đang ẩn mà người gọi không phải admin, hoặc khi bộ test của đề đã đổi sau lần chấm này (không còn tra được đúng test đã chấm) **[ĐỀ XUẤT]**. `sample_stdout` vẫn có trong các trường hợp đó.
+- `sample_input` và `sample_expected_output` lấy từ test mẫu số `failed_test` của đề. Chúng là `null` khi đề đang ẩn mà người gọi không phải admin, hoặc khi bộ test của đề đã đổi sau lần chấm này (không còn tra được đúng test đã chấm). `sample_stdout` vẫn có trong các trường hợp đó.
 - Client theo dõi bài vừa nộp bằng cách gọi lại endpoint này khoảng 1 giây một lần **[ĐỀ XUẤT]** cho tới khi `state` là `judged`. Endpoint này không có rate limit. Khi WebSocket (PR sau) có mặt, cách này chỉ còn là đường dự phòng.
 
 ```json
-{"submission_id": 42, "problem_id": "sum-two", "problem_title": "Tổng hai số", "language": "python", "received_at": "2026-10-24T08:15:30.123Z", "state": "judged", "verdict": "WA", "time_ms": 12, "memory_kib": 9216, "failed_test": 1, "failed_is_sample": true, "re_kind": null, "rejudged_at": null, "ce_message": null, "sample_stdout": "4\n", "sample_input": "1 2\n", "sample_expected_output": "3\n"}
+{"submission_id": 42, "problem_id": "sum-two", "problem_title": "Tổng hai số", "language": "python", "received_at": "2026-10-24T08:15:30.123Z", "state": "judged", "verdict": "WA", "time_ms": 12, "memory_kib": 9216, "failed_test": 1, "failed_is_sample": true, "re_kind": null, "rejudged_at": null, "code": "print(int(input()) + int(input()))
+", "ce_message": null, "sample_stdout": "4\n", "sample_input": "1 2\n", "sample_expected_output": "3\n"}
 ```
 
 #### 3.4. Hạn chế đã biết của phần này
@@ -625,7 +628,7 @@ Tên mã là **[ĐỀ XUẤT]**.
 | `BODY_TOO_LARGE` | 413 | Body vượt giới hạn mục 3.2 |
 | `CODE_TOO_LARGE` | 413 | `code` vượt 64 KB (byte UTF-8) |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | `POST` không có `Content-Type: application/json` |
-| `RATE_LIMITED` | 429 | Vượt 10 bài mỗi 60 giây; kèm `Retry-After` |
+| `RATE_LIMITED` | 429 | Vượt 10 bài nộp mỗi 60 giây (mỗi người), hoặc 10 lần đăng nhập mỗi 60 giây (mỗi `username`); kèm `Retry-After` |
 | `INTERNAL_ERROR` | 500 | Lỗi server; `message` chung, chi tiết chỉ ở log |
 
 ---
@@ -664,6 +667,7 @@ assignment-network-project/
 > Nêu ý tưởng mở rộng hoặc cải tiến hệ thống.
 
 - [ ] Cải thiện giao diện người dùng
+- [ ] Đề bài viết bằng Markdown (render qua thư viện có sanitize); hiện `statement` chỉ là văn bản thường
 - [ ] Thêm tính năng xác thực và phân quyền
 - [ ] Tối ưu hóa hiệu suất
 - [ ] Triển khai trên cloud
