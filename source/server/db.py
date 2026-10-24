@@ -102,7 +102,7 @@ class Database:
             c = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_MS / 1000, isolation_level=None)
             c.row_factory = sqlite3.Row
             c.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-            c.execute("PRAGMA journal_mode=WAL")
+            _enable_wal(c)
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA foreign_keys=ON")
             self._local.conn = c
@@ -165,6 +165,20 @@ class Database:
                     c.execute(statement)
                 c.execute(f"PRAGMA user_version={index + 1}")
             log.info("đã chạy migration %d", index + 1)
+
+
+def _enable_wal(conn):
+    """Bật WAL. Đổi journal_mode cần khóa độc quyền và SQLite báo "database is locked" ngay (không chờ busy_timeout)
+    khi một kết nối khác đang tạo DB mới cùng lúc (server và manage.py khởi động đồng thời), nên thử lại có giới hạn."""
+    deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e) or time.monotonic() > deadline:
+                raise
+            time.sleep(0.01)
 
 
 def _now_ms():
