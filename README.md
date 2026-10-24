@@ -601,8 +601,7 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 - Client theo dõi bài vừa nộp bằng cách gọi lại endpoint này khoảng 1 giây một lần **[ĐỀ XUẤT]** cho tới khi `state` là `judged`. Endpoint này không có rate limit. Khi WebSocket (PR sau) có mặt, cách này chỉ còn là đường dự phòng.
 
 ```json
-{"submission_id": 42, "problem_id": "sum-two", "problem_title": "Tổng hai số", "language": "python", "received_at": "2026-10-24T08:15:30.123Z", "state": "judged", "verdict": "WA", "time_ms": 12, "memory_kib": 9216, "failed_test": 1, "failed_is_sample": true, "re_kind": null, "rejudged_at": null, "code": "print(int(input()) + int(input()))
-", "ce_message": null, "sample_stdout": "4\n", "sample_input": "1 2\n", "sample_expected_output": "3\n"}
+{"submission_id": 42, "problem_id": "sum-two", "problem_title": "Tổng hai số", "language": "python", "received_at": "2026-10-24T08:15:30.123Z", "state": "judged", "verdict": "WA", "time_ms": 12, "memory_kib": 9216, "failed_test": 1, "failed_is_sample": true, "re_kind": null, "rejudged_at": null, "code": "print(int(input()) + int(input()))\n", "ce_message": null, "sample_stdout": "4\n", "sample_input": "1 2\n", "sample_expected_output": "3\n"}
 ```
 
 #### 3.4. Hạn chế đã biết của phần này
