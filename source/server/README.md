@@ -94,15 +94,15 @@ Các test hợp đồng cổng worker (`tests/invariants/test_server_contract_*.
 
 | Mục | Hợp đồng test khóa dựa vào |
 | --- | --- |
-| `config.ServerConfig(bind_host, worker_port, secret, db_path, max_unauthenticated)` | Tạo bằng keyword; `worker_port=0` là cổng tự chọn |
+| `config.ServerConfig(bind_host, worker_port, secret, db_path, max_unauthenticated)` | Tạo bằng keyword; `worker_port=0` là cổng tự chọn. Mọi field khác dùng mặc định, và test dựa vào `max_deliveries` mặc định là 3 (README gốc 2.6, D1) |
 | `db.Database(path)` | `.migrate()`; `.write()` (context manager, trả connection trong transaction); `.create_user(username, password_hash)` trả id; `.create_submission(user_id, problem_id, language, code)` trả id, trạng thái `queued`; `.get_submission(id)` trả dict hoặc `None` |
-| key của `get_submission` | `state`, `attempt_id`, `delivered_test_hash`, `verdict`, `verdict_test_hash`, `time_ms`, `memory_kib`, `failed_test`, `failed_is_sample`, `re_kind`, `ce_message`, `sample_stdout` |
+| key của `get_submission` | `state` (các giá trị `queued`, `judging`, `done`), `attempt_id`, `delivered_test_hash`, `verdict`, `verdict_test_hash`, `time_ms`, `memory_kib`, `failed_test`, `failed_is_sample`, `re_kind`, `ce_message`, `sample_stdout` |
 | `problems.TestCase(is_sample, input, output)`, `problems.ProblemData(id, title, statement, time_limit_ms, memory_limit_kib, tests)` | Dataclass bất biến, tham số theo vị trí |
 | `problems.store_problem(conn, data, *, replace)`, `problems.compute_tests_hash(tests)` | Gọi trong `db.write()`; hash ổn định theo nội dung và thứ tự test |
 | `worker_server.WorkerServer(cfg, db, hooks)` | `.set_handler(dispatcher)`; `.start()`; `.stop()`; `.port` (cổng thật sau `start`); `.snapshot()` (dãy, độ dài = số worker đã `REGISTER` và còn kết nối) |
 | `dispatcher.Dispatcher(cfg, db, server, hooks)` | `.start()`; `.stop()`; `.enqueue(submission_id, level)`; `.load_pending()` (gọi trước `start` để nạp lại bài chưa chấm xong) |
-| `dispatcher.LEVEL_REDELIVERY`, `LEVEL_NEW`, `LEVEL_REJUDGE` | Thứ tự ưu tiên tăng dần theo số: giao lại, bài mới, rejudge |
-| `hooks.Hooks` | `.status(submission_id, user_id, event, **info)` với `event` thuộc `queued`, `judging`, `progress`, `done`; `.scoreboard_dirty()` |
+| `dispatcher.LEVEL_NEW`, `LEVEL_REJUDGE` | Mức truyền vào `enqueue`; bài `LEVEL_NEW` được giao trước bài `LEVEL_REJUDGE` (bài giao lại sau khi worker chết đi trước cả hai, qua đường nội bộ, test không import mức này) |
+| `hooks.Hooks` | `.status(submission_id, user_id, event, **info)` với `event` thuộc `queued`, `judging`, `progress`, `done`; `.scoreboard_dirty()`. Test định nghĩa subclass ghi đè hai hàm này và **không gọi `super().__init__()`**, nên `Hooks.__init__` không được thêm state bắt buộc (mọi state phải có mặc định ở mức lớp, hoặc được khởi tạo lười) |
 
 Ngoài `server/`, test khóa còn dùng `common.protocol` (đã khóa ở `m1-tests-locked`): `encode`, `LineDecoder`,
 `Message`, `MAX_LINE_SERVER_TO_WORKER`, `MAX_LINE_WORKER_TO_SERVER`.
