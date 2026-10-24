@@ -252,12 +252,20 @@ class WorkerServer:
 
     # ------------------------------------------------------------------ accept và kết nối
 
+    def _accept(self):
+        return self._listener.accept()
+
     def _accept_loop(self):
         while not self._stop.is_set():
             try:
-                sock, addr = self._listener.accept()
+                sock, addr = self._accept()
             except OSError:
-                return
+                if self._stop.is_set() or self._listener.fileno() == -1:
+                    return  # listener đã đóng (stop())
+                # lỗi tạm thời (hết file descriptor, kết nối bị hủy giữa chừng): vẫn phải nhận worker sau đó
+                log.exception("accept lỗi tạm thời, thử lại")
+                self._stop.wait(0.2)
+                continue
             with self._lock:
                 over = self._unauth >= self.cfg.max_unauthenticated
                 if not over:

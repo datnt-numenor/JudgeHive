@@ -30,19 +30,22 @@ class Dispatcher:
     def __init__(self, cfg, db, server, hooks):
         self.cfg, self.db, self.server, self.hooks = cfg, db, server, hooks
         self.queue = queue.PriorityQueue()  # phần tử (mức, submission_id)
+        self._lost = queue.Queue()  # (job, reason) chờ ghi lại; xử lý ở thread riêng, không chặn thread gọi
         self._stop = threading.Event()
-        self._thread = None
+        self._threads = []
 
     # ------------------------------------------------------------------ vòng đời
 
     def start(self):
-        self._thread = threading.Thread(target=self._run, name="dispatcher", daemon=True)
-        self._thread.start()
+        for target, name in ((self._run, "dispatcher"), (self._lost_loop, "dispatcher-lost")):
+            t = threading.Thread(target=target, name=name, daemon=True)
+            t.start()
+            self._threads.append(t)
 
     def stop(self):
         self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=2)
+        for t in self._threads:
+            t.join(timeout=2)
         self.db.close_thread()
 
     def enqueue(self, submission_id, level):
@@ -136,15 +139,18 @@ class Dispatcher:
             self._after_finish(row, _SE_BODY, level)
             self.server.release(conn)
             return
-        if not self.server.assign_job(conn, job):
-            self.job_lost(job, "worker chết trước khi gửi JOB")  # lần giao này đã tính
-            return
-        self._hook_status(job.submission_id, job.user_id, "judging", attempt_id=job.attempt_id)
+        # Từ đây DB đã ghi `judging`: mọi lỗi phải đưa bài về hàng đợi qua job_lost, không để lọt ra _run (vì _deliver lần
+        # sau sẽ bỏ bài không còn `queued`). job_lost idempotent nên gọi thừa cũng không sao.
         try:
+            if not self.server.assign_job(conn, job):
+                self.job_lost(job, "worker chết trước khi gửi JOB")  # lần giao này đã tính
+                return
+            self._hook_status(job.submission_id, job.user_id, "judging", attempt_id=job.attempt_id)
             self.server.send_job(conn, data)
         except Exception:
-            log.exception("gửi JOB bài %s lỗi", sid)
+            log.exception("giao bài %s lỗi sau khi ghi DB", sid)
             self.server.mark_dead(conn, "lỗi dispatcher khi gửi JOB")
+            self.job_lost(job, "lỗi dispatcher khi giao")
 
     # ------------------------------------------------------------------ kết quả và mất worker
 
@@ -162,7 +168,29 @@ class Dispatcher:
         return True
 
     def job_lost(self, job, reason):
-        """Worker mất khi đang giữ `job` (D1, D16): giao lại, hoặc SE nếu đã đủ số lần giao."""
+        """Worker mất khi đang giữ `job` (D1, D16). Chỉ xếp hàng: thread giám sát và thread kết nối gọi hàm này không
+        được chờ SQLite (busy_timeout có thể tới 5 giây làm hoãn PING và watchdog của mọi worker)."""
+        self._lost.put((job, reason))
+
+    def _lost_loop(self):
+        """Ghi lại các bài bị mất worker. Lỗi DB thì thử lại cho tới khi được: bài không bao giờ bị bỏ ở `judging`."""
+        try:
+            while not self._stop.is_set():
+                try:
+                    job, reason = self._lost.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                try:
+                    self._job_lost(job, reason)
+                except Exception:
+                    log.exception("ghi lại bài %s bị mất worker lỗi, sẽ thử lại", job.submission_id)
+                    self._lost.put((job, reason))
+                    self._stop.wait(RETRY_PAUSE_S)
+        finally:
+            self.db.close_thread()
+
+    def _job_lost(self, job, reason):
+        """Giao lại, hoặc SE nếu đã đủ số lần giao. Idempotent: gọi lại khi bài đã được xử lý thì không làm gì."""
         finished = False
         with self.db.write() as c:
             row = c.execute("SELECT * FROM submissions WHERE id = ?", (job.submission_id,)).fetchone()
