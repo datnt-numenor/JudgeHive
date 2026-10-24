@@ -83,6 +83,32 @@ docker compose exec server python -m server.manage submissions show 1
 
 ---
 
+## 🔒 DÙNG BỞI TEST ĐÃ KHÓA
+
+Các test hợp đồng cổng worker (`tests/invariants/test_server_contract_*.py`, khóa ở tag `m3-tests-locked`) chỉ dùng
+đúng bề mặt dưới đây. Sau khi khóa, quy tắc là **chỉ được mở rộng tương thích**: thêm tham số mới có giá trị mặc
+định, thêm key mới vào dict trả về, thêm field mới có mặc định vào `ServerConfig`. Không đổi tên, không bỏ, không
+đổi kiểu hay ý nghĩa của mục nào dưới đây; cần làm vậy thì dừng và hỏi chủ repo. Mọi thứ khác trong `server/` tự do
+đổi; test của chúng ở lại `tests/server/`, không khóa. Hạ tầng test (worker giả, `Stack`, fixture) nằm trong
+`tests/invariants/_server_contract_support.py`, không thuộc bề mặt này.
+
+| Mục | Hợp đồng test khóa dựa vào |
+| --- | --- |
+| `config.ServerConfig(bind_host, worker_port, secret, db_path, max_unauthenticated)` | Tạo bằng keyword; `worker_port=0` là cổng tự chọn |
+| `db.Database(path)` | `.migrate()`; `.write()` (context manager, trả connection trong transaction); `.create_user(username, password_hash)` trả id; `.create_submission(user_id, problem_id, language, code)` trả id, trạng thái `queued`; `.get_submission(id)` trả dict hoặc `None` |
+| key của `get_submission` | `state`, `attempt_id`, `delivered_test_hash`, `verdict`, `verdict_test_hash`, `time_ms`, `memory_kib`, `failed_test`, `failed_is_sample`, `re_kind`, `ce_message`, `sample_stdout` |
+| `problems.TestCase(is_sample, input, output)`, `problems.ProblemData(id, title, statement, time_limit_ms, memory_limit_kib, tests)` | Dataclass bất biến, tham số theo vị trí |
+| `problems.store_problem(conn, data, *, replace)`, `problems.compute_tests_hash(tests)` | Gọi trong `db.write()`; hash ổn định theo nội dung và thứ tự test |
+| `worker_server.WorkerServer(cfg, db, hooks)` | `.set_handler(dispatcher)`; `.start()`; `.stop()`; `.port` (cổng thật sau `start`); `.snapshot()` (dãy, độ dài = số worker đã `REGISTER` và còn kết nối) |
+| `dispatcher.Dispatcher(cfg, db, server, hooks)` | `.start()`; `.stop()`; `.enqueue(submission_id, level)`; `.load_pending()` (gọi trước `start` để nạp lại bài chưa chấm xong) |
+| `dispatcher.LEVEL_REDELIVERY`, `LEVEL_NEW`, `LEVEL_REJUDGE` | Thứ tự ưu tiên tăng dần theo số: giao lại, bài mới, rejudge |
+| `hooks.Hooks` | `.status(submission_id, user_id, event, **info)` với `event` thuộc `queued`, `judging`, `progress`, `done`; `.scoreboard_dirty()` |
+
+Ngoài `server/`, test khóa còn dùng `common.protocol` (đã khóa ở `m1-tests-locked`): `encode`, `LineDecoder`,
+`Message`, `MAX_LINE_SERVER_TO_WORKER`, `MAX_LINE_WORKER_TO_SERVER`.
+
+---
+
 ## 🧪 TEST
 
 Test server chạy trong image riêng (có FastAPI), mã nguồn bind mount nên chỉ build lại khi đổi phụ thuộc:
