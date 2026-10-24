@@ -101,11 +101,11 @@ Trình duyệt và worker chỉ nói chuyện với server, không bao giờ nó
 Quy ước chung:
 
 - Văn bản luôn mã hóa UTF-8; dữ liệu có cấu trúc luôn là JSON.
-- Khoảng thời gian tính bằng mili giây, bộ nhớ tính bằng KiB. Tên field mang hậu tố đơn vị: `_ms`, `_kib` **[ĐỀ XUẤT]**.
-- Kích thước: 1 KB = 1 024 byte, 1 MB = 1 048 576 byte **[ĐỀ XUẤT]**.
+- Khoảng thời gian tính bằng mili giây, bộ nhớ tính bằng KiB. Tên field mang hậu tố đơn vị: `_ms`, `_kib`.
+- Kích thước: 1 KB = 1 024 byte, 1 MB = 1 048 576 byte.
 - Thời điểm là chuỗi ISO 8601 theo UTC, có mili giây, ví dụ `2026-10-23T08:15:30.123Z` **[ĐỀ XUẤT]**.
-- `submission_id`, `attempt_id`, `worker_id` là số nguyên **[ĐỀ XUẤT]**.
-- Ngôn ngữ: `python`, `cpp`, `java` **[ĐỀ XUẤT]**.
+- `submission_id`, `attempt_id`, `worker_id` là số nguyên.
+- Ngôn ngữ: `python`, `cpp`, `java`.
 - Verdict: `AC`, `WA`, `TLE`, `MLE`, `RE`, `CE`, `SE`.
 
 ### 2. Cổng worker (TCP)
@@ -134,7 +134,7 @@ Quy ước chung:
 
 #### 2.3. Khung chung và xử lý lỗi
 
-- `req_id` **[ĐỀ XUẤT]**: chỉ `REGISTER` là message hỏi–đáp. Worker đặt `req_id` (chuỗi bất kỳ), server trả `REGISTER_OK` hoặc `ERROR` mang đúng `req_id` đó.
+- `req_id`: chỉ `REGISTER` là message hỏi–đáp. Worker đặt `req_id` (chuỗi bất kỳ), server trả `REGISTER_OK` hoặc `ERROR` mang đúng `req_id` đó.
 - `ERROR` gồm `code` (mã máy đọc) và `message` (mô tả cho người đọc, không dùng để rẽ nhánh). Danh sách mã ở mục 5.
 - Nguyên tắc chung: khi trạng thái giữa hai bên không còn nhất quán, kết nối bị đóng. Mọi trường hợp phục hồi đi qua hai luồng sẵn có: server giao lại bài (mục 2.6) và worker kết nối lại (mục 2.6).
 
@@ -183,7 +183,7 @@ Worker xử lý lỗi phía mình:
 
 #### 2.5. Chi tiết từng message
 
-Tên field là **[ĐỀ XUẤT]**, trừ `type`, `attempt_id`, `submission_id`, `seq`, `worker_id`, `name`, `secret`, `protocol_version` đã chốt.
+Tên và kiểu field của message worker đã chốt (khóa bằng test ở tag `m2-tests-locked`), trừ `se_detail` và giá trị `OTHER_SIGNAL` của `re_kind` chưa có test khóa.
 
 ##### `REGISTER` (worker → server)
 
@@ -193,7 +193,7 @@ Tên field là **[ĐỀ XUẤT]**, trừ `type`, `attempt_id`, `submission_id`, 
 | `req_id` | string | có | Do worker đặt |
 | `name` | string | có | Tên chỉ để hiển thị, cho phép trùng giữa các worker; 1–64 ký tự |
 | `secret` | string | có | Shared secret của hệ thống |
-| `protocol_version` | integer | có | Phiên bản hiện tại: `1` **[ĐỀ XUẤT]** |
+| `protocol_version` | integer | có | Phiên bản hiện tại: `1` |
 
 Secret không được lộ cho tiến trình chạy code thí sinh, kể cả qua biến môi trường mà tiến trình đó kế thừa.
 
@@ -251,7 +251,7 @@ Worker trả `PONG` ngay khi nhận `PING`, kể cả khi đang chấm bài.
 | `attempt_id` | integer | có | Lần giao này; mỗi lần giao lại có `attempt_id` lớn hơn |
 | `language` | string | có | `python`, `cpp` hoặc `java` |
 | `code` | string | có | Mã nguồn, tối đa 64 KB (byte UTF-8) |
-| `time_limit_ms` | integer | có | Giới hạn thời gian gốc của đề cho mỗi test **[ĐỀ XUẤT]**; worker tự áp hệ số thời gian theo ngôn ngữ |
+| `time_limit_ms` | integer | có | Giới hạn thời gian gốc của đề cho mỗi test; worker tự áp hệ số thời gian theo ngôn ngữ |
 | `memory_limit_kib` | integer | có | Giới hạn bộ nhớ của đề |
 | `tests` | array | có | Danh sách test, xem bên dưới |
 
@@ -294,7 +294,7 @@ Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhấ
 - Quá hạn, kể cả khi chưa nhận được `PROGRESS` với `tests_done = 0` trong cửa sổ biên dịch, thì server coi worker đã mất, đóng kết nối và giao lại bài (mục 2.6); lần giao đó vẫn tính vào số lần giao tối đa. Trước khi đóng, server cố gửi `ERROR` `DEADLINE_EXCEEDED` (best-effort: gửi không được thì vẫn đóng).
 - Chỉ `PROGRESS` khớp `JOB` mà `tests_done` bằng giá trị của `PROGRESS` khớp trước đó cộng 1 (bắt đầu từ 0, và `0 ≤ tests_done ≤ tests_total`) mới làm mới hạn.
 - `PROGRESS` không khớp `JOB` thì bị bỏ, không làm mới hạn. `PROGRESS` khớp `JOB` nhưng `tests_done` sai thứ tự (lặp lại, nhảy cóc, vượt `tests_total`) bị coi là sai định dạng: server gửi `ERROR` `BAD_MESSAGE`, bỏ message, không làm mới hạn, giữ kết nối.
-- Giá trị **[ĐỀ XUẤT]**, đã đo ở spike, chốt tạm: `COMPILE_TIMEOUT_MAX` = 20 giây (xem lại sau khi đo trên máy khác), `SLACK` = 5 giây, `MAX_TIME_FACTOR` = 5, `PER_TEST_OVERHEAD` = 3 giây (trùm thời gian khởi động JVM, đọc và so output). Hệ số thời gian theo ngôn ngữ: xem mục "Lưu ý cho client" ở `RESULT`.
+- Giá trị chốt tạm, đo lại trên máy demo (đã đo ở spike): `COMPILE_TIMEOUT_MAX` = 20 giây (xem lại sau khi đo trên máy khác), `SLACK` = 5 giây, `MAX_TIME_FACTOR` = 5, `PER_TEST_OVERHEAD` = 3 giây (trùm thời gian khởi động JVM, đọc và so output). Hệ số thời gian theo ngôn ngữ: xem mục "Lưu ý cho client" ở `RESULT`.
 - Ràng buộc với worker: mọi hệ số thời gian theo ngôn ngữ phải ≤ `MAX_TIME_FACTOR` và mọi timeout biên dịch phải ≤ `COMPILE_TIMEOUT_MAX`. Worker kiểm tra lúc khởi động; vi phạm thì thoát với mã ≠ 0 kèm log.
 
 ```json
