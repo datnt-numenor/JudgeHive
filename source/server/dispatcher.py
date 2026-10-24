@@ -16,7 +16,15 @@ from server.worker_server import JobState
 log = logging.getLogger("judgehive.dispatcher")
 
 LEVEL_REDELIVERY, LEVEL_NEW, LEVEL_REJUDGE = 0, 1, 2  # giao lại > bài mới > rejudge (D1)
-RETRY_PAUSE_S = 1.0  # nghỉ sau khi một vòng giao lỗi DB, để không quay vòng liên tục
+# Backoff khi ghi DB lỗi (vòng giao và thread ghi bài mất worker): 0,5 s, 1 s, 2 s, ... tối đa 30 s, về lại 0,5 s sau
+# lần thành công. [ĐỀ XUẤT] DB hỏng lâu thì không quay vòng nóng, mỗi lần thất bại đều có log kèm khoảng chờ kế tiếp.
+RETRY_BASE_S = 0.5
+RETRY_CAP_S = 30.0
+
+
+def retry_delay(failures):
+    """Khoảng chờ sau lần thất bại liên tiếp thứ `failures` (từ 1)."""
+    return min(RETRY_BASE_S * 2 ** (failures - 1), RETRY_CAP_S)
 
 _SE_BODY = {"verdict": "SE", "time_ms": None, "memory_kib": None, "failed_test": None, "failed_is_sample": None,
             "re_kind": None, "ce_message": None, "sample_stdout": None, "se_detail": None}
@@ -66,6 +74,7 @@ class Dispatcher:
     # ------------------------------------------------------------------ vòng giao
 
     def _run(self):
+        failures = 0
         try:
             while not self._stop.is_set():
                 conn = self.server.reserve_idle()
@@ -80,11 +89,15 @@ class Dispatcher:
                     continue
                 try:
                     self._deliver(conn, item)
+                    failures = 0
                 except Exception:
-                    log.exception("vòng giao bài %s lỗi", item[1])
+                    failures += 1
+                    delay = retry_delay(failures)
+                    log.exception("vòng giao bài %s lỗi (lần liên tiếp thứ %d), thử lại sau %.1f s", item[1], failures,
+                                  delay)
                     self.server.release(conn)
                     self.queue.put(item)
-                    self._stop.wait(RETRY_PAUSE_S)
+                    self._stop.wait(delay)
         finally:
             self.db.close_thread()
 
@@ -174,6 +187,7 @@ class Dispatcher:
 
     def _lost_loop(self):
         """Ghi lại các bài bị mất worker. Lỗi DB thì thử lại cho tới khi được: bài không bao giờ bị bỏ ở `judging`."""
+        failures = 0
         try:
             while not self._stop.is_set():
                 try:
@@ -182,10 +196,14 @@ class Dispatcher:
                     continue
                 try:
                     self._job_lost(job, reason)
+                    failures = 0
                 except Exception:
-                    log.exception("ghi lại bài %s bị mất worker lỗi, sẽ thử lại", job.submission_id)
+                    failures += 1
+                    delay = retry_delay(failures)
+                    log.exception("ghi lại bài %s bị mất worker lỗi (lần liên tiếp thứ %d), thử lại sau %.1f s",
+                                  job.submission_id, failures, delay)
                     self._lost.put((job, reason))
-                    self._stop.wait(RETRY_PAUSE_S)
+                    self._stop.wait(delay)
         finally:
             self.db.close_thread()
 
