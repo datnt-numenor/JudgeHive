@@ -164,3 +164,11 @@ def test_register_twice_is_an_error_and_closes(stack):
     w.send(reg())
     w.expect_error("ALREADY_REGISTERED")
     assert w.closed()
+
+
+def test_register_accepts_unicode_escapes_as_well_as_raw_utf8(stack):
+    """README 2.1: bên nhận phải chấp nhận cả dạng escape unicode của JSON lẫn UTF-8 thô."""
+    w = stack.connect()
+    w.send_raw(b'{"type":"REGISTER","req_id":"r1","name":"w\\u00e9","secret":"test-secret","protocol_version":1}\n')
+    assert w.recv()["type"] == "REGISTER_OK"
+    assert stack.server.snapshot()[0]["name"] == "wé"

@@ -147,6 +147,8 @@ def test_progress_with_wrong_tests_total_is_bad_message(stack):
     pytest.param({"time_ms": -1}, id="time-negative"),
     pytest.param({"memory_kib": None}, id="memory-null"),
     pytest.param({"time_ms": True}, id="time-bool"),
+    pytest.param({"time_ms": 2**31}, id="time-over-int32"),
+    pytest.param({"memory_kib": 2**70}, id="memory-beyond-sqlite-integer"),
 ])
 def test_malformed_result_is_bad_message_closes_and_redelivers(stack, change):
     first = stack.worker("a")

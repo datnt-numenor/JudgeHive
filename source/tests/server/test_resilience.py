@@ -214,3 +214,14 @@ def test_delivery_loop_failures_back_off_too(stack, monkeypatch, caplog):
     assert 3 <= failures <= 12
     logged = [r for r in caplog.records if "vòng giao bài" in r.getMessage() and r.levelname == "ERROR"]
     assert len(logged) == failures
+
+
+def test_control_messages_do_not_leave_a_short_send_timeout_on_the_socket(make_stack):
+    """ERROR giữ kết nối và PING đặt timeout gửi ngắn; phải khôi phục để JOB lớn vẫn có đủ `send_timeout_s`."""
+    stack = make_stack(ping_interval_s=0.1, send_timeout_s=30)
+    w = stack.worker()
+    w.send({"type": "SURPRISE"})
+    w.expect_error("UNKNOWN_TYPE")
+    assert w.recv(2, skip_ping=False)["type"] == "PING"
+    conn = next(iter(stack.server._workers.values()))
+    assert wait_until(lambda: conn.sock.gettimeout() == 30)

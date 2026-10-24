@@ -331,3 +331,25 @@ def test_queue_survives_worker_churn(stack):
         t.join(15)
     assert sorted(done) == sorted(sids)
     assert all(stack.row(s)["verdict"] == "AC" and stack.row(s)["delivery_count"] == 1 for s in sids)
+
+
+def test_a_rejudge_that_starts_after_three_deliveries_gets_three_new_ones(stack):
+    """README 2.6, D1, D6: mỗi lần rejudge đếm lại số lần giao từ đầu. Bài đã dùng đủ 3 lần giao khi AC mà được yêu cầu
+    rejudge lúc đang chấm không được thành SE ngay."""
+    sid = stack.submit()
+    for number in (1, 2):
+        w = stack.worker(f"lost{number}")
+        assert w.take_job()["attempt_id"] == number
+        w.close()
+        assert wait_until(lambda: not stack.server.snapshot())
+    w = stack.worker("third")
+    job = w.take_job()
+    assert job["attempt_id"] == 3 and stack.row(sid)["delivery_count"] == 3
+    with stack.db.write() as c:
+        c.execute("UPDATE submissions SET rejudge_requested = 1 WHERE id = ?", (sid,))
+    w.finish_ac(job)
+    job2 = w.take_job()  # bị SE ngay (không gửi JOB) nếu bộ đếm không được đặt lại
+    assert job2["submission_id"] == sid and job2["attempt_id"] == 4
+    w.finish_ac(job2)
+    row = stack.wait_row(sid, lambda r: r["state"] == "done")
+    assert row["verdict"] == "AC" and row["rejudge_failed"] == 0 and row["rejudged_at"] is not None

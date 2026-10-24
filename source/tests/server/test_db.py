@@ -50,23 +50,26 @@ def test_migrate_is_idempotent_and_sets_user_version(db):
     assert {"users", "problems", "tests", "submissions"} <= tables
 
 
-def test_concurrent_migrations_do_not_clash(tmp_path):
-    path = str(tmp_path / "race.db")
+def test_concurrent_creation_and_migration_of_a_fresh_database_do_not_clash(tmp_path):
+    """Server và manage.py có thể khởi động cùng lúc trên DB chưa có: đổi journal_mode sang WAL báo "database is locked"
+    ngay nếu không thử lại. Lặp nhiều DB mới vì race chỉ xảy ra khoảng 1 trên 10 lần."""
     errors = []
 
-    def run():
+    def run(path):
         try:
             Database(path).migrate()
         except Exception as e:  # noqa: BLE001 - test thu mọi lỗi
-            errors.append(e)
+            errors.append(repr(e))
 
-    threads = [threading.Thread(target=run) for _ in range(4)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    for round_number in range(60):
+        path = str(tmp_path / f"race{round_number}.db")
+        threads = [threading.Thread(target=run, args=(path,)) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert Database(path).conn().execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
     assert errors == []
-    assert Database(path).conn().execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
 
 
 def test_write_commits_and_rolls_back_on_exception(db):
