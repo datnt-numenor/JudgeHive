@@ -57,6 +57,28 @@ bằng root. Cấu hình đã kiểm chứng ở PR 3 (lệnh test chuẩn dùng
 Một lệnh test chuẩn duy nhất cho cả `tests/invariants/` và `tests/worker/` (xem `CLAUDE.md`, "Lệnh môi trường"):
 image test có `g++`, JDK 21, `setpriv`, `tini` và chạy với đúng cấu hình container ở trên.
 
+## Dùng bởi test đã khóa — không đổi chữ ký
+
+Các test worker được khóa (`tests/invariants/test_worker_contract_*.py`, tag `m2-tests-locked`) chỉ được dùng đúng
+bề mặt dưới đây. Sau khi khóa, đổi tên, đổi tham số hay đổi kiểu trả về của những mục này là phá test khóa: code phải
+giữ nguyên, hoặc dừng lại hỏi chủ repo. Mọi thứ khác trong `worker/` (kể cả `judge_run`, `RunResult`,
+`checker.*`, `Backoff`, `languages.*`, `Grader`, hàm của `sandbox` ngoài hai mục dưới) tự do đổi; test của chúng ở
+lại `tests/worker/`, không khóa.
+
+| Mục | Hợp đồng test khóa dựa vào |
+| --- | --- |
+| `executor.parse_job(msg)` | Trả `Job`, test chỉ dùng `Job.tests` (dãy, `len` = số test); message sai thì raise `executor.BadJob` |
+| `executor.grade(job, ctl, *, work_root)` | Trả dict body của `RESULT` (chưa có `type`, `submission_id`, `attempt_id`) khi `ctl` không có `deliver` |
+| `ctl` (đối tượng truyền vào `grade`) | `ctl.progress(n)`: gọi với `tests_done = n`, trả `False` khi phải dừng; `ctl.cancel`: `threading.Event`; `ctl.deliver(body)` không bắt buộc |
+| `main.Worker(cfg, *, grade_fn=executor.grade, sleep=None)` | `.run()` chạy vòng kết nối cho tới khi `.stop()`; `sleep(giây)` thay hàm chờ giữa hai lần kết nối lại; `grade_fn(job, ctl, **kwargs)` thay `executor.grade` |
+| `main.Config` (chỉ các field này) | `host`, `port`, `secret`, `name`, `work_root`, `backoff_base_s`, `backoff_cap_s`, `jitter` (khoảng chờ kết nối lại 1, 2, 4, ... trần 10 giây khi `jitter = 0`) |
+| `sandbox.uid_pids(uid)` | Trả danh sách PID (không zombie) của `uid` |
+| `sandbox.JUDGE_UID` | uid chạy code thí sinh |
+
+Ngoài `worker/`, test khóa còn dùng `common.protocol` (`encode`, `LineDecoder`, `Message`, `PROTOCOL_VERSION`,
+`MAX_CODE_BYTES`, `MAX_LINE_SERVER_TO_WORKER`), vốn đã khóa ở `m1-tests-locked`. Helper (`MockServer`,
+`FakeCtl`, `grade`, `make_job`) nằm trong test, không thuộc bề mặt này.
+
 ## Hạn chế đã biết
 
 - Code thí sinh vẫn đọc được các file hệ thống ai cũng đọc được (`/etc`, `/usr`); `/app` (mã worker) và secret
