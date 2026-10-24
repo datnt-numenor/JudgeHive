@@ -150,14 +150,14 @@ Server xử lý message lỗi theo trạng thái kết nối:
 | `type` lạ | (thuộc dòng `REGISTER_REJECTED`) | `ERROR` `UNKNOWN_TYPE`, giữ kết nối |
 | `PONG` hoặc `PROGRESS` thiếu field hoặc sai kiểu | (thuộc dòng `REGISTER_REJECTED`) | `ERROR` `BAD_MESSAGE`, bỏ message, giữ kết nối |
 | `PROGRESS` khớp `JOB` nhưng `tests_done` sai thứ tự (mục `PROGRESS`) | (thuộc dòng `REGISTER_REJECTED`) | `ERROR` `BAD_MESSAGE`, bỏ message, giữ kết nối |
-| `RESULT` thiếu field hoặc sai kiểu | (thuộc dòng `REGISTER_REJECTED`) | `ERROR` `BAD_MESSAGE` rồi đóng; bài đang giữ được giao lại |
+| `RESULT` thiếu field, sai kiểu hoặc có số nguyên ngoài khoảng (mục `RESULT`) | (thuộc dòng `REGISTER_REJECTED`) | `ERROR` `BAD_MESSAGE` rồi đóng; bài đang giữ được giao lại |
 | Gửi `REGISTER` lần nữa | — | `ERROR` `ALREADY_REGISTERED` rồi đóng |
 | `PROGRESS` không khớp `submission_id`/`attempt_id` của `JOB` đang giao cho kết nối này | — | Bị bỏ, server ghi log, không gửi `ERROR` |
 | `RESULT` không khớp `JOB` đang giao cho kết nối này, kể cả khi kết nối không giữ `JOB` nào | — | `ERROR` `UNEXPECTED_RESULT` rồi đóng; bài đang giữ (nếu có) được giao lại |
 | `ERROR` do worker gửi | (thuộc dòng `REGISTER_REJECTED`) | Server chỉ ghi log |
 | Dòng quá dài | `ERROR` `LINE_TOO_LONG` rồi đóng | `ERROR` `LINE_TOO_LONG` rồi đóng |
 
-Mọi tên mã lỗi trong bảng là **[ĐỀ XUẤT]**.
+Ý nghĩa đầy đủ của từng mã ở mục 5.
 
 Worker xử lý lỗi phía mình:
 
@@ -190,7 +190,7 @@ Tên field là **[ĐỀ XUẤT]**, trừ `type`, `attempt_id`, `submission_id`, 
 |-------|------|----------|-----------|
 | `type` | string | có | `"REGISTER"` |
 | `req_id` | string | có | Do worker đặt |
-| `name` | string | có | Tên chỉ để hiển thị, cho phép trùng giữa các worker; 1–64 ký tự **[ĐỀ XUẤT]** |
+| `name` | string | có | Tên chỉ để hiển thị, cho phép trùng giữa các worker; 1–64 ký tự |
 | `secret` | string | có | Shared secret của hệ thống |
 | `protocol_version` | integer | có | Phiên bản hiện tại: `1` **[ĐỀ XUẤT]** |
 
@@ -288,6 +288,7 @@ Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhấ
 |--------|---------|-----|-----|
 | Biên dịch | Gửi xong `JOB` | `PROGRESS` với `tests_done = 0`, hoặc `RESULT` (khi `CE`) | `COMPILE_TIMEOUT_MAX + SLACK` |
 | Test thứ i | `PROGRESS` với `tests_done = i−1` | `PROGRESS` với `tests_done = i`, hoặc `RESULT` | `time_limit_ms × MAX_TIME_FACTOR + PER_TEST_OVERHEAD` |
+| Chờ `RESULT` | `PROGRESS` với `tests_done = tests_total` | `RESULT` | Như cửa sổ test thứ i: `time_limit_ms × MAX_TIME_FACTOR + PER_TEST_OVERHEAD` |
 
 - Quá hạn, kể cả khi chưa nhận được `PROGRESS` với `tests_done = 0` trong cửa sổ biên dịch, thì server coi worker đã mất, đóng kết nối và giao lại bài (mục 2.6); lần giao đó vẫn tính vào số lần giao tối đa. Trước khi đóng, server cố gửi `ERROR` `DEADLINE_EXCEEDED` (best-effort: gửi không được thì vẫn đóng).
 - Chỉ `PROGRESS` khớp `JOB` mà `tests_done` bằng giá trị của `PROGRESS` khớp trước đó cộng 1 (bắt đầu từ 0, và `0 ≤ tests_done ≤ tests_total`) mới làm mới hạn.
@@ -315,6 +316,8 @@ Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhấ
 | `ce_message` | string | khi `CE` | Lỗi biên dịch rút gọn: tối đa 50 dòng và 4 KB (giới hạn nào chạm trước), đường dẫn tạm thay bằng `Main.cpp`/`Main.java`, cắt an toàn UTF-8 |
 | `sample_stdout` | string | khi `failed_is_sample = true` | stdout của chương trình trên test mẫu bị sai, tối đa 4 KB. Gửi với mọi verdict có `failed_test`; `AC` không gửi |
 | `se_detail` | string | không, chỉ khi `SE` | Chi tiết lỗi máy chấm, server chỉ ghi log, không chuyển cho client. Không chứa input/output của test |
+
+Mọi field số nguyên của `RESULT` (`submission_id`, `attempt_id`, `time_ms`, `memory_kib`, `failed_test`) phải nằm trong khoảng 0..2^31−1; riêng `failed_test` tối thiểu là 1. Ngoài khoảng đó, `RESULT` bị coi là sai định dạng: server gửi `ERROR` `BAD_MESSAGE` rồi đóng kết nối, và bài đang giữ được giao lại (mục 2.3, 2.6).
 
 Worker không bao giờ gửi stdout/stderr của test ẩn, và không gửi giá trị mã thoát cụ thể của chương trình.
 
@@ -403,7 +406,7 @@ Khi đó:
 - Mỗi bài được giao tối đa 3 lần cho một lần chấm (mỗi lần rejudge đếm lại từ đầu). Quá 3 lần thì bài nhận verdict `SE`.
 - Worker mất kết nối khi đang chấm thì hủy bài đó ngay (kill cả nhóm tiến trình), dọn thư mục tạm, và không gửi lại `RESULT` của bài đó qua kết nối mới.
 - `PROGRESS`/`RESULT` mang `attempt_id` cũ chỉ là trường hợp phòng thủ: kết nối cũ đã đóng nên bình thường chúng không thể tới server. Nếu vẫn tới, server xử lý theo bảng ở mục 2.3.
-- Server khởi động lại: worker tự kết nối lại; các bài đang chờ hoặc đang chấm dở được giao lại, không tính vào 3 lần.
+- Server khởi động lại: worker tự kết nối lại; các bài đang chờ được giao lại. Bài đang chấm lúc server tắt cũng được giao lại, và lần giao bị ngắt đó không tính vào 3 lần giao.
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
@@ -629,6 +632,33 @@ Tên mã là **[ĐỀ XUẤT]**.
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | `POST` không có `Content-Type: application/json` |
 | `RATE_LIMITED` | 429 | Vượt 10 bài nộp mỗi 60 giây (mỗi người), hoặc 10 lần đăng nhập mỗi 60 giây (mỗi `username`); kèm `Retry-After` |
 | `INTERNAL_ERROR` | 500 | Lỗi server; `message` chung, chi tiết chỉ ở log |
+
+
+### 5. Danh sách mã lỗi
+
+#### 5.1. Cổng worker
+
+Mọi mã dưới đây do server gửi cho worker trong message `ERROR` (mục 2.5). Cột "Kết nối" là điều xảy ra sau khi gửi.
+
+| `code` | Chiều | Ý nghĩa | Kết nối |
+|--------|-------|---------|---------|
+| `REGISTER_REJECTED` | server → worker | Trước `REGISTER` thành công: message đầu tiên không phải `REGISTER`, `REGISTER` thiếu field hoặc sai kiểu, thiếu hoặc sai `secret`; hoặc message khác (thiếu `type`, `type` lạ, `PONG`, `PROGRESS`, `RESULT`, `ERROR`) gửi trước khi đăng ký xong. Một mã chung, không cho biết lý do cụ thể | Đóng |
+| `UNSUPPORTED_VERSION` | server → worker | `protocol_version` không khớp (và `secret` đúng) | Đóng |
+| `REGISTER_TIMEOUT` | server → worker | Không gửi `REGISTER` hợp lệ trong 10 giây kể từ khi kết nối | Đóng |
+| `ALREADY_REGISTERED` | server → worker | `REGISTER` lần nữa trên kết nối đã đăng ký | Đóng |
+| `BAD_JSON` | server → worker | Dòng không phải JSON hợp lệ, không phải object, UTF-8 sai; hoặc (sau đăng ký) thiếu `type` hay `type` không phải chuỗi | Trước đăng ký: đóng. Sau đăng ký: giữ |
+| `UNKNOWN_TYPE` | server → worker | `type` không nằm trong bảng message (sau đăng ký) | Giữ |
+| `BAD_MESSAGE` | server → worker | `PONG` hoặc `PROGRESS` thiếu field hoặc sai kiểu; `PROGRESS` khớp `JOB` nhưng `tests_done` sai thứ tự (message bị bỏ). `RESULT` thiếu field, sai kiểu hoặc có số nguyên ngoài 0..2^31−1 | `PONG`, `PROGRESS`: giữ. `RESULT`: đóng, bài đang giữ được giao lại |
+| `UNEXPECTED_RESULT` | server → worker | `RESULT` không khớp `submission_id`/`attempt_id` của `JOB` đang giao cho kết nối này, kể cả khi kết nối không giữ `JOB` nào | Đóng, bài đang giữ (nếu có) được giao lại |
+| `LINE_TOO_LONG` | server → worker | Dòng từ worker vượt 1 MB (mục 2.2), trước hoặc sau đăng ký | Đóng |
+| `DEADLINE_EXCEEDED` | server → worker | Quá hạn chót một bước chấm (mục `PROGRESS`). Gửi theo kiểu cố gắng hết sức: gửi không được thì vẫn đóng | Đóng, bài đang giữ được giao lại |
+
+- Worker → server: worker được gửi `ERROR` với `code` tùy ý, server chỉ ghi log và không đổi trạng thái. Đây không phải mã trong bảng trên.
+- Server không gửi `ERROR` khi đóng kết nối vì đã có 16 kết nối chưa đăng ký (mục 2.6) hay vì mất kết nối.
+
+#### 5.2. REST
+
+Mã lỗi của REST nằm ở mục 3.5, cùng định dạng `{"error": {"code", "message"}}`; hai bảng mã độc lập nhau.
 
 ---
 
