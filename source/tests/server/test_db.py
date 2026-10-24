@@ -150,3 +150,30 @@ def test_deleting_a_problem_removes_its_tests(db):
 
 def test_module_exposes_migrations_as_a_list_of_scripts():
     assert isinstance(db_module.MIGRATIONS, list) and all(isinstance(m, str) for m in db_module.MIGRATIONS)
+
+
+def test_create_user_returns_the_id_and_rejects_duplicates(db):
+    first = db.create_user("alice", "hash", "admin")
+    assert db.create_user("bob", "hash") != first
+    with pytest.raises(sqlite3.IntegrityError):
+        db.create_user("alice", "other")
+    assert db.conn().execute("SELECT role FROM users WHERE id = ?", (first,)).fetchone()[0] == "admin"
+
+
+def test_create_submission_queues_a_row_and_get_submission_returns_the_documented_view(db):
+    user = db.create_user("alice", "hash")
+    add_problem(db)
+    sid = db.create_submission(user, "sum", "python", "print(1)")
+    view = db.get_submission(sid)
+    assert set(view) == set(db_module.SUBMISSION_VIEW)
+    assert (view["state"], view["language"], view["attempt_id"], view["verdict"]) == ("queued", "python", 0, None)
+    assert view["failed_is_sample"] is None
+    with db.write() as c:
+        c.execute("UPDATE submissions SET state = 'done', verdict = 'WA', failed_test = 2, failed_is_sample = 1 "
+                  "WHERE id = ?", (sid,))
+    view = db.get_submission(sid)
+    assert (view["verdict"], view["failed_test"], view["failed_is_sample"]) == ("WA", 2, True)
+
+
+def test_get_submission_of_unknown_id_is_none(db):
+    assert db.get_submission(12345) is None

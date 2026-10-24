@@ -6,6 +6,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 
 log = logging.getLogger("judgehive.db")
 
@@ -80,6 +81,12 @@ MIGRATIONS = [
 ]
 
 
+# Các key của dict `Database.get_submission` (giao diện ổn định cho PR sau và cho test; không phải toàn bộ cột).
+SUBMISSION_VIEW = ("id", "user_id", "problem_id", "language", "state", "attempt_id", "delivered_test_hash", "verdict",
+                   "verdict_test_hash", "time_ms", "memory_kib", "failed_test", "failed_is_sample", "re_kind",
+                   "ce_message", "sample_stdout")
+
+
 class Database:
     def __init__(self, path):
         self.path = path
@@ -122,6 +129,30 @@ class Database:
                 c.execute("ROLLBACK")
             raise
 
+    def create_user(self, username, password_hash, role="user"):
+        """Thêm user, trả id. `sqlite3.IntegrityError` nếu username đã có."""
+        with self.write() as c:
+            return c.execute("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                             (username, password_hash, role, _now_ms())).lastrowid
+
+    def create_submission(self, user_id, problem_id, language, code):
+        """Ghi một bài nộp ở trạng thái `queued`, trả id. Không tự đưa vào hàng đợi trong RAM của dispatcher."""
+        with self.write() as c:
+            return c.execute("INSERT INTO submissions (user_id, problem_id, language, code, submitted_at, state) "
+                             "VALUES (?, ?, ?, ?, ?, 'queued')",
+                             (user_id, problem_id, language, code, _now_ms())).lastrowid
+
+    def get_submission(self, submission_id):
+        """dict với các key trong `SUBMISSION_VIEW` (`failed_is_sample` là bool hoặc None), hoặc None nếu không có."""
+        row = self.conn().execute(f"SELECT {', '.join(SUBMISSION_VIEW)} FROM submissions WHERE id = ?",
+                                  (submission_id,)).fetchone()
+        if row is None:
+            return None
+        view = dict(row)
+        if view["failed_is_sample"] is not None:
+            view["failed_is_sample"] = bool(view["failed_is_sample"])
+        return view
+
     def migrate(self):
         """Chạy các migration còn thiếu. An toàn khi server và `manage.py` chạy cùng lúc (mỗi bước trong một
         transaction IMMEDIATE và đọc lại `user_version` bên trong)."""
@@ -134,6 +165,10 @@ class Database:
                     c.execute(statement)
                 c.execute(f"PRAGMA user_version={index + 1}")
             log.info("đã chạy migration %d", index + 1)
+
+
+def _now_ms():
+    return int(time.time() * 1000)
 
 
 def _split_statements(script):

@@ -14,7 +14,6 @@ import os
 import re
 import sqlite3
 import sys
-import time
 
 from common import protocol
 from server import auth, problems
@@ -69,9 +68,7 @@ def cmd_users_create(db, args, stdin):
     except auth.PasswordError as e:
         raise CommandError(str(e)) from e
     try:
-        with db.write() as c:
-            c.execute("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
-                      (args.username, stored, args.role, int(time.time() * 1000)))
+        db.create_user(args.username, stored, args.role)
     except sqlite3.IntegrityError as e:
         raise CommandError(f"username {args.username!r} đã tồn tại") from e
     print(f"đã tạo {args.role} {args.username}")
@@ -96,16 +93,12 @@ def cmd_submissions_add(db, args, stdin):
         raise CommandError(f"không đọc được {args.file}: {e}") from e
     if len(code.encode("utf-8")) > protocol.MAX_CODE_BYTES:
         raise CommandError(f"code vượt {protocol.MAX_CODE_BYTES} byte")
-    with db.write() as c:
-        user = c.execute("SELECT id FROM users WHERE username = ?", (args.user,)).fetchone()
-        if user is None:
-            raise CommandError(f"không có user {args.user!r}")
-        if c.execute("SELECT 1 FROM problems WHERE id = ?", (args.problem,)).fetchone() is None:
-            raise CommandError(f"không có đề {args.problem!r}")
-        cur = c.execute("INSERT INTO submissions (user_id, problem_id, language, code, submitted_at, state) "
-                        "VALUES (?, ?, ?, ?, ?, 'queued')",
-                        (user["id"], args.problem, args.language, code, int(time.time() * 1000)))
-        new_id = cur.lastrowid
+    user = db.conn().execute("SELECT id FROM users WHERE username = ?", (args.user,)).fetchone()
+    if user is None:
+        raise CommandError(f"không có user {args.user!r}")
+    if db.conn().execute("SELECT 1 FROM problems WHERE id = ?", (args.problem,)).fetchone() is None:
+        raise CommandError(f"không có đề {args.problem!r}")
+    new_id = db.create_submission(user["id"], args.problem, args.language, code)
     print(new_id)
 
 
