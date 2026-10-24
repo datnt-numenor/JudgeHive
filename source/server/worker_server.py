@@ -31,6 +31,8 @@ UNEXPECTED_RESULT = "UNEXPECTED_RESULT"
 DEADLINE_EXCEEDED = "DEADLINE_EXCEEDED"
 
 RECV_BYTES = 256 * 1024
+MAX_RESULT_INT = 2**31 - 1  # trần cho mọi số trong RESULT: số lớn hơn làm SQLite ném OverflowError và bài bị giao lại oan
+CONTROL_SEND_TIMEOUT_S = 1.0  # ERROR giữ kết nối và PING không được chặn thread gọi quá lâu (JOB mới dùng send_timeout_s)
 LOG_TEXT_MAX = 200
 VERDICTS = frozenset({"AC", "WA", "TLE", "MLE", "RE", "CE", "SE"})
 RE_KINDS = frozenset({"SIGSEGV", "SIGFPE", "SIGABRT", "SIGKILL", "OTHER_SIGNAL", "EXIT_NONZERO"})
@@ -87,8 +89,8 @@ def parse_result(msg):
 
     def integer(key, minimum=0):
         value = msg.get(key)
-        if not _is_int(value) or value < minimum:
-            raise ResultError(f"{key} thiếu hoặc sai kiểu")
+        if not _is_int(value) or not minimum <= value <= MAX_RESULT_INT:
+            raise ResultError(f"{key} thiếu, sai kiểu hoặc ngoài khoảng")
         return value
 
     def string(key):
@@ -431,7 +433,7 @@ class WorkerServer:
 
     def _warn(self, conn, code, message):
         """Gửi ERROR nhưng giữ kết nối. Lock gửi bận (đang gửi JOB lớn) quá 1 giây thì bỏ qua lượt ERROR."""
-        if not self._try_send(conn, _error(code, message), lock_timeout=1.0):
+        if not self._try_send(conn, _error(code, message), lock_timeout=1.0, socket_timeout=CONTROL_SEND_TIMEOUT_S):
             log.info("worker #%s: bỏ ERROR %s vì lock gửi bận hoặc lỗi gửi", conn.worker_id, code)
 
     def _on_pong(self, conn, msg):
@@ -546,11 +548,13 @@ class WorkerServer:
                 if not writable:
                     return
                 conn.ping_seq += 1
+                conn.sock.settimeout(CONTROL_SEND_TIMEOUT_S)
                 conn.sock.sendall(protocol.encode({"type": "PING", "seq": conn.ping_seq}))
                 conn.last_ping_at = time.monotonic()
             except (OSError, ValueError):
                 failed = True
         finally:
+            self._restore_send_timeout(conn, CONTROL_SEND_TIMEOUT_S)
             conn.send_lock.release()
         if failed:
             self.mark_dead(conn, "gửi PING lỗi")
@@ -590,7 +594,15 @@ class WorkerServer:
         except OSError:
             return False
         finally:
+            self._restore_send_timeout(conn, socket_timeout)
             conn.send_lock.release()
+
+    def _restore_send_timeout(self, conn, changed):
+        if changed is not None:
+            try:
+                conn.sock.settimeout(self.cfg.send_timeout_s)
+            except OSError:
+                pass
 
     def _close_socket(self, conn):
         self._close_raw(conn.sock)
