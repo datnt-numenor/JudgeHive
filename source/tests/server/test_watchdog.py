@@ -78,21 +78,15 @@ def test_repeated_progress_does_not_extend_the_window(fast):
     job = w.take_job()
     w.progress(job, 0)
     started = time.monotonic()
-    got = []
-    while time.monotonic() - started < 3:
-        try:
-            w.progress(job, 0)  # lặp lại: BAD_MESSAGE và không làm mới hạn
-        except OSError:
-            break
-        try:
-            msg = w.recv(0.15)
-        except (TimeoutError, EOFError):
-            continue
-        got.append(msg["code"])
-        if msg["code"] == "DEADLINE_EXCEEDED":
-            break
-    assert "DEADLINE_EXCEEDED" in got and "BAD_MESSAGE" in got
-    assert time.monotonic() - started < 2.5  # 0,7 s sau PROGRESS(0), không phải mãi mãi
+    for _ in range(3):  # lặp lại tại 0,15 / 0,3 / 0,45 s: BAD_MESSAGE và không làm mới hạn (cửa sổ 0,7 s)
+        time.sleep(0.15)
+        w.progress(job, 0)
+    # rồi im lặng (gửi tiếp lúc server đóng socket có thể gây RST làm mất ERROR best-effort)
+    for _ in range(3):
+        w.expect_error("BAD_MESSAGE")
+    w.expect_error("DEADLINE_EXCEEDED", timeout=3)
+    # hạn tính từ PROGRESS(0) đầu: khoảng 0,7 s. Nếu lần lặp cuối (0,45 s) làm mới hạn thì phải tới khoảng 1,15 s.
+    assert time.monotonic() - started < 1.0
 
 
 def test_window_after_the_last_progress_waits_for_result_and_then_expires(fast):
