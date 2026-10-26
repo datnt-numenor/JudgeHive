@@ -94,7 +94,7 @@ Các test hợp đồng cổng worker (`tests/invariants/test_server_contract_*.
 
 | Mục | Hợp đồng test khóa dựa vào |
 | --- | --- |
-| `config.ServerConfig(bind_host, worker_port, secret, db_path, max_unauthenticated)` | Tạo bằng keyword; `worker_port=0` là cổng tự chọn. Mọi field khác dùng mặc định, và test dựa vào `max_deliveries` mặc định là 3 (README gốc 2.6, D1) |
+| `config.ServerConfig(bind_host, worker_port, secret, db_path, max_unauthenticated, ping_interval_s, peer_dead_after_s)` | Tạo bằng keyword; `worker_port=0` là cổng tự chọn. `ping_interval_s` và `peer_dead_after_s` được truyền tường minh (đủ lớn so với thời gian chạy của test, vì worker giả không trả PONG), test không dựa vào mặc định của hai field này. Mọi field khác dùng mặc định, và test dựa vào `max_deliveries` mặc định là 3 (README gốc 2.6, D1) |
 | `db.Database(path)` | `.migrate()`; `.write()` (context manager, trả connection trong transaction); `.create_user(username, password_hash)` trả id; `.create_submission(user_id, problem_id, language, code)` trả id, trạng thái `queued`; `.get_submission(id)` trả dict hoặc `None` |
 | key của `get_submission` | `state` (các giá trị `queued`, `judging`, `done`), `attempt_id`, `delivered_test_hash`, `verdict`, `verdict_test_hash`, `time_ms`, `memory_kib`, `failed_test`, `failed_is_sample`, `re_kind`, `ce_message`, `sample_stdout` |
 | `problems.TestCase(is_sample, input, output)`, `problems.ProblemData(id, title, statement, time_limit_ms, memory_limit_kib, tests)` | Dataclass bất biến, tham số theo vị trí |
