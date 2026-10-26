@@ -428,6 +428,7 @@ Khi đó:
 
 - Bài worker đang giữ được đưa lại hàng đợi và giao cho worker rảnh tiếp theo (có thể chính worker đó sau khi kết nối lại), với `attempt_id` mới lớn hơn.
 - Mỗi bài được giao tối đa 3 lần cho một lần chấm (mỗi lần rejudge đếm lại từ đầu). Mọi lần giao bị cắt ngang đều tính vào 3 lần, bất kể lý do: mất kết nối, quá hạn chót, `RESULT` sai định dạng, ngoài khoảng, không khớp `JOB` hay vi phạm kiểm tra ngữ nghĩa. Lần giao thứ 3 bị cắt ngang thì bài nhận verdict `SE`, không giao lần thứ 4; riêng bài đang được chấm lại (rejudge) thì verdict cũ không bị ghi đè, bài chỉ được đánh dấu chấm lại lỗi (`rejudge_failed`). Cơ chế rejudge được mô tả ở phần admin (PR sau). Vì vậy một worker lỗi tất định không làm một bài bị giao lại vô hạn.
+- Một lần giao được tính khi server ghi nhận việc giao vào cơ sở dữ liệu, trước khi gửi `JOB`. Worker mất kết nối đúng giữa lúc ghi nhận và lúc gửi `JOB` vẫn bị tính một lần. Hệ quả: trường hợp xấu nhất, một bài nhận `SE` sau khi server thực sự gửi `JOB` ít hơn 3 lần, và chỉ khi worker mất kết nối đúng khoảng đó.
 - Riêng khi server nhận một `RESULT` hợp lệ nhưng không ghi được kết quả vào cơ sở dữ liệu: kết nối được giữ, nhưng bài vẫn được giao lại và lần giao đó tính vào 3 lần.
 - Worker mất kết nối khi đang chấm thì hủy bài đó ngay (kill cả nhóm tiến trình), dọn thư mục tạm, và không gửi lại `RESULT` của bài đó qua kết nối mới.
 - `PROGRESS`/`RESULT` mang `attempt_id` cũ chỉ là trường hợp phòng thủ: kết nối cũ đã đóng nên bình thường chúng không thể tới server. Nếu vẫn tới, server xử lý theo bảng ở mục 2.3.
