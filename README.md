@@ -61,6 +61,8 @@ cd assignment-network-project
 ```
 
 ### 2. Chạy server
+Tạo shared secret của worker một lần (file `source/secrets/worker.env` bị git bỏ qua, mẫu ở `worker.env.example`): `python -c "import secrets, pathlib; pathlib.Path('source/secrets/worker.env').write_text('JH_WORKER_SECRET=' + secrets.token_hex(32) + '\n', encoding='utf-8')"` (không dùng `>` vì PowerShell 5.1 ghi UTF-16 có BOM).
+
 ```bash
 cd source/server
 # Các lệnh để khởi động server
