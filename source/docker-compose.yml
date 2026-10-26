@@ -1,0 +1,63 @@
+# JudgeHive: server + worker. Chạy từ thư mục source/:
+#   mkdir secrets
+#   python -c "import secrets; print('JH_WORKER_SECRET=' + secrets.token_hex(32))" > secrets/worker.env
+#   docker compose up --build                       # một worker
+#   docker compose up --build --scale worker=3      # ba worker
+# Quản lý (DB nằm trong named volume, nên chạy trong container server):
+#   docker compose exec server python -m server.manage users create NAME --role admin
+name: judgehive
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: runtime
+    image: judgehive-server
+    env_file: ./secrets/worker.env  # JH_WORKER_SECRET
+    ports:
+      - "8000:8000"  # HTTP/WebSocket cho trình duyệt
+      - "9000:9000"  # cổng worker (TCP); worker ở máy khác kết nối vào đây
+    volumes:
+      - db:/data
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+      target: runtime
+    image: judgehive-worker
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      JH_SERVER_HOST: server
+      JH_WORKER_PORT: "9000"
+    # Secret qua biến môi trường, không qua `secrets:` của compose: file mount có mode 0777 và compose bỏ qua
+    # uid/gid/mode, nên uid thí sinh (61000) đọc được. Worker xóa biến này khỏi môi trường trước khi chạy code thí
+    # sinh; bản gốc trong /proc/1/environ chỉ root đọc được (xem worker/README.md).
+    env_file: ./secrets/worker.env
+    # Cấu hình tối thiểu đã đo ở PR 3 (xem worker/README.md): worker chạy root để hạ quyền code thí sinh.
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, KILL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512  # chặn fork bomb duy nhất (không đặt RLIMIT_NPROC)
+    mem_limit: 1g
+    cpus: 2
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /dev/shm
+      - /work:exec,mode=755  # /work cần exec để chạy file C++ đã biên dịch
+    restart: unless-stopped
+
+volumes:
+  db:

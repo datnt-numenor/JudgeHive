@@ -5,3 +5,4 @@ __pycache__/
 tmp_judge/
 node_modules/
 dist/
+secrets/

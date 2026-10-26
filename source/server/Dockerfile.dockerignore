@@ -1,0 +1,9 @@
+client
+worker
+tests
+tools
+server/Dockerfile
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+secrets
