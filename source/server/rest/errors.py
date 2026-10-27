@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.routing import Match
 
+from server import static
+
 log = logging.getLogger("judgehive.rest")
 
 JSON_TYPE = "application/json; charset=utf-8"
@@ -79,6 +81,10 @@ def _allowed_methods(request):
 
 async def handle_http_exception(request, exc):
     if not _is_api(request):
+        if exc.status_code == 404:
+            fallback = static.spa_fallback(request)  # trang của SPA (GET/HEAD, không đuôi file, không /api /ws /assets)
+            if fallback is not None:
+                return fallback
         from fastapi.exception_handlers import http_exception_handler
         return await http_exception_handler(request, exc)
     headers = {}

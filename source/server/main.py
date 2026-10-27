@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from server import config as config_module
-from server import problems, rest
+from server import problems, rest, static
 from server.db import Database
 from server.dispatcher import Dispatcher
 from server.hooks import LoopHooks
@@ -103,6 +103,8 @@ def create_app(cfg=None, clock=None):
     # (README 3.2: đường dẫn không tồn tại là 404 JSON).
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False)
     rest.install(app)
+    # Giao diện web (nếu có thư mục build): `/assets` và fallback SPA trong bộ xử lý 404 của REST; không route nào khớp "/".
+    static.install(app, cfg.static_dir if cfg is not None else config_module.static_dir_from_env(os.environ))
     return app
 
 

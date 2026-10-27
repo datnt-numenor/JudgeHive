@@ -1,4 +1,4 @@
-# Server (FastAPI + cổng worker TCP). Build context là source/ (cần cả common/ và server/):
+# Server (FastAPI + cổng worker TCP + giao diện web đã build). Build context là source/ (cần common/, server/ và client/):
 #   docker build -f server/Dockerfile --target runtime -t judgehive-server .
 #   docker build -f server/Dockerfile --target test -t judgehive-server-test .
 # Base ghim theo bản Debian, cùng base với worker.
@@ -33,10 +33,25 @@ ENTRYPOINT ["tini", "--"]
 CMD ["python", "-m", "pytest", "tests/server", "-q"]
 
 
+FROM node:22-slim AS client-build
+
+# npm 10.9.x (đi kèm node:22-slim) lỗi nội bộ khi giải peer dependency của vitest 5 (xem client/README.md), nên cài npm 11
+# bản cố định. Cần mạng lúc build (npm ci). Tách lớp: sửa mã client không cài lại phụ thuộc.
+RUN npm i -g npm@11.21.1
+WORKDIR /client
+COPY client/package.json client/package-lock.json client/.npmrc ./
+RUN npm ci --no-audit --no-fund
+COPY client/ ./
+RUN npm run build
+
+
 FROM base AS runtime
 
 COPY common /app/common
 COPY server /app/server
+# Giao diện web đã build (index.html và assets/); server phục vụ cùng origin với API, người chạy không cần cài Node.
+COPY --from=client-build /client/dist /app/static
+ENV JH_STATIC_DIR=/app/static
 USER app
 # DB nằm trong named volume gắn vào /data (WAL cần file -shm dùng chung, không bind mount từ ổ Windows).
 VOLUME /data
