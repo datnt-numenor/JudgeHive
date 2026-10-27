@@ -58,6 +58,17 @@ Server nghe `8000` (HTTP) và `9000` (cổng worker). Biến môi trường:
 | `JH_PROBLEMS_DIR` | `server/problems` | Thư mục đề seed |
 | `JH_LOG_LEVEL` | `INFO` | Mức log |
 
+Cờ uvicorn cố định trong `CMD` của `server/Dockerfile` (không đọc từ biến môi trường):
+
+| Cờ | Giá trị | Lý do |
+|----|---------|-------|
+| `--no-server-header` | | Không lộ `server: uvicorn` trong response |
+| `--timeout-keep-alive` | `5` | Kết nối HTTP rảnh bị đóng sau 5 giây, kết nối bỏ không không chiếm chỗ lâu |
+| `--limit-concurrency` | `200` | Quá 200 kết nối/tác vụ đồng thời thì uvicorn trả 503 ngay (một process, một event loop). Cổng worker là socket riêng nên không tính. PR WebSocket phải cân lại số này vì mỗi WebSocket là một kết nối |
+| `--workers` | không dùng | Đúng một process |
+
+Chưa có timeout đọc body ở tầng ứng dụng: client chậm chiếm một kết nối (không chiếm thread vì phần đọc body là `async`) tới khi gửi xong, tối đa 512 KB; trần đồng thời ở trên là lớp chặn kết nối treo hàng loạt.
+
 ### Quản lý (`manage.py`)
 
 DB nằm trong named volume nên chạy trong container server:

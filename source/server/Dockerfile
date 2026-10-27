@@ -42,5 +42,8 @@ USER app
 VOLUME /data
 EXPOSE 8000 9000
 # Đúng một process uvicorn: hàng đợi và danh sách worker nằm trong bộ nhớ (không dùng --workers > 1).
+# --no-server-header: không lộ "server: uvicorn". --timeout-keep-alive 5: đóng kết nối rảnh sau 5 giây (kết nối giữ mở
+# không làm gì chiếm chỗ). --limit-concurrency 200: quá 200 kết nối/tác vụ đồng thời thì uvicorn trả 503 ngay thay vì
+# nhận thêm (phần web là một process, một event loop). Cổng worker (TCP, 9000) là socket riêng, không tính vào số này.
 ENTRYPOINT ["tini", "--"]
-CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${JH_HTTP_PORT:-8000}"]
+CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${JH_HTTP_PORT:-8000} --no-server-header --timeout-keep-alive 5 --limit-concurrency 200"]

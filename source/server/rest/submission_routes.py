@@ -9,6 +9,7 @@ from common import protocol
 from server.dispatcher import LEVEL_NEW
 from server.rest import sessions, views
 from server.rest.body import body_submit, utf8_size
+from server.rest.parse import INT64_MAX, parse_uint
 from server.rest.errors import ApiError, ApiJSONResponse, invalid, log, problem_not_found, rate_limited, \
     submission_not_found
 from server.rest.problem_routes import PROBLEM_ID
@@ -17,9 +18,6 @@ router = APIRouter()
 
 LANGUAGES = ("python", "cpp", "java")
 CLIENT_TOKEN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-DIGITS = re.compile(r"[0-9]+")  # chỉ chữ số ASCII (int() chấp nhận cả chữ số Unicode, dấu, khoảng trắng)
-PATH_ID = re.compile(r"[1-9][0-9]{0,18}")
-SQLITE_MAX_INT = 2**63 - 1
 LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT = 50, 200
 
 
@@ -89,17 +87,17 @@ def _int_param(params, name, high):
         return None
     if len(values) != 1:  # tham số trùng: 400 (D21)
         raise invalid(name)
-    raw = values[0]
-    if not DIGITS.fullmatch(raw) or not 1 <= int(raw) <= high:
+    value = parse_uint(values[0], low=1, high=high)
+    if value is None:
         raise invalid(name)
-    return int(raw)
+    return value
 
 
 @router.get("/api/submissions")
 def list_submissions(request: Request, user: sessions.SessionUser = Depends(sessions.current_user)):
     params = urllib.parse.parse_qs(request.scope["query_string"].decode("latin-1"), keep_blank_values=True)
     limit = _int_param(params, "limit", LIST_MAX_LIMIT)
-    before_id = _int_param(params, "before_id", SQLITE_MAX_INT)
+    before_id = _int_param(params, "before_id", INT64_MAX)
     limit = LIST_DEFAULT_LIMIT if limit is None else limit
     sql = (f"SELECT {views.LIST_COLUMNS} FROM submissions s JOIN problems p ON p.id = s.problem_id "
            "WHERE s.user_id = ?")
@@ -116,11 +114,12 @@ def list_submissions(request: Request, user: sessions.SessionUser = Depends(sess
 @router.get("/api/submissions/{submission_id}")
 def get_submission(submission_id: str, request: Request, user: sessions.SessionUser = Depends(sessions.current_user)):
     # Id sai định dạng, không tồn tại, và bài của người khác (kể cả admin gọi): cùng một 404.
-    if not PATH_ID.fullmatch(submission_id) or int(submission_id) > SQLITE_MAX_INT:
+    sid = parse_uint(submission_id, low=1, canonical=True)
+    if sid is None:
         raise submission_not_found()
     conn = request.app.state.rest.db.conn()
     row = conn.execute(f"SELECT {views.DETAIL_COLUMNS} FROM submissions s JOIN problems p ON p.id = s.problem_id "
-                       "WHERE s.id = ? AND s.user_id = ?", (int(submission_id), user.id)).fetchone()
+                       "WHERE s.id = ? AND s.user_id = ?", (sid, user.id)).fetchone()
     if row is None:
         raise submission_not_found()
     return ApiJSONResponse(views.detail_view(conn, row, user.role == "admin"))

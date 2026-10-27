@@ -6,8 +6,10 @@ theo byte nhận từ mạng, kể cả body chunked (không có `Content-Length
 import json
 
 from fastapi import Request
+from starlette.requests import ClientDisconnect
 
 from server.rest.errors import ApiError, invalid
+from server.rest.parse import is_ascii_digits, parse_uint
 
 BODY_LIMIT_SUBMIT = 512 * 1024
 BODY_LIMIT_DEFAULT = 128 * 1024
@@ -37,16 +39,21 @@ def json_object_dependency(limit):
         _check_content_type(request.headers.get("content-type"))
         declared = request.headers.get("content-length")
         if declared is not None:
-            if not declared.isascii() or not declared.isdigit():
+            if not is_ascii_digits(declared):
                 raise invalid()
-            if int(declared) > limit:
+            length = parse_uint(declared)  # None khi dài quá 19 chữ số: chắc chắn vượt giới hạn
+            if length is None or length > limit:
                 raise _too_large()
         chunks, total = [], 0
-        async for chunk in request.stream():
-            total += len(chunk)
-            if total > limit:
-                raise _too_large()
-            chunks.append(chunk)
+        try:
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > limit:
+                    raise _too_large()
+                chunks.append(chunk)
+        except ClientDisconnect:
+            # Client ngắt giữa chừng: không còn ai nhận response, và đây không phải lỗi server (không 500, không traceback).
+            raise invalid() from None
         try:
             value = json.loads(b"".join(chunks).decode("utf-8"), parse_constant=_reject_constant)
         except (ValueError, RecursionError):  # UnicodeDecodeError là ValueError
