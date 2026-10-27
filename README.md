@@ -667,6 +667,8 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 | `RATE_LIMITED` | 429 | Vượt 10 bài nộp mỗi 60 giây (mỗi người), 10 lần đăng nhập mỗi 60 giây (mỗi `username`), hoặc quá 8 đăng nhập đang xử lý cùng lúc; kèm `Retry-After` |
 | `INTERNAL_ERROR` | 500 | Lỗi server; `message` chung, chi tiết chỉ ở log |
 
+**Ngoại lệ: 503 do hạ tầng.** Khi có quá nhiều kết nối đồng thời (giới hạn `--limit-concurrency` của uvicorn, xem `server/README.md`), uvicorn trả 503 ngay ở tầng hạ tầng, trước khi request tới ứng dụng. Response này **không** theo định dạng `{"error": {...}}` (thân là văn bản thường) và không có `Cache-Control: no-store`. Client coi mọi 503 là lỗi tạm thời: thử lại sau, không phân tích thân response, và với `POST /api/submissions` giữ nguyên `client_token` khi thử lại (mục 3.3).
+
 
 ### 4. WebSocket
 
