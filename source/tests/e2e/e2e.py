@@ -176,7 +176,12 @@ def main():
         status, headers, body = http_call("GET", "/api/health")
         check("health công khai và tối thiểu", status == 200 and body == {"status": "ok"})
         check("không lộ header server (cờ --no-server-header)", "server" not in headers, headers.get("server", ""))
-        check("không lộ tài liệu API", http_call("GET", "/openapi.json")[0] == 404 and http_call("GET", "/docs")[0] == 404)
+        # `/docs` và `/redoc` không có đuôi file nên là đường dẫn của SPA (trả index.html): điều cần chắc là không có tài liệu
+        # API của FastAPI (Swagger UI, ReDoc, schema OpenAPI) ở bất kỳ đường nào trong số này.
+        doc_pages = [page_call(path) for path in ("/openapi.json", "/docs", "/redoc")]
+        check("không lộ tài liệu API",
+              doc_pages[0][0] == 404 and all(b"swagger" not in body.lower() and b"redoc" not in body.lower()
+                                               and b"openapi" not in body.lower() for _, _, body in doc_pages))
         check("chưa đăng nhập thì 401", http_call("GET", "/api/problems")[0] == 401)
 
         status, headers, page = page_call("/")
