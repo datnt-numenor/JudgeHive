@@ -1,8 +1,8 @@
 # MODULE SERVER
 
 Server chính của JudgeHive: nhận worker qua cổng TCP thuần (framing JSON-lines do nhóm tự viết, xem README gốc mục
-"Giao tiếp" 2), giao bài, lưu kết quả vào SQLite. Phần REST/WebSocket cho trình duyệt (nộp bài, đăng nhập, bảng xếp
-hạng) thuộc các PR sau; hiện chỉ có `GET /api/health`.
+"Giao tiếp" 2), giao bài, lưu kết quả vào SQLite. REST cho trình duyệt (đăng nhập, phiên, đề, nộp bài, lịch sử; README gốc mục 3)
+nằm trong `rest/`. WebSocket, bảng xếp hạng và endpoint admin thuộc các PR sau.
 
 ---
 
@@ -26,7 +26,8 @@ hạng) thuộc các PR sau; hiện chỉ có `GET /api/health`.
 | `dispatcher.py` | Hàng đợi ba mức (giao lại > bài mới > rejudge), transaction giao bài, commit verdict, giao lại khi worker chết |
 | `db.py` | Kết nối SQLite, schema và migration (`PRAGMA user_version`) |
 | `problems.py` | Đọc thư mục đề, hash bộ test, kiểm giới hạn 8 MB và 16 MB, seed và reimport |
-| `auth.py` | Băm mật khẩu scrypt (chưa có endpoint web) |
+| `auth.py` | Băm mật khẩu scrypt (từ chối mật khẩu có ký tự NUL: scrypt của OpenSSL bỏ qua NUL cuối) |
+| `rest/` | REST: `errors.py` (định dạng lỗi), `body.py` (Content-Type, giới hạn body, JSON), `sessions.py` (cookie và bảng `sessions`), `limits.py` (giới hạn đăng nhập), `views.py` (đối tượng bài nộp, whitelist theo verdict), `auth_routes.py`, `problem_routes.py`, `submission_routes.py` |
 | `hooks.py` | Điểm móc để PR sau đẩy `STATUS`/`SCOREBOARD` xuống WebSocket (hiện chỉ ghi log) |
 | `config.py` | Cấu hình từ biến môi trường |
 | `manage.py` | Script quản lý (xem dưới) |
@@ -71,15 +72,17 @@ docker compose exec server python -m server.manage problems reimport aplusb     
 `problems/` rồi restart không có tác dụng; dùng `problems reimport` (và build lại image nếu đổi file, vì `problems/`
 nằm trong image). `reimport` đổi hash bộ test nhưng không tự chấm lại và không đổi cờ ẩn.
 
-Công cụ dev tạm (đến khi có REST nộp bài ở PR 5):
+Nộp bài và xem kết quả qua REST (`POST /api/submissions`, `GET /api/submissions/{id}`). `submissions show ID` chỉ để
+xem một dòng bài nộp khi gỡ lỗi (in cả cờ nội bộ như `delivery_count`).
 
-```bash
-docker compose exec -T server python -m server.manage submissions add --user alice --problem aplusb --language python --file - < sol.py
-docker compose exec server python -m server.manage submissions show 1
-```
+### REST và SQLite
 
-`add` chỉ ghi dòng `queued` vào DB; hàng đợi nằm trong bộ nhớ của server nên bài chỉ được giao sau khi
-`docker compose restart server` (lifespan nạp lại mọi bài chưa chấm xong).
+Endpoint và dependency của REST khai báo bằng `def`, nên FastAPI chạy chúng trong threadpool; event loop không gọi
+SQLite (chỉ `rest/body.py` là `async`, và nó chỉ đọc stream). Mỗi thread của pool tự mở kết nối riêng qua
+`Database.conn()` (thread-local, không chia sẻ giữa thread, cùng mô hình với cổng worker) và giữ nó suốt đời thread,
+tối đa khoảng 40 kết nối. Đọc dùng autocommit; ghi dùng `Database.write()` (`BEGIN IMMEDIATE`). Nộp bài kiểm token
+trùng, kiểm đề, đếm rate limit và ghi bài trong một transaction như vậy, rồi mới `Dispatcher.enqueue` sau commit.
+Hết 5 giây `busy_timeout` thì endpoint trả 500; client gửi lại cùng `client_token` là an toàn.
 
 ---
 
