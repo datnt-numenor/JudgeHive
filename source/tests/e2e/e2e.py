@@ -18,6 +18,8 @@ import sys
 import time
 import uuid
 
+from ws_client import HandshakeRejected, WsClient, encode_frame  # client WebSocket tự viết, mask mọi frame
+
 SOURCE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROJECT = "judgehive-e2e"
 PASSWORD = "e2e-password"
@@ -143,6 +145,49 @@ def check(name, ok, detail_text=""):
 def scoreboard(cookie):
     status, _, body = http_call("GET", "/api/scoreboard", cookie=cookie)
     return body if status == 200 else {"version": 0, "rows": []}
+
+
+def ws_connect(cookie, origin="same"):
+    if origin == "same":
+        origin = f"http://127.0.0.1:{HTTP_PORT}"
+    return WsClient("127.0.0.1", HTTP_PORT, origin=origin, cookie=cookie, timeout=15)
+
+
+def ws_read(client, until, timeout=120):
+    """Đọc message JSON của `client` tới khi `until(danh sách)` đúng; tự trả PONG cho PING; ghi mọi frame vào `rest_output`."""
+    messages, deadline = [], time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        kind, value = client.recv(timeout=max(0.1, deadline - time.monotonic()))
+        if kind == "text":
+            rest_output.append(value.encode("utf-8"))
+            message = json.loads(value)
+            if message.get("type") == "PING":
+                client.send_pong_for(message)
+            messages.append(message)
+            if until(messages):
+                break
+        elif kind in ("close", "eof"):
+            messages.append({"closed": value})
+            break
+        elif kind == "timeout":
+            break
+    return messages
+
+
+def ws_status(messages, sid=None):
+    return [m for m in messages if m.get("type") == "STATUS" and (sid is None or m["submission_id"] == sid)]
+
+
+def ws_close_code(client, timeout=10):
+    """Mã của frame đóng đầu tiên, hoặc "eof"/"timeout"."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        kind, value = client.recv(timeout=max(0.1, deadline - time.monotonic()))
+        if kind == "close":
+            return value
+        if kind in ("eof", "timeout"):
+            return kind
+    return "timeout"
 
 
 def restart_server():
@@ -293,6 +338,74 @@ def main():
         check("bảng xếp hạng được tính lại khi có kết quả mới (phiên bản tăng)",
               scoreboard(cookie)["version"] > after_restart["version"])
         check("version trước restart là số dương", version_before >= 1)
+
+        # WebSocket (README mục 4)
+        def refused_with_403(**kw):
+            try:
+                ws_connect(cookie, **kw)
+            except HandshakeRejected as e:
+                return e.status == 403
+            return False
+
+        check("WebSocket: Origin lạ bị từ chối bằng HTTP 403", refused_with_403(origin="http://evil.example"))
+        check("WebSocket: thiếu Origin bị từ chối bằng HTTP 403", refused_with_403(origin=None))
+        anonymous = ws_connect(None)
+        check("WebSocket: không có phiên thì accept rồi đóng 4401", ws_close_code(anonymous) == 4401)
+
+        ws_alice, ws_root = ws_connect(cookie), ws_connect(root_cookie)
+        first_alice = ws_alice.recv_json(timeout=15)
+        check("WebSocket: nối được và nhận SCOREBOARD ngay",
+              isinstance(first_alice, dict) and first_alice["type"] == "SCOREBOARD" and first_alice["rows"]
+              and first_alice["rows"][0]["username"] == "alice", str(first_alice)[:150])
+        rest_output.append(json.dumps(first_alice).encode("utf-8"))
+        ws_root.recv_json(timeout=15)
+
+        ws_sid, _ = submit(root_cookie, *SOLUTIONS["py-ac"][:2])
+        frames = ws_read(ws_root, lambda ms: any(m.get("state") == "judged" for m in ws_status(ms, ws_sid)))
+        states = [m["state"] for m in ws_status(frames, ws_sid)]
+        check("WebSocket: STATUS tới đúng chủ bài theo thứ tự queued, judging, judged",
+              states[:1] == ["queued"] and "judging" in states and states[-1:] == ["judged"], str(states))
+        check("WebSocket: STATUS judged mang đối tượng bài nộp khớp REST (AC)",
+              ws_status(frames, ws_sid)[-1]["submission"] == next(
+                  x for x in http_call("GET", "/api/submissions?limit=20", cookie=root_cookie)[2]["submissions"]
+                  if x["submission_id"] == ws_sid))
+        check("WebSocket: có tiến độ chấm (progress)", any("progress" in m for m in ws_status(frames, ws_sid)))
+        alice_frames = ws_read(ws_alice, lambda ms: False, timeout=2.5)
+        check("WebSocket: người khác (alice) không nhận STATUS của admin", ws_status(alice_frames) == [])
+
+        mask_probe = ws_connect(cookie)
+        mask_probe.recv_json(timeout=15)
+        mask_probe.sock.sendall(encode_frame(0x1, b'{"type":"PONG","seq":1}', mask=False))
+        check("WebSocket: server từ chối frame client chưa mask bằng 1002 (client e2e luôn mask)",
+              ws_close_code(mask_probe) == 1002)
+        binary_probe = ws_connect(cookie)
+        binary_probe.recv_json(timeout=15)
+        binary_probe.send_binary(b"\x00\x01")
+        check("WebSocket: frame nhị phân bị đóng 1003", ws_close_code(binary_probe) == 1003)
+        big_probe = ws_connect(cookie)
+        big_probe.recv_json(timeout=15)
+        big_probe.send_text('{"type":"PONG","seq":1,"pad":"' + "x" * 5000 + '"}')
+        check("WebSocket: frame quá 4096 byte bị đóng 1009", ws_close_code(big_probe) == 1009)
+
+        extra = [ws_connect(cookie) for _ in range(8)]  # cùng ws_alice là 9
+        tenth = ws_connect(cookie)
+        eleventh = ws_connect(cookie)
+        check("WebSocket: kết nối thứ 10 của một người vẫn được", tenth.recv_json(timeout=15)["type"] == "SCOREBOARD")
+        check("WebSocket: kết nối thứ 11 của một người bị đóng 4429", ws_close_code(eleventh) == 4429)
+        for c in extra + [tenth]:
+            c.close()
+
+        second_login = http_call("POST", "/api/login", {"username": "alice", "password": PASSWORD})[1]["set-cookie"]
+        second_cookie = second_login.split(";", 1)[0].split("=", 1)[1]
+        ws_second = ws_connect(second_cookie)
+        ws_second.recv_json(timeout=15)
+        check("WebSocket: logout đóng WebSocket của phiên đó bằng 4401",
+              http_call("POST", "/api/logout", {}, cookie=second_cookie)[0] == 204 and ws_close_code(ws_second) == 4401)
+        check("WebSocket: logout một phiên không đóng WebSocket của phiên khác",
+              ws_status(ws_read(ws_alice, lambda ms: False, timeout=1.5)) == [] and ws_alice.sock.fileno() != -1
+              and http_call("GET", "/api/me", cookie=cookie)[0] == 200)
+        for c in (ws_alice, ws_root):
+            c.close()
 
         # không endpoint nào của REST trả test ẩn hay secret
         blob = b"".join(rest_output)
