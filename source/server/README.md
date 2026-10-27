@@ -68,7 +68,10 @@ Cờ uvicorn cố định trong `CMD` của `server/Dockerfile` (không đọc t
 |----|---------|-------|
 | `--no-server-header` | | Không lộ `server: uvicorn` trong response |
 | `--timeout-keep-alive` | `5` | Kết nối HTTP rảnh bị đóng sau 5 giây, kết nối bỏ không không chiếm chỗ lâu |
-| `--limit-concurrency` | `200` | Quá 200 kết nối/tác vụ đồng thời thì uvicorn trả 503 ngay (một process, một event loop). Cổng worker là socket riêng nên không tính. PR WebSocket phải cân lại số này vì mỗi WebSocket là một kết nối |
+| `--limit-concurrency` | `600` | Quá 600 kết nối/tác vụ đồng thời thì uvicorn trả 503 ngay (một process, một event loop). Mỗi WebSocket tính là một kết nối, nên 600 = trần WebSocket của ứng dụng (`ws_max_total` 400) + khoảng 200 cho HTTP; hạ thấp số này dưới `ws_max_total` thì các kết nối WebSocket làm REST và handshake mới nhận 503. Cổng worker là socket riêng nên không tính |
+| `--ws-max-size` | `4096` | Frame WebSocket lớn hơn 4096 byte bị uvicorn đóng 1009 trước khi tới ứng dụng (README 4.3); ứng dụng còn kiểm lại lần nữa |
+| `--ws-per-message-deflate` | `false` | Không nén: mỗi kết nối nén giữ một ngữ cảnh zlib hàng trăm KB, 400 kết nối có thể ăn một phần lớn `mem_limit` |
+| (chưa có) `--ws`, tắt control-ping | | Chờ lần thử với uvicorn 0.54.0 và phiên bản `websockets` được ghim: PLAN D14 tắt ping control frame của uvicorn để chỉ còn `PING`/`PONG` của ứng dụng; nếu không tắt thì kết nối chết bị uvicorn đóng sau khoảng 40 giây bằng mã ngoài bảng 5.3 |
 | `--workers` | không dùng | Đúng một process |
 
 Chưa có timeout đọc body ở tầng ứng dụng: client chậm chiếm một kết nối (không chiếm thread vì phần đọc body là `async`) tới khi gửi xong, tối đa 512 KB; trần đồng thời ở trên là lớp chặn kết nối treo hàng loạt.
