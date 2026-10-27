@@ -40,7 +40,7 @@ nằm trong `rest/`. WebSocket, bảng xếp hạng và endpoint admin thuộc c
 Từ thư mục `source/`:
 
 ```bash
-python -c "import secrets, pathlib; pathlib.Path('secrets/worker.env').write_text('JH_WORKER_SECRET=' + secrets.token_hex(32) + '\n', encoding='utf-8')"   # một lần; thư mục secrets/ có sẵn trong repo
+python -c "import secrets, pathlib; pathlib.Path('secrets/worker.env').write_text('JH_WORKER_SECRET=' + secrets.token_hex(32) + '\n', encoding='utf-8', newline='\n')"   # một lần; thư mục secrets/ có sẵn trong repo
 docker compose up --build                    # server + một worker
 docker compose up --build --scale worker=3   # ba worker
 ```
