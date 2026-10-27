@@ -96,7 +96,7 @@ def parse_client_message(text):
     `"ignored"` (type khác, thiếu hoặc sai kiểu `seq`, không phải object JSON)."""
     try:
         value: Any = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):  # JSON lồng quá sâu ném RecursionError, không phải ValueError
         return "ignored"
     if not isinstance(value, dict) or value.get("type") != "PONG":
         return "ignored"

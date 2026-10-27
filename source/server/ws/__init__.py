@@ -31,6 +31,10 @@ class WsHub:
         self._scoreboard_cache = (None, None)  # (snapshot, văn bản JSON đã dựng)
         self._stopped = False
 
+    @property
+    def stopped(self):
+        return self._stopped
+
     # ------------------------------------------------------------------ vòng đời
 
     async def start(self):
