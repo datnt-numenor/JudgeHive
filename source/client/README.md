@@ -11,11 +11,11 @@ Giao diện web của JudgeHive: đăng nhập, xem đề, nộp bài, xem lịc
 | Test | Vitest, Testing Library, jsdom |
 | Giao thức | `fetch` cùng origin, cookie phiên `jh_session` (HttpOnly, trình duyệt tự gửi) |
 
-Phiên bản phụ thuộc được ghim chính xác trong `package.json` và `package-lock.json` (cài bằng `npm ci`). `.npmrc` đặt `legacy-peer-deps=true`: npm 10.9 lỗi nội bộ ("Cannot read properties of null (reading 'edgesOut')") khi giải peer dependency của `vitest` 5; mọi peer cần thiết đã được khai báo tường minh trong `package.json`.
+Phiên bản phụ thuộc được ghim chính xác trong `package.json` và `package-lock.json` (cài bằng `npm ci`). **Cần npm 11 trở lên** (đã thử 11.21.1 và 12.2.1; lockfile sinh bằng 11.21.1): npm 10.9.9, bản đi kèm `node:22-slim`, lỗi nội bộ "Cannot read properties of null (reading 'edgesOut')" khi giải peer dependency của `vitest` 5. Vì vậy các lệnh trong container bên dưới chạy `npm i -g npm@11.21.1` trước. `.npmrc` chỉ đặt `save-exact=true`.
 
 ## Chạy khi phát triển
 
-Cần Node 22.12 trở lên và backend đang chạy ở cổng 8000 (`docker compose up --build` từ `source/`).
+Cần Node 22.12 trở lên, npm 11 trở lên và backend đang chạy ở cổng 8000 (`docker compose up --build` từ `source/`).
 
 ```bash
 cd source/client
@@ -27,7 +27,13 @@ Backend ở địa chỉ khác: `JH_BACKEND=http://host:8000 npm run dev`.
 
 ## Kiểm thử
 
-Chạy trong container, không cần Node trên máy host (lệnh chuẩn nằm trong `CLAUDE.md`, mục "Lệnh môi trường"). Hoặc `npm test` nếu đã `npm ci`.
+Chạy trong container `node:22-slim`, không cần Node trên máy host. Từ `source/client` (PowerShell):
+
+```powershell
+docker run --rm -v "${PWD}:/src:ro" node:22-slim sh -c "npm i -g npm@11.21.1 && mkdir /app && cd /src && tar cf - --exclude=node_modules . | tar xf - -C /app && cd /app && npm ci --no-audit --no-fund && npx vitest run"
+```
+
+Mã nguồn được mount chỉ đọc rồi chép sang `/app` (bỏ `node_modules` của host), nên không để lại file nào trong repo. Đừng pipe output (che mất exit code của vitest). Nếu đã có Node 22.12 trở lên và npm 11 trở lên trên máy: `npm ci && npm test`.
 
 Test dùng `fetch` giả dựng lại đúng hình dạng request/response của README. Việc đối chiếu với server thật làm riêng khi REST của server có mặt.
 
