@@ -8,6 +8,10 @@ const backend = process.env.JH_BACKEND || "http://127.0.0.1:8000";
 
 export default defineConfig({
   plugins: [react()],
+  // Server chỉ phục vụ `index.html` và `/assets/*` (không có route khớp mọi đường dẫn), nên `dist/` chỉ được có hai thứ đó.
+  // Vite chép thư mục `public/` thẳng vào gốc `dist/`, nơi server không phục vụ: tắt hẳn việc chép để không có file "lạc"
+  // trong image. Muốn dùng ảnh, font... thì import từ `src/`, Vite sẽ đặt chúng (kèm băm nội dung) vào `assets/`.
+  build: { assetsDir: "assets", copyPublicDir: false },
   server: {
     proxy: {
       "/api": { target: backend },

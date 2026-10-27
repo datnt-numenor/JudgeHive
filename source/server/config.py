@@ -7,6 +7,7 @@ from common import protocol
 
 DEFAULT_DB_PATH = "/data/judgehive.db"
 DEFAULT_PROBLEMS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "problems")
+DEFAULT_STATIC_DIR = "/app/static"  # nơi Dockerfile đặt giao diện web đã build; không có thư mục thì chỉ chạy API
 
 
 class ConfigError(Exception):
@@ -20,6 +21,7 @@ class ServerConfig:
     secret: str = ""
     db_path: str = DEFAULT_DB_PATH
     problems_dir: str = DEFAULT_PROBLEMS_DIR
+    static_dir: str = DEFAULT_STATIC_DIR
     ping_interval_s: float = protocol.PING_INTERVAL_S
     peer_dead_after_s: float = protocol.PEER_DEAD_AFTER_S
     send_timeout_s: float = protocol.SEND_TIMEOUT_S
@@ -49,6 +51,10 @@ def problems_dir_from_env(env):
     return env.get("JH_PROBLEMS_DIR", DEFAULT_PROBLEMS_DIR)
 
 
+def static_dir_from_env(env):
+    return env.get("JH_STATIC_DIR", DEFAULT_STATIC_DIR)
+
+
 def read_secret(env):
     """Secret ưu tiên `JH_WORKER_SECRET_FILE`, sau đó `JH_WORKER_SECRET`. Không bao giờ ghi giá trị vào log."""
     path = env.get("JH_WORKER_SECRET_FILE")
@@ -68,7 +74,7 @@ def read_secret(env):
 def load_config(env=None):
     env = os.environ if env is None else env
     cfg = ServerConfig(secret=read_secret(env), db_path=db_path_from_env(env),
-                       problems_dir=problems_dir_from_env(env))
+                       problems_dir=problems_dir_from_env(env), static_dir=static_dir_from_env(env))
     try:
         cfg.worker_port = int(env.get("JH_WORKER_PORT", cfg.worker_port))
     except ValueError as e:

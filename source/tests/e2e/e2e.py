@@ -11,6 +11,7 @@ import glob
 import http.client
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -85,6 +86,17 @@ def http_call(method, path, obj=None, cookie=None, raw=None, content_type="appli
         data = resp.read()
         rest_output.append(data)
         return resp.status, {k.lower(): v for k, v in resp.getheaders()}, (json.loads(data) if data else None)
+    finally:
+        conn.close()
+
+
+def page_call(path, method="GET"):
+    """Như `http_call` nhưng trả body nguyên bản (bytes): dành cho trang HTML và file tĩnh, không parse JSON."""
+    conn = http.client.HTTPConnection("127.0.0.1", HTTP_PORT, timeout=30)
+    try:
+        conn.request(method, path, headers={"Connection": "close"})
+        resp = conn.getresponse()
+        return resp.status, {k.lower(): v for k, v in resp.getheaders()}, resp.read()
     finally:
         conn.close()
 
@@ -164,8 +176,28 @@ def main():
         status, headers, body = http_call("GET", "/api/health")
         check("health công khai và tối thiểu", status == 200 and body == {"status": "ok"})
         check("không lộ header server (cờ --no-server-header)", "server" not in headers, headers.get("server", ""))
-        check("không lộ tài liệu API", http_call("GET", "/openapi.json")[0] == 404 and http_call("GET", "/docs")[0] == 404)
+        # `/docs` và `/redoc` không có đuôi file nên là đường dẫn của SPA (trả index.html): điều cần chắc là không có tài liệu
+        # API của FastAPI (Swagger UI, ReDoc, schema OpenAPI) ở bất kỳ đường nào trong số này.
+        doc_pages = [page_call(path) for path in ("/openapi.json", "/docs", "/redoc")]
+        check("không lộ tài liệu API",
+              doc_pages[0][0] == 404 and all(b"swagger" not in body.lower() and b"redoc" not in body.lower()
+                                               and b"openapi" not in body.lower() for _, _, body in doc_pages))
         check("chưa đăng nhập thì 401", http_call("GET", "/api/problems")[0] == 401)
+
+        status, headers, page = page_call("/")
+        check("trang chủ là index.html của giao diện, luôn hỏi lại (no-cache)",
+              status == 200 and b'id="root"' in page and headers.get("cache-control") == "no-cache", headers.get("cache-control", ""))
+        asset = re.search(rb'/assets/[^"<>\s]+\.js', page)
+        check("index.html trỏ tới một file JS trong /assets", asset is not None)
+        if asset:
+            a_status, a_headers, a_body = page_call(asset.group(0).decode())
+            check("file trong /assets phục vụ được, cache dài hạn",
+                  a_status == 200 and len(a_body) > 0 and "immutable" in a_headers.get("cache-control", ""), a_headers.get("cache-control", ""))
+        check("đường dẫn của SPA rơi về index.html", page_call("/problems/aplusb")[2] == page)
+        m_status, _, m_body = page_call("/missing.js")
+        check("file có đuôi không tồn tại là 404, không phải HTML", m_status == 404 and b'id="root"' not in m_body)
+        check("API không tồn tại vẫn là JSON 404", http_call("GET", "/api/nope")[0] == 404 and page_call("/api/nope")[2] != page)
+        check("/ws và /assets/ không rơi về trang", page_call("/ws")[0] == 404 and page_call("/assets/missing")[0] == 404)
 
         manage("users", "create", "alice", "--password-stdin", input_text=PASSWORD + "\n")
         manage("users", "create", "root", "--role", "admin", "--password-stdin", input_text=PASSWORD + "\n")

@@ -29,6 +29,7 @@ nằm trong `rest/`, bảng xếp hạng (`GET /api/scoreboard`) trong `scoreboa
 | `auth.py` | Băm mật khẩu scrypt (từ chối mật khẩu có ký tự NUL: scrypt của OpenSSL bỏ qua NUL cuối) |
 | `rest/` | REST: `errors.py` (định dạng lỗi), `body.py` (Content-Type, giới hạn body, JSON), `sessions.py` (cookie và bảng `sessions`), `limits.py` (giới hạn đăng nhập), `views.py` (đối tượng bài nộp, whitelist theo verdict), `auth_routes.py`, `problem_routes.py`, `submission_routes.py` |
 | `scoreboard/` | Bảng xếp hạng: `ranking.py` (hàm thuần theo README 3.3), `loader.py` (một câu SELECT), `service.py` (`ScoreboardService`: giữ bản gần nhất, tính lại gộp tối đa một lần mỗi `scoreboard_min_interval_s`, phát bản mới cho subscriber) |
+| `static.py` | Phục vụ giao diện web đã build (xem "Giao diện web" dưới): `/assets` bằng `StaticFiles`, fallback SPA trong bộ xử lý 404 |
 | `hooks.py` | Cầu thread → event loop. `scoreboard_dirty` đánh dấu `ScoreboardService` bằng `call_soon_threadsafe`; `status` (STATUS) còn chỉ ghi log, WebSocket dùng ở PR sau |
 | `timefmt.py` | `iso_ms`: thời điểm ISO 8601 UTC có mili giây, dùng chung cho REST và bảng xếp hạng |
 | `config.py` | Cấu hình từ biến môi trường |
@@ -57,6 +58,7 @@ Server nghe `8000` (HTTP) và `9000` (cổng worker). Biến môi trường:
 | `JH_HTTP_PORT` | `8000` | Cổng HTTP (lệnh chạy uvicorn trong Dockerfile) |
 | `JH_DB_PATH` | `/data/judgehive.db` | File DB (named volume `db`) |
 | `JH_PROBLEMS_DIR` | `server/problems` | Thư mục đề seed |
+| `JH_STATIC_DIR` | `/app/static` | Thư mục giao diện web đã build (`index.html` và `assets/`). Không có `index.html` ở đó thì server chỉ có API |
 | `JH_LOG_LEVEL` | `INFO` | Mức log |
 
 Cờ uvicorn cố định trong `CMD` của `server/Dockerfile` (không đọc từ biến môi trường):
@@ -69,6 +71,21 @@ Cờ uvicorn cố định trong `CMD` của `server/Dockerfile` (không đọc t
 | `--workers` | không dùng | Đúng một process |
 
 Chưa có timeout đọc body ở tầng ứng dụng: client chậm chiếm một kết nối (không chiếm thread vì phần đọc body là `async`) tới khi gửi xong, tối đa 512 KB; trần đồng thời ở trên là lớp chặn kết nối treo hàng loạt.
+
+### Giao diện web
+
+Image `runtime` build giao diện trong một stage Node riêng (`client-build`, `node:22-slim`, cần mạng lúc build) và chép `dist/` vào `/app/static`, nên chạy `docker compose up --build` là mở được `http://localhost:8000/` mà không cần cài Node. Giao diện và API cùng origin, không có CORS. Server **không có route khớp mọi đường dẫn**; chỉ có:
+
+| Yêu cầu | Kết quả |
+|---------|---------|
+| `GET`/`HEAD` `/assets/<file>` | File thật trong `assets/`, `Cache-Control: public, max-age=31536000, immutable` (tên file có băm nội dung). Không có file thì 404 |
+| `GET`/`HEAD` đường dẫn không khớp route nào, không có đuôi file, không thuộc `/api`, `/ws`, `/assets` (ví dụ `/`, `/login`, `/problems/sum`) | `index.html`, `Cache-Control: no-cache`; trình duyệt tự định tuyến phía client |
+| Đường dẫn có đuôi file mà không tồn tại (`/missing.js`, `/favicon.ico`, `/index.html`) | 404, không phải HTML |
+| `/api/*` | Như cũ: JSON, kể cả 404 và 405 |
+| `/ws`, `/ws/*` | Giữ chỗ cho WebSocket (PR sau): hiện là 404 |
+| `POST`, `PUT`, `DELETE` ngoài `/api` | 404 hoặc 405, không bao giờ `index.html` |
+
+Đường dẫn của client không bao giờ được ghép vào đường dẫn file (chỉ `/assets` đọc file, qua `StaticFiles`: chặn `..`, đường dẫn tuyệt đối, symlink thoát thư mục, byte NUL). Khi phát triển giao diện, dùng `npm run dev` (Vite proxy `/api`), không cần thư mục này.
 
 ### Quản lý (`manage.py`)
 

@@ -64,15 +64,29 @@ cd assignment-network-project
 Tạo shared secret của worker một lần (file `source/secrets/worker.env` bị git bỏ qua, mẫu ở `worker.env.example`): `python -c "import secrets, pathlib; pathlib.Path('source/secrets/worker.env').write_text('JH_WORKER_SECRET=' + secrets.token_hex(32) + '\n', encoding='utf-8', newline='\n')"` (không dùng `>` vì PowerShell 5.1 ghi UTF-16 có BOM; `newline='\n'` để Windows không ghi CRLF).
 
 ```bash
-cd source/server
-# Các lệnh để khởi động server
+cd source
+docker compose up --build                    # server + một worker
+docker compose up --build --scale worker=3   # ba worker
 ```
 
-### 3. Chạy client
+Image server tự build giao diện web trong lúc build (cần mạng ở lần build đầu vì có `npm ci`), nên chỉ cần mở `http://localhost:8000/` là thấy trang đăng nhập; không cần cài Node. Chưa có tài khoản nào, tạo bằng script (DB nằm trong volume Docker nên chạy trong container server; lệnh sẽ hỏi mật khẩu):
+
+```bash
+docker compose exec server python -m server.manage users create alice
+```
+
+Mật khẩu từ 8 đến 128 byte. Thêm `--role admin` để tạo quản trị viên. Chi tiết các biến môi trường và lệnh quản lý: `source/server/README.md`.
+
+### 3. Chạy client (khi phát triển giao diện)
+Giao diện đã có sẵn trong image server (mục 2). Chỉ khi sửa mã giao diện mới cần chạy riêng, với backend đang chạy ở cổng 8000:
+
 ```bash
 cd source/client
-# Các lệnh để khởi động client
+npm ci
+npm run dev        # http://localhost:5173, tự chuyển /api sang http://127.0.0.1:8000
 ```
+
+Cần Node 22.12 trở lên; cách chạy test và lưu ý về phiên bản npm: `source/client/README.md`.
 
 ### 4. Kiểm thử nhanh
 ```bash
