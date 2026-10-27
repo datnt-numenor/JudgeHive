@@ -68,8 +68,10 @@ def submit(request: Request, user: sessions.SessionUser = Depends(sessions.curre
                                                                    token.lower())
     if created:
         # Bài đã nằm trong DB: process chết ngay sau commit thì lần khởi động sau `load_pending` nạp lại.
-        state.dispatcher.enqueue(sid, LEVEL_NEW)
+        # Báo `queued` TRƯỚC khi đưa vào hàng đợi: sau enqueue, dispatcher có thể giao bài và phát `judging` ngay từ thread
+        # của nó; hook đã đặt trước thì luôn tới event loop trước (WebSocket nhận STATUS đúng thứ tự queued, judging, ...).
         _notify_queued(state, sid, user.id)
+        state.dispatcher.enqueue(sid, LEVEL_NEW)
     return ApiJSONResponse({"submission_id": sid, "state": views.PUBLIC_STATE[internal_state],
                             "received_at": views.iso_ms(received_ms)}, status_code=201 if created else 200)
 
