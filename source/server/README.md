@@ -2,7 +2,7 @@
 
 Server chính của JudgeHive: nhận worker qua cổng TCP thuần (framing JSON-lines do nhóm tự viết, xem README gốc mục
 "Giao tiếp" 2), giao bài, lưu kết quả vào SQLite. REST cho trình duyệt (đăng nhập, phiên, đề, nộp bài, lịch sử; README gốc mục 3)
-nằm trong `rest/`. WebSocket, bảng xếp hạng và endpoint admin thuộc các PR sau.
+nằm trong `rest/`, bảng xếp hạng (`GET /api/scoreboard`) trong `scoreboard/`. WebSocket và endpoint admin thuộc các PR sau.
 
 ---
 
@@ -28,7 +28,9 @@ nằm trong `rest/`. WebSocket, bảng xếp hạng và endpoint admin thuộc c
 | `problems.py` | Đọc thư mục đề, hash bộ test, kiểm giới hạn 8 MB và 16 MB, seed và reimport |
 | `auth.py` | Băm mật khẩu scrypt (từ chối mật khẩu có ký tự NUL: scrypt của OpenSSL bỏ qua NUL cuối) |
 | `rest/` | REST: `errors.py` (định dạng lỗi), `body.py` (Content-Type, giới hạn body, JSON), `sessions.py` (cookie và bảng `sessions`), `limits.py` (giới hạn đăng nhập), `views.py` (đối tượng bài nộp, whitelist theo verdict), `auth_routes.py`, `problem_routes.py`, `submission_routes.py` |
-| `hooks.py` | Điểm móc để PR sau đẩy `STATUS`/`SCOREBOARD` xuống WebSocket (hiện chỉ ghi log) |
+| `scoreboard/` | Bảng xếp hạng: `ranking.py` (hàm thuần theo README 3.3), `loader.py` (một câu SELECT), `service.py` (`ScoreboardService`: giữ bản gần nhất, tính lại gộp tối đa một lần mỗi `scoreboard_min_interval_s`, phát bản mới cho subscriber) |
+| `hooks.py` | Cầu thread → event loop. `scoreboard_dirty` đánh dấu `ScoreboardService` bằng `call_soon_threadsafe`; `status` (STATUS) còn chỉ ghi log, WebSocket dùng ở PR sau |
+| `timefmt.py` | `iso_ms`: thời điểm ISO 8601 UTC có mili giây, dùng chung cho REST và bảng xếp hạng |
 | `config.py` | Cấu hình từ biến môi trường |
 | `manage.py` | Script quản lý (xem dưới) |
 | `problems/<id>/` | Đề seed: `problem.json`, `statement.txt`, `samples/NN.in\|NN.out`, `tests/NN.in\|NN.out` |
@@ -82,6 +84,8 @@ docker compose exec server python -m server.manage problems reimport aplusb     
 `problems/` rồi restart không có tác dụng; dùng `problems reimport` (và build lại image nếu đổi file, vì `problems/`
 nằm trong image). `reimport` đổi hash bộ test nhưng không tự chấm lại và không đổi cờ ẩn.
 
+**Cờ ẩn của đề không đến từ `problems/`.** `problem.json` không có trường `hidden`: đề seed luôn được tạo với `hidden = 0`, và với đề đã có trong DB thì lúc khởi động server không đụng gì tới nó (cả cờ ẩn), `reimport` cũng giữ nguyên cờ ẩn. Hệ quả: seed và reimport không bao giờ làm bảng xếp hạng đổi vì lý do ẩn/hiện; cờ ẩn chỉ đổi qua DB hay endpoint admin (chưa có), và nơi đổi cờ phải gọi `ScoreboardService.mark_dirty()` (xem dưới).
+
 Nộp bài và xem kết quả qua REST (`POST /api/submissions`, `GET /api/submissions/{id}`). `submissions show ID` chỉ để
 xem một dòng bài nộp khi gỡ lỗi (in cả cờ nội bộ như `delivery_count`).
 
@@ -93,6 +97,29 @@ SQLite (chỉ `rest/body.py` là `async`, và nó chỉ đọc stream). Mỗi th
 tối đa khoảng 40 kết nối. Đọc dùng autocommit; ghi dùng `Database.write()` (`BEGIN IMMEDIATE`). Nộp bài kiểm token
 trùng, kiểm đề, đếm rate limit và ghi bài trong một transaction như vậy, rồi mới `Dispatcher.enqueue` sau commit.
 Hết 5 giây `busy_timeout` thì endpoint trả 500; client gửi lại cùng `client_token` là an toàn.
+
+### Bảng xếp hạng và event loop
+
+`ScoreboardService` giữ mọi trạng thái (bản gần nhất, phiên bản, cờ cần tính lại, danh sách subscriber) chỉ trên event loop. Truy vấn SQLite chạy trong một thread riêng của dịch vụ (`scoreboard-db`, một thread duy nhất, nên không có hai lần tính song song), vẫn qua `Database.conn()` nên cùng pragma với mọi chỗ khác. Thread khác (dispatcher, cổng worker) chỉ gọi `LoopHooks.scoreboard_dirty`, hàm này làm `loop.call_soon_threadsafe(service.mark_dirty)` rồi trả về và không bao giờ ném. Số phiên bản tăng trên event loop ngay trước khi giao việc cho thread, nên bản mang phiên bản v phản ánh mọi commit đã đánh dấu trước đó; bản đầu (phiên bản 1) tính xong trước khi mở cổng worker, lỗi thì server không khởi động. `GET /api/scoreboard` chỉ đọc bản đã tính, không bao giờ tự tính lại.
+
+Điểm cắm cho PR WebSocket (đều gọi trên event loop): `service.latest()` (bản hiện có, gửi ngay khi một kết nối nối thành công), `service.subscribe(callback)` (`callback(snapshot)` được gọi theo đúng thứ tự phiên bản và không bao giờ đồng thời; phải trả về nhanh; trả hàm hủy đăng ký) và `service.mark_dirty()`. **Mọi chỗ làm đổi dữ liệu mà bảng phụ thuộc ngoài việc ghi một kết quả chấm (ẩn/hiện đề, đổi role của người dùng) phải gọi `mark_dirty()`** bằng `loop.call_soon_threadsafe` nếu đứng ngoài event loop; hiện chưa có endpoint nào như vậy.
+
+### Số đo chỉ mục `idx_submissions_board` (migration 3)
+
+Chạy bằng `python tests/perf/measure_scoreboard.py --rows N --code-kib K` từ `source/` (script chạy tay, không nằm trong bộ test;
+mỗi cấu hình chạy một lần). Lý do của chỉ mục: cột `code` (tới 64 KB) nằm trước `verdict` trong bảng `submissions`, nên quét bảng
+phải đi qua các trang tràn của `code`. **Số đo dưới đây chạy trực tiếp trên Windows 11, Python 3.13.3, SQLite 3.49.1, không phải trong
+container Linux; cần chạy lại trong container khi có Docker.**
+
+| Dữ liệu | Có chỉ mục (đọc SQL, trung vị) | Không chỉ mục | Tỉ lệ |
+|---------|-------------------------------|---------------|-------|
+| 5 000 bài x 64 KiB (316 MiB), 300 người | 8,9 ms | 759 ms (lần đầu 173 ms) | khoảng 85 lần |
+| 50 000 bài x 4 KiB (225 MiB), 1 000 người | 242 ms | 944 ms | khoảng 3,9 lần |
+
+Với 50 000 bài thì xếp hạng bằng Python (`ranking.py`) mất thêm khoảng 70 đến 95 ms; tổng một lần tính khoảng 294 ms (có chỉ mục)
+so với 1 030 ms (không). Chi phí ghi thêm một bài do chỉ mục không đo được đáng tin (0,4 đến 0,6 ms so với 0,6 đến 1,7 ms, nhiễu do
+thứ tự chạy và bộ nhớ đệm của hệ điều hành). Kết luận: giữ chỉ mục. Một lần tính chạy trong thread riêng nhưng phần xếp hạng bằng
+Python giữ GIL, nên với hàng chục nghìn bài nó làm event loop chậm đi trong vài chục mili giây mỗi lần (chưa đo).
 
 ---
 
