@@ -54,6 +54,14 @@ def test_users_create_rejects_bad_passwords(env, password):
     assert db_of(env).conn().execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("password", ["s3cret-pass\x00", "s3cret\x00-pass", "\x00s3cret-pass"])
+def test_users_create_rejects_passwords_with_nul(env, password, capsys):
+    # scrypt của OpenSSL coi "pw" và "pw\x00" là một mật khẩu, nên NUL bị từ chối ở chỗ băm duy nhất (auth.py)
+    assert call(env, "users", "create", "alice", "--password-stdin", stdin=password + "\n") == 1
+    assert "NUL" in capsys.readouterr().err
+    assert db_of(env).conn().execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+
+
 @pytest.mark.parametrize("name", ["", "has space", "a" * 33, "bad/slash"])
 def test_users_create_rejects_bad_usernames(env, name):
     assert call(env, "users", "create", name, "--password-stdin", stdin="s3cret-pass\n") == 1
