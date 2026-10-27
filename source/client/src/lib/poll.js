@@ -4,7 +4,7 @@
 //  - Lỗi tạm thời (mạng, hết giờ chờ, 5xx, 429): giãn khoảng nghỉ gấp đôi mỗi lần lỗi liên tiếp, tối đa `maxIntervalMs`.
 //  - Lỗi khác (ví dụ 404): dừng.
 //  - Tab ẩn: không gọi; tab hiện lại thì gọi ngay.
-import { ApiError, isTransient } from "./api.js";
+import { isTransient } from "./api.js";
 
 export const POLL_INTERVAL_MS = 1000;
 export const POLL_MAX_INTERVAL_MS = 10000; // [ĐỀ XUẤT]
@@ -59,8 +59,8 @@ export function startPolling({
     inFlight = false;
     if (stopped) return;
     if (error) {
-      const unauth = error instanceof ApiError && error.status === 401 && error.code === "UNAUTHENTICATED";
-      if (unauth || !isTransient(error)) {
+      // Mọi lỗi không tạm thời đều dừng hẳn, gồm 401 (hết phiên): đưa về trang đăng nhập là việc của handler trong api.js.
+      if (!isTransient(error)) {
         stop();
         onError(error, { fatal: true });
         return;

@@ -124,6 +124,17 @@ describe("startPolling", () => {
     expect(fetchOnce).toHaveBeenCalledTimes(3);
   });
 
+  it("tab đã ẩn ngay từ lúc bắt đầu thì không gọi; hiện lên thì gọi ngay", async () => {
+    doc.hidden = true;
+    const fetchOnce = vi.fn(async () => sub("queued"));
+    start(fetchOnce);
+    await tick(30000);
+    expect(fetchOnce).not.toHaveBeenCalled();
+    doc.setHidden(false);
+    await tick(0);
+    expect(fetchOnce).toHaveBeenCalledTimes(1);
+  });
+
   it("tab ẩn lúc đang chờ phản hồi: không lên lịch tiếp cho tới khi hiện lại, và không chồng request", async () => {
     let release;
     const fetchOnce = vi.fn(() => new Promise((resolve) => (release = resolve)));
