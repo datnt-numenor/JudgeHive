@@ -139,7 +139,7 @@ def test_a_burst_of_marks_is_coalesced_and_computations_are_spaced_by_the_interv
             svc.mark_dirty()
         await asyncio.sleep(0.8)
         extra = len(counter.calls) - 1
-        assert 1 <= extra <= 2, extra
+        assert extra == 1, extra  # burst đến ngay sau lần tính đầu: đúng một lần tính nối tiếp
         starts = [t for t, _ in counter.calls]
         assert all(b - a >= 0.2 - 0.02 for a, b in zip(starts, starts[1:])), [b - a for a, b in zip(starts, starts[1:])]
         await svc.stop()
@@ -167,52 +167,59 @@ def test_marks_during_a_computation_cause_exactly_one_follow_up():
     run_with_db(scenario)
 
 
-def test_two_computations_never_overlap():
+def test_only_one_runner_task_exists_at_any_time_and_a_mark_before_start_is_ignored():
     async def scenario(db):
-        active, peak = 0, 0
-        lock = threading.Lock()
+        svc = make(db, asyncio.get_running_loop(), interval=0.0, compute=lambda d: [])
 
-        def compute(_db):
-            nonlocal active, peak
-            with lock:
-                active += 1
-                peak = max(peak, active)
-            time.sleep(0.03)
-            with lock:
-                active -= 1
-            return []
+        def runners():
+            return [t for t in asyncio.all_tasks() if t.get_coro().__name__ == "_run"]
 
-        svc = make(db, asyncio.get_running_loop(), interval=0.0, compute=compute)
+        svc.mark_dirty()  # trước start(): bị bỏ qua, không tạo tác vụ
+        assert runners() == []
         await svc.start()
-        for _ in range(30):
+        await asyncio.sleep(0.1)
+        assert svc.latest().version == 1  # lời gọi trước start không sinh lần tính thừa
+        peak = 0
+        for _ in range(60):
             svc.mark_dirty()
-            await asyncio.sleep(0.005)
-        await asyncio.sleep(0.2)
-        assert peak == 1
+            peak = max(peak, len(runners()))
+            await asyncio.sleep(0.003)
+        assert peak <= 1
+        assert await settle(lambda: svc.latest().version >= 2)
         await svc.stop()
 
     run_with_db(scenario)
 
 
-def test_versions_increase_strictly_and_subscribers_see_them_in_order_without_overlap():
+def test_start_can_only_be_called_once():
+    async def scenario(db):
+        svc = make(db, asyncio.get_running_loop(), compute=lambda d: [])
+        await svc.start()
+        with pytest.raises(RuntimeError):
+            await svc.start()
+        await svc.stop()
+
+    run_with_db(scenario)
+
+
+def test_versions_increase_strictly_and_a_subscriber_marking_dirty_does_not_nest_callbacks():
     async def scenario(db):
         svc = make(db, asyncio.get_running_loop(), interval=0.0, compute=lambda d: [])
-        seen, inside = [], [0]
+        seen, depth, peak = [], [0], [0]
 
         def subscriber(snap):
-            inside[0] += 1
-            assert inside[0] == 1, "subscriber bị gọi đồng thời"
+            depth[0] += 1
+            peak[0] = max(peak[0], depth[0])
             seen.append(snap.version)
-            inside[0] -= 1
+            if snap.version < 4:
+                svc.mark_dirty()  # gọi lại ngay trong callback: không được gây callback lồng nhau
+            depth[0] -= 1
 
         svc.subscribe(subscriber)
         await svc.start()
-        for _ in range(15):
-            svc.mark_dirty()
-            await asyncio.sleep(0.01)
-        await asyncio.sleep(0.2)
-        assert seen == sorted(seen) and len(set(seen)) == len(seen) and seen[0] == 1
-        assert seen[-1] == svc.latest().version
+        assert await settle(lambda: len(seen) >= 4)
+        await asyncio.sleep(0.1)
+        assert seen == [1, 2, 3, 4] and peak[0] == 1
         await svc.stop()
 
     run_with_db(scenario)
@@ -288,6 +295,97 @@ def test_the_snapshot_contains_every_commit_made_before_the_computation(db):
         await svc.stop()
 
     run(scenario())
+
+
+def test_a_commit_made_after_the_read_is_in_the_next_snapshot_not_lost(db):
+    async def scenario():
+        read_done, release = threading.Event(), threading.Event()
+
+        def compute(d):
+            rows = compute_board(d)  # đọc DB trước
+            read_done.set()
+            release.wait(10)  # giữ lại kết quả đã đọc cho tới khi test commit xong
+            return rows
+
+        svc = ScoreboardService(db, loop=asyncio.get_running_loop(), clock=lambda: FIXED_MS, min_interval_s=0.0,
+                                compute=compute)
+        starter = asyncio.ensure_future(svc.start())
+        assert await asyncio.to_thread(read_done.wait, 5)
+        with db.write() as c:  # commit SAU khi bản 1 đã đọc xong DB
+            c.execute("INSERT INTO submissions (user_id, problem_id, language, code, submitted_at, state, verdict) "
+                      "VALUES (1, 'sum', 'python', 'c', 77, 'done', 'AC')")
+        svc.mark_dirty()
+        release.set()
+        await starter
+        assert svc.latest().version == 1 and svc.latest().rows == ()  # bản 1 không có commit muộn
+        assert await settle(lambda: svc.latest().version >= 2)
+        assert svc.latest().rows == (Row(1, "alice", 1, 0, 77),)  # bản kế tiếp có
+        await svc.stop()
+
+    run(scenario())
+
+
+def test_stop_while_a_computation_is_running_waits_for_the_thread_then_closes_it():
+    async def scenario(db):
+        counter = Counter()
+        svc = make(db, asyncio.get_running_loop(), interval=0.0, compute=counter)
+        await svc.start()
+        counter.gate = threading.Event()
+        svc.mark_dirty()
+        assert await settle(lambda: len(counter.calls) == 2)  # đang kẹt trong lần tính thứ hai
+        stopping = asyncio.ensure_future(svc.stop())
+        await asyncio.sleep(0.15)
+        assert not stopping.done()  # kết nối chỉ đóng sau khi lần tính đang chạy xong
+        counter.gate.set()
+        await asyncio.wait_for(stopping, 5)
+        assert not [t for t in threading.enumerate() if t.name.startswith("scoreboard-db")]
+
+    run_with_db(scenario)
+
+
+def test_stop_during_a_retry_backoff_returns_promptly(monkeypatch):
+    monkeypatch.setattr(service_module, "RETRY_BASE_S", 30.0)
+
+    async def scenario(db):
+        counter = Counter()
+        svc = make(db, asyncio.get_running_loop(), interval=0.0, compute=counter)
+        await svc.start()
+        counter.fail_first = 1
+        svc.mark_dirty()
+        assert await settle(lambda: len(counter.calls) == 2)
+        await asyncio.wait_for(svc.stop(), 2)  # đang ngủ 30 giây của backoff thì bị hủy
+
+    run_with_db(scenario)
+
+
+def test_concurrent_stops_all_wait_for_the_same_shutdown():
+    async def scenario(db):
+        svc = make(db, asyncio.get_running_loop(), compute=lambda d: [])
+        await svc.start()
+        await asyncio.gather(svc.stop(), svc.stop(), svc.stop())
+        assert not [t for t in threading.enumerate() if t.name.startswith("scoreboard-db")]
+
+    run_with_db(scenario)
+
+
+def test_cancelling_a_caller_of_stop_does_not_abort_the_shutdown():
+    async def scenario(db):
+        svc = make(db, asyncio.get_running_loop(), compute=lambda d: [])
+        await svc.start()
+        caller = asyncio.ensure_future(svc.stop())
+        await asyncio.sleep(0)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller  # sự hủy của người gọi không bị nuốt
+        await svc.stop()  # lần gọi khác chờ nốt lần tắt đã bắt đầu
+        assert not [t for t in threading.enumerate() if t.name.startswith("scoreboard-db")]
+
+    run_with_db(scenario)
+
+
+def test_the_json_body_is_built_once_per_snapshot():
+    snap = Snapshot(1, FIXED_MS, (Row(1, "alice", 1, 0, 5),))
+    assert snap.as_json() is snap.as_json()
 
 
 def test_snapshot_json_matches_the_rest_contract():

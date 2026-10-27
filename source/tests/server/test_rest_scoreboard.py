@@ -146,14 +146,21 @@ def test_hiding_a_problem_removes_it_from_the_board_once_the_service_is_told(boa
     wait_for_board(board_web, cookie, lambda b: len(b["rows"]) == 1)
 
 
-def test_reading_the_board_does_not_recompute_it(board_web):
+def test_reading_the_board_never_triggers_a_computation(board_web):
     cookie = board_web.login("alice")
+    service = board_web.app.state.scoreboard
+    original, calls = service._compute, []
+    service._compute = lambda db: (calls.append(1), original(db))[1]
     first = get_board(board_web, cookie)
-    for _ in range(20):
+    for _ in range(30):
         assert get_board(board_web, cookie) == first
+    import time
+    time.sleep(0.4)  # dài hơn khoảng gộp 0,1 giây: một lần tính do request sẽ lộ ra
+    assert calls == []
+    assert get_board(board_web, cookie)["version"] == first["version"]
 
 
-def test_version_never_goes_backwards_and_a_burst_is_coalesced(board_web):
+def test_version_never_goes_backwards_while_results_arrive(board_web):
     worker = board_web.worker()
     cookie = board_web.login("alice")
     versions = [get_board(board_web, cookie)["version"]]
@@ -163,8 +170,7 @@ def test_version_never_goes_backwards_and_a_burst_is_coalesced(board_web):
         versions.append(get_board(board_web, cookie)["version"])
     final = wait_for_board(board_web, cookie, lambda b: b["rows"] and b["version"] >= versions[-1])
     versions.append(final["version"])
-    assert versions == sorted(versions)
-    assert final["version"] < versions[0] + 6 + 2  # 6 kết quả không thành 6 lần tính riêng lẻ trở lên
+    assert versions == sorted(versions) and versions[-1] > versions[0]
 
 
 def test_non_ascii_usernames_round_trip(make_web):
