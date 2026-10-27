@@ -58,6 +58,7 @@ class WsClient:
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.settimeout(timeout)
         self._buf = b""
+        self._frag_op, self._fragments = None, []  # mảnh của message phân mảnh đang ghép dở
         self.closed_code = None
         key = base64.b64encode(os.urandom(16)).decode("ascii")
         lines = [f"GET {path} HTTP/1.1", f"Host: {host}:{port}", "Upgrade: websocket", "Connection: Upgrade",
@@ -90,31 +91,37 @@ class WsClient:
         head, _, self._buf = self._buf.partition(marker)
         return head
 
-    def _read_exact(self, n):
+    def _fill(self, n):
+        """Đảm bảo bộ đệm có ít nhất `n` byte mà KHÔNG tiêu thụ chúng."""
         while len(self._buf) < n:
             chunk = self.sock.recv(65536)
             if not chunk:
                 raise EOFError("kết nối đóng")
             self._buf += chunk
-        data, self._buf = self._buf[:n], self._buf[n:]
-        return data
 
     def _read_frame(self):
-        b0, b1 = self._read_exact(2)
-        fin, opcode, masked, length = bool(b0 & 0x80), b0 & 0x0F, bool(b1 & 0x80), b1 & 0x7F
+        """Một frame trọn vẹn. Chỉ tiêu thụ byte khi đã có đủ cả frame, nên hết hạn giữa chừng không làm lệch luồng."""
+        self._fill(2)
+        b0, b1 = self._buf[0], self._buf[1]
+        length, pos = b1 & 0x7F, 2
         if length == 126:
-            length = struct.unpack("!H", self._read_exact(2))[0]
+            self._fill(4)
+            length, pos = struct.unpack("!H", self._buf[2:4])[0], 4
         elif length == 127:
-            length = struct.unpack("!Q", self._read_exact(8))[0]
-        key = self._read_exact(4) if masked else None  # server không được mask, nhưng đọc cho đúng nếu có
-        payload = self._read_exact(length)
-        return fin, opcode, mask_payload(payload, key) if key else payload
+            self._fill(10)
+            length, pos = struct.unpack("!Q", self._buf[2:10])[0], 10
+        masked = bool(b1 & 0x80)  # server không được mask, nhưng đọc cho đúng nếu có
+        key_len = 4 if masked else 0
+        self._fill(pos + key_len + length)
+        key = self._buf[pos:pos + key_len] if masked else None
+        payload = self._buf[pos + key_len:pos + key_len + length]
+        self._buf = self._buf[pos + key_len + length:]
+        return bool(b0 & 0x80), b0 & 0x0F, mask_payload(payload, key) if key else payload
 
     def recv(self, timeout=None):
         """Message tiếp theo: `("text", str)`, `("binary", bytes)`, `("close", code)` hoặc `("eof", None)`; `("timeout", None)`
-        nếu quá hạn. Tự trả pong (có mask) cho ping."""
+        nếu quá hạn (bộ đệm và các mảnh đã nhận được giữ nguyên cho lần gọi sau). Tự trả pong (có mask) cho ping."""
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
-        fragments, first_op = [], None
         while True:
             left = deadline - time.monotonic()
             if left <= 0:
@@ -135,12 +142,13 @@ class WsClient:
                 self.closed_code = struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1005
                 return ("close", self.closed_code)
             if opcode in (OP_TEXT, OP_BINARY):
-                first_op, fragments = opcode, [payload]
+                self._frag_op, self._fragments = opcode, [payload]
             elif opcode == OP_CONT:
-                fragments.append(payload)
-            if fin and first_op is not None:
-                data = b"".join(fragments)
-                return ("text", data.decode("utf-8")) if first_op == OP_TEXT else ("binary", data)
+                self._fragments.append(payload)
+            if fin and self._frag_op is not None:
+                data, op = b"".join(self._fragments), self._frag_op
+                self._frag_op, self._fragments = None, []
+                return ("text", data.decode("utf-8")) if op == OP_TEXT else ("binary", data)
 
     def recv_json(self, timeout=None):
         import json

@@ -91,6 +91,7 @@ def test_dumps_is_compact_utf8_json():
     ('{"type":"pong","seq":1}', "ignored"), ('{"type":"PING","seq":1}', "ignored"), ('{"type":"STATUS"}', "ignored"),
     ('{"seq":1}', "ignored"), ('[]', "ignored"), ('"PONG"', "ignored"), ('null', "ignored"), ('5', "ignored"),
     ('not json', "ignored"), ('', "ignored"), ('{"type":"PONG","seq":1', "ignored"),
+    ("[" * 5000, "ignored"), ('{"a":' * 5000, "ignored"),  # lồng quá sâu: RecursionError, không phải ValueError
 ])
 def test_parse_client_message(text, expected):
     assert parse_client_message(text) == expected

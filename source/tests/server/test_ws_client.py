@@ -194,5 +194,42 @@ def test_pong_helper_echoes_the_seq():
     client.close()
 
 
+def test_a_timeout_in_the_middle_of_a_frame_does_not_desynchronize_the_stream():
+    full = encode_frame(OP_TEXT, b'{"type":"STATUS","n":1}', mask=False)
+    release = threading.Event()
+
+    def script(conn):
+        conn.sendall(full[:1])  # chỉ một byte của header
+        release.wait(5)
+        conn.sendall(full[1:6])  # rồi một phần payload
+        release.wait(5)
+        conn.sendall(full[6:])
+        conn.sendall(encode_frame(OP_TEXT, b'{"n":2}', mask=False))
+
+    server = FakeServer(script)
+    client = WsClient("127.0.0.1", server.port)
+    assert client.recv(timeout=0.2) == ("timeout", None)
+    release.set()
+    assert client.recv_json(timeout=2) == {"type": "STATUS", "n": 1}  # frame dở trước đó được ghép đúng
+    assert client.recv_json(timeout=2) == {"n": 2}
+    client.close()
+
+
+def test_fragments_received_before_a_timeout_are_kept():
+    release = threading.Event()
+
+    def script(conn):
+        conn.sendall(encode_frame(OP_TEXT, b'{"a"', mask=False, fin=False))
+        release.wait(5)
+        conn.sendall(encode_frame(0x0, b':1}', mask=False))
+
+    server = FakeServer(script)
+    client = WsClient("127.0.0.1", server.port)
+    assert client.recv(timeout=0.3) == ("timeout", None)
+    release.set()
+    assert client.recv_json(timeout=2) == {"a": 1}
+    client.close()
+
+
 def test_module_exposes_the_constants_the_e2e_relies_on():
     assert ws_client.GUID == "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"

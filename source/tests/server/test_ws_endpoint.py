@@ -193,9 +193,11 @@ def test_status_never_carries_code_or_sample_data_or_hidden_tests(wsweb):  # [kh
     worker.progress(job, 0)
     worker.result(job, "WA", time_ms=1, memory_kib=1, failed_test=1, failed_is_sample=True, sample_stdout="STDOUT-MARK")
     messages = collect(client, lambda ms: any(m.get("state") == "judged" for m in statuses(ms)))
-    text = repr(messages)
+    import json
+
+    text = json.dumps(messages)
     for forbidden in ("SECRET-SOURCE", "STDOUT-MARK", "HIDDEN-IN", "HIDDEN-OUT", "sample_stdout", "sample_input",
-                      "ce_message", "\"code\""):
+                      "sample_expected_output", "ce_message", '"code"'):
         assert forbidden not in text
     judged = [m for m in statuses(messages) if m["state"] == "judged"][0]["submission"]
     assert judged["verdict"] == "WA" and judged["failed_is_sample"] is True
