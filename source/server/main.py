@@ -1,6 +1,8 @@
 """FastAPI app. Mọi thứ khởi động trong lifespan (PLAN mục 2.1), không phải lúc import.
 
-Thứ tự: lưu event loop; migrate DB; nạp seed `problems/` (D5); nạp lại hàng đợi từ DB; tính bảng xếp hạng đầu tiên; rồi mới mở cổng worker và dispatcher. Teardown: dừng cổng worker (đóng listener và socket) rồi dispatcher.
+Thứ tự: lưu event loop; migrate DB; nạp seed `problems/` (D5); nạp lại hàng đợi từ DB; tính bảng xếp hạng đầu tiên; rồi
+mới mở cổng worker và dispatcher. Teardown: dừng cổng worker (đóng listener và socket), dispatcher, rồi bảng xếp hạng;
+bảng xếp hạng luôn được dừng, kể cả khi khởi động lỗi sau bước tính bản đầu hoặc khi dừng cổng worker/dispatcher lỗi.
 Chạy đúng một process uvicorn (`--workers 1`): hàng đợi và danh sách worker nằm trong bộ nhớ."""
 
 import asyncio
@@ -73,25 +75,29 @@ def create_app(cfg=None, clock=None):
         hooks.bind_scoreboard(scoreboard)
         app.state.scoreboard = scoreboard
         steps.append("scoreboard")
-        server.start()
-        steps.append("worker_port")
-        dispatcher.start()
-        steps.append("dispatcher")
-        app.state.db, app.state.worker_server, app.state.dispatcher = db, server, dispatcher
-        app.state.hooks = hooks
-        # Băm mật khẩu giả (tốn khoảng chục mili giây) nên chạy trong thread, không chặn event loop.
-        app.state.rest = await asyncio.to_thread(build_state, config, db, dispatcher, hooks, clock or system_clock_ms)
-        steps.append("rest")
         try:
+            server.start()
+            steps.append("worker_port")
+            dispatcher.start()
+            steps.append("dispatcher")
+            app.state.db, app.state.worker_server, app.state.dispatcher = db, server, dispatcher
+            app.state.hooks = hooks
+            # Băm mật khẩu giả (tốn khoảng chục mili giây) nên chạy trong thread, không chặn event loop.
+            app.state.rest = await asyncio.to_thread(build_state, config, db, dispatcher, hooks,
+                                                     clock or system_clock_ms)
+            steps.append("rest")
             yield
         finally:
             def shutdown():
+                # Dừng một thành phần chưa khởi động (khởi động lỗi giữa chừng) là vô hại.
                 server.stop()  # trước: đánh thức dispatcher đang chờ worker rảnh
                 dispatcher.stop()
 
-            await asyncio.to_thread(shutdown)
-            await scoreboard.stop()  # sau cổng worker và dispatcher: hết nguồn gọi mark_dirty
-            steps.append("stopped")
+            try:
+                await asyncio.to_thread(shutdown)
+            finally:
+                await scoreboard.stop()  # sau cổng worker và dispatcher: hết nguồn gọi mark_dirty
+                steps.append("stopped")
 
     # Không có /docs, /redoc, /openapi.json (công khai, lộ danh sách route) và không tự chuyển hướng dấu "/" cuối
     # (README 3.2: đường dẫn không tồn tại là 404 JSON).

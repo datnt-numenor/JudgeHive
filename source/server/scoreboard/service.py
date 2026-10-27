@@ -14,6 +14,7 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import cached_property
 
 from server.scoreboard.loader import compute_board
 from server.timefmt import iso_ms
@@ -38,7 +39,12 @@ class Snapshot:
     rows: tuple
 
     def as_json(self):
-        """Thân của `GET /api/scoreboard` (README 3.3). Message WebSocket thêm field `type` (B2)."""
+        """Thân của `GET /api/scoreboard` (README 3.3). Message WebSocket thêm field `type` (B2). Dựng một lần cho mỗi
+        bản (bản bất biến) rồi dùng lại cho mọi request; người gọi không được sửa dict trả về."""
+        return self._body
+
+    @cached_property
+    def _body(self):
         return {
             "version": self.version,
             "generated_at": iso_ms(self.generated_ms),
@@ -62,31 +68,35 @@ class ScoreboardService:
         self._ready = None
         self._last_start = None  # loop.time() của lần bắt đầu tính gần nhất
         self._subscribers = []
+        self._started = False
         self._stopped = False
-        self._closed = False
+        self._stop_task = None
 
     # ------------------------------------------------------------------ vòng đời
 
     async def start(self):
         """Tính bản đầu tiên (phiên bản 1) rồi mới trả về. Lỗi thì ném ra, để server không khởi động với bảng rỗng giả."""
+        if self._started:
+            raise RuntimeError("ScoreboardService.start() chỉ được gọi một lần")
+        self._started = True
         self._ready = self._loop.create_future()
         self._dirty = True
         self._task = self._loop.create_task(self._run())
         await self._ready
 
     async def stop(self):
-        """Dừng: không tính thêm, hủy tác vụ, đóng kết nối SQLite của thread riêng rồi tắt thread. Gọi lại là vô hại."""
+        """Dừng: không tính thêm, hủy tác vụ, đóng kết nối SQLite của thread riêng rồi tắt thread. Mọi lời gọi (kể cả
+        đồng thời) cùng chờ một lần tắt duy nhất; hủy người gọi không làm dừng việc tắt."""
         self._stopped = True
-        if self._closed:
-            return
-        self._closed = True
+        if self._stop_task is None:
+            self._stop_task = self._loop.create_task(self._shutdown())
+        await asyncio.shield(self._stop_task)
+
+    async def _shutdown(self):
         task = self._task
         if task is not None and not task.done():
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            await asyncio.wait({task})  # chờ task con kết thúc; không ném CancelledError của nó
         # Lần tính đang chạy trong thread (nếu có) vẫn chạy nốt; đóng kết nối xếp hàng sau nó trên cùng thread.
         await self._loop.run_in_executor(self._executor, self._db.close_thread)
         await self._loop.run_in_executor(None, self._executor.shutdown)
@@ -98,8 +108,9 @@ class ScoreboardService:
         return self._latest
 
     def mark_dirty(self):
-        """Đánh dấu cần tính lại. Chỉ gọi trên event loop. Không bao giờ ném."""
-        if self._stopped:
+        """Đánh dấu cần tính lại. Chỉ gọi trên event loop. Không bao giờ ném. Trước `start()` hoặc sau `stop()` thì không làm
+        gì (`start()` luôn tính một bản mới)."""
+        if self._stopped or not self._started:
             return
         self._dirty = True
         if self._task is None or self._task.done():
