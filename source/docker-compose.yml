@@ -1,6 +1,5 @@
 # JudgeHive: server + worker. Chạy từ thư mục source/:
-#   mkdir secrets
-#   python -c "import secrets; print('JH_WORKER_SECRET=' + secrets.token_hex(32))" > secrets/worker.env
+#   python -c "import secrets, pathlib; pathlib.Path('secrets/worker.env').write_text('JH_WORKER_SECRET=' + secrets.token_hex(32) + '\n', encoding='utf-8')"
 #   docker compose up --build                       # một worker
 #   docker compose up --build --scale worker=3      # ba worker
 # Quản lý (DB nằm trong named volume, nên chạy trong container server):
