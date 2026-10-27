@@ -212,4 +212,4 @@ def test_no_route_declares_validated_parameters():
         assert not dependant.query_params and not dependant.body_params and not dependant.header_params, route.path
         assert not dependant.cookie_params, route.path
         assert all(p.field_info.annotation is str for p in dependant.path_params), route.path
-    assert seen == 9, seen  # login, logout, me, health, problems x2, submissions x3
+    assert seen == 10, seen  # login, logout, me, health, problems x2, scoreboard, submissions x3
