@@ -442,7 +442,7 @@ Khi đó:
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
-Phần này mô tả chín endpoint đủ để đăng nhập, xem đề, nộp bài và xem kết quả. Chưa có trong phần này, sẽ thêm ở PR sau: endpoint admin, `GET /api/scoreboard`, WebSocket `/ws`.
+Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng. WebSocket `/ws` ở mục 4. Chưa có trong phần này, sẽ thêm ở PR sau: endpoint admin.
 
 #### 3.1. Bảng tóm tắt
 
@@ -457,6 +457,7 @@ Phần này mô tả chín endpoint đủ để đăng nhập, xem đề, nộp 
 | `/api/submissions` | HTTP/1.1 | POST | `{"problem_id","language","code","client_token"}` | 201 (hoặc 200 khi trùng token) `{"submission_id","state","received_at"}` |
 | `/api/submissions` | HTTP/1.1 | GET | query `limit`, `before_id` (tùy chọn) | 200 `{"submissions":[…],"next_before_id"}` |
 | `/api/submissions/{id}` | HTTP/1.1 | GET | — | 200 một bài nộp của chính người gọi, kèm chi tiết |
+| `/api/scoreboard` | HTTP/1.1 | GET | — | 200 `{"version","generated_at","rows":[{"rank","username","solved","wrong","last_ac_at"}]}` |
 
 Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
@@ -534,7 +535,7 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 ##### `POST /api/logout`
 
 - Body `{}`. Thành công: 204, không có body, header `Set-Cookie: jh_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`. Phiên bị hủy ngay ở server: dùng lại cookie cũ thì 401.
-- Các WebSocket thuộc phiên đó bị đóng với close code 4401 (chi tiết ở phần WebSocket, PR sau).
+- Các WebSocket thuộc phiên đó bị đóng với close code 4401 (mục 4.5).
 
 ##### `GET /api/me`
 
@@ -644,8 +645,45 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 {"submission_id": 42, "problem_id": "sum-two", "problem_title": "Tổng hai số", "language": "python", "received_at": "2026-10-24T08:15:30.123Z", "state": "judged", "verdict": "WA", "time_ms": 12, "memory_kib": 9216, "failed_test": 1, "failed_is_sample": true, "re_kind": null, "rejudged_at": null, "code": "print(int(input()) + int(input()))\n", "ce_message": null, "sample_stdout": "4\n", "sample_input": "1 2\n", "sample_expected_output": "3\n"}
 ```
 
+##### `GET /api/scoreboard`
+
+- Cần phiên. Mọi người đã đăng nhập, kể cả admin, thấy cùng một bảng. Thiếu phiên: 401 `UNAUTHENTICATED`.
+- Trả bản đã tính gần nhất; endpoint này không bắt server tính lại. Không phân trang.
+
+| Field | Kiểu | Ghi chú |
+|-------|------|---------|
+| `version` | integer | Tăng mỗi lần server tính lại bảng. Bắt đầu lại từ giá trị nhỏ khi server khởi động lại, nên chỉ so sánh được trong cùng một lần chạy của server (mục 4.7) |
+| `generated_at` | string | Thời điểm tính bảng |
+| `rows` | array | Đã sắp theo thứ tự hiển thị |
+
+Mỗi phần tử của `rows`:
+
+| Field | Kiểu | Ghi chú |
+|-------|------|---------|
+| `rank` | integer | Từ 1. Hòa thì cùng hạng và hạng kế tiếp bị bỏ qua (1, 2, 2, 4) |
+| `username` | string | |
+| `solved` | integer | Số đề đã giải |
+| `wrong` | integer | Số lần sai tính điểm (luật bên dưới) |
+| `last_ac_at` | string hoặc null | Thời điểm nhận bài AC đầu tiên muộn nhất trong các đề đã giải; `null` khi `solved` là 0 |
+
+```json
+{"version": 12, "generated_at": "2026-10-27T08:15:30.123Z", "rows": [{"rank": 1, "username": "alice", "solved": 3, "wrong": 2, "last_ac_at": "2026-10-27T07:58:12.045Z"}, {"rank": 2, "username": "bob", "solved": 2, "wrong": 0, "last_ac_at": "2026-10-27T07:20:01.310Z"}, {"rank": 3, "username": "carol", "solved": 0, "wrong": 0, "last_ac_at": null}]}
+```
+
+**Luật xếp hạng.**
+
+- *Đề được tính:* chỉ đề không ẩn tại thời điểm tính. Ẩn một đề thì mọi bài trên đề đó thôi được tính; hiện lại thì được tính lại.
+- *Người được xếp:* chỉ tài khoản có role `user`. Admin không bao giờ có hàng, kể cả khi đã nộp bài. Một người có hàng khi có ít nhất một bài nộp đã có verdict (mọi verdict, kể cả `CE` hay `SE`) trên một đề được tính, kể cả khi chưa AC đề nào. Bài chưa có verdict lần đầu thì chưa được tính; bài đang chấm lại vẫn được tính theo verdict cũ cho tới khi có kết quả mới.
+- *AC đầu tiên* của một người trên một đề: trong các bài nộp của người đó trên đề đó có verdict hiện tại là `AC`, bài có thời điểm nhận sớm nhất (hòa thì `submission_id` nhỏ hơn). Có bài như vậy thì đề được tính là đã giải. Chấm lại làm một bài trở thành AC hoặc hết AC thì bảng tự đúng theo verdict mới.
+- `wrong` là tổng, trên các đề đã giải, số bài nộp có verdict `WA`, `TLE`, `MLE` hoặc `RE` được nhận **trước** AC đầu tiên của đề đó. `CE`, `SE` và bài chưa có verdict không tính. Bài nộp sau AC đầu tiên không ảnh hưởng. Trên đề chưa giải không tính lần sai nào.
+- `last_ac_at` là thời điểm nhận lớn nhất, trên các đề đã giải, của bài AC đầu tiên mỗi đề.
+- *Thứ tự:* `solved` giảm dần, rồi `wrong` tăng dần, rồi `last_ac_at` tăng dần (sớm hơn xếp trước; `null` xếp sau cùng). Ba giá trị bằng nhau thì cùng `rank`; các hàng cùng hạng xếp theo `username` tăng dần theo thứ tự byte UTF-8.
+- *Mốc thời gian* là lúc server nhận bài (giờ server, UTC, mili giây), không phải lúc chấm xong.
+- Server tính lại bảng sau khi kết quả một bài được ghi, hoặc khi một đề được ẩn hay hiện, và gộp tối đa một lần mỗi giây. Vì vậy bảng có thể chậm vài giây so với kết quả mới nhất.
+
 #### 3.4. Hạn chế đã biết của phần này
 
+- Bảng xếp hạng hiện tên người dùng cho mọi người đã đăng nhập. Khi một đề bị ẩn, các AC trên đề đó biến khỏi bảng (hiện lại thì trở về). Trong lúc chấm lại dở dang, bảng mang verdict cũ.
 - Không có HTTPS: mật khẩu đi dạng rõ trong mạng nội bộ.
 - Cookie `SameSite=Lax` không chặn request từ origin khác cùng site (ví dụ khác cổng trên cùng máy). Lớp bảo vệ còn lại là: `POST` chỉ nhận `application/json` và không mở CORS, nên trình duyệt không cho trang khác gửi được request như vậy.
 - Số test sai, thời gian và bộ nhớ trong kết quả là kênh rò thông tin rất hẹp về test ẩn; rate limit nộp bài là chặn trên của kênh này.
@@ -672,9 +710,85 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 **Ngoại lệ: 503 do hạ tầng.** Khi có quá nhiều kết nối đồng thời (giới hạn `--limit-concurrency` của uvicorn, xem `server/README.md`), uvicorn trả 503 ngay ở tầng hạ tầng, trước khi request tới ứng dụng. Response này **không** theo định dạng `{"error": {...}}` (thân là văn bản thường) và không có `Cache-Control: no-store`. Client coi mọi 503 là lỗi tạm thời: thử lại sau, không phân tích thân response, và với `POST /api/submissions` giữ nguyên `client_token` khi thử lại (mục 3.3).
 
 
-### 4. WebSocket
+### 4. WebSocket (server đẩy)
 
-Đặc tả ở PR sau (M3).
+Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) để nhận trạng thái chấm bài và bảng xếp hạng ngay khi thay đổi, không cần gọi lại REST. Mọi message là một frame văn bản chứa một object JSON có field `type`. Client chỉ gửi lên `PONG`; mọi dữ liệu khác lấy bằng REST (mục 3). Message `WORKERS` dành cho admin sẽ thêm cùng phần admin ở PR sau; người không phải admin không bao giờ nhận.
+
+#### 4.1. Kết nối và xác thực
+
+- Client gửi `GET /ws` với header `Upgrade: websocket`. Cookie phiên `jh_session` đi kèm tự động khi cùng origin.
+- **Kiểm tra `Origin` (chống chiếm kết nối từ trang khác):** handshake bị từ chối bằng HTTP 403, không mở WebSocket, nếu thiếu header `Origin`, hoặc `Origin` không nằm trong các origin được phép. Origin được phép là:
+  - origin có cùng host và cổng với header `Host` của request, với scheme `http` hoặc `https` (host so sánh không phân biệt hoa thường; cổng mặc định 80 của `http` và 443 của `https` có thể bỏ); và
+  - các origin liệt kê trong biến môi trường `JH_ALLOWED_ORIGINS` (danh sách origin đầy đủ, phân tách bằng dấu phẩy, ví dụ `http://localhost:5173,https://judge.example.org`). Dùng biến này khi host của `Origin` khác với host trong `Host` của request, ví dụ server đứng sau proxy đổi `Host`.
+  - Khi chạy frontend bằng Vite dev server, proxy `/ws` phải đặt `ws: true` và `changeOrigin: false`, để `Host` giữ nguyên là địa chỉ của Vite và khớp với `Origin` của trang.
+  - Trình duyệt không cho JavaScript đọc mã HTTP của handshake bị từ chối: client chỉ thấy kết nối đóng bất thường (mã 1006), không phân biệt được với lỗi mạng.
+- **Phiên:** thiếu cookie, phiên sai hoặc đã hết hạn thì handshake vẫn hoàn tất, rồi server đóng ngay với mã **4401**. Client gặp 4401 thì ngừng nối lại và quay về trang đăng nhập. (Cố ý không từ chối ở handshake, để client phân biệt được "hết phiên" với "mất mạng".)
+- Kết nối hợp lệ thì server gửi ngay `SCOREBOARD` hiện có (mục 4.2), nên client không cần gọi `GET /api/scoreboard` riêng sau khi nối.
+- **Giới hạn:** mỗi người tối đa 10 kết nối cùng lúc (nhiều tab), toàn server tối đa 400. Vượt giới hạn của người đó thì handshake hoàn tất rồi server đóng với mã **4429**; vượt giới hạn toàn server thì đóng với mã 1013. Hai mã khác nhau vì cách xử lý khác nhau: 4429 là lỗi của chính người dùng (quá nhiều tab) nên nối lại ngay cũng bị từ chối tiếp, còn 1013 là quá tải tạm thời (mục 4.7).
+- Một người có thể mở nhiều kết nối. `STATUS` chỉ được gửi tới các kết nối của đúng chủ bài nộp; không ai nhận `STATUS` của người khác, kể cả admin.
+
+#### 4.2. Message server gửi
+
+| `type` | Khi nào | Nội dung |
+|--------|---------|----------|
+| `STATUS` | Trạng thái một bài nộp của chính người nhận thay đổi | Bên dưới |
+| `SCOREBOARD` | Ngay sau khi nối, và mỗi khi bảng xếp hạng được tính lại | Như thân của `GET /api/scoreboard` (mục 3.3), kèm `type` |
+| `PING` | Mỗi 30 giây | `{"type": "PING", "seq": 7}`; `seq` là số nguyên tăng dần trên mỗi kết nối |
+
+**`STATUS`** luôn có `submission_id` và `state` (cùng giá trị với REST: `queued`, `judging`, `judged`):
+
+```json
+{"type": "STATUS", "submission_id": 42, "state": "queued"}
+{"type": "STATUS", "submission_id": 42, "state": "judging", "progress": {"tests_done": 1, "tests_total": 4}}
+{"type": "STATUS", "submission_id": 42, "state": "judged", "submission": {"submission_id": 42, "problem_id": "sum-two", "problem_title": "Tổng hai số", "language": "python", "received_at": "2026-10-27T08:15:30.123Z", "state": "judged", "verdict": "AC", "time_ms": 31, "memory_kib": 9216, "failed_test": null, "failed_is_sample": null, "re_kind": null, "rejudged_at": null}}
+```
+
+- `queued`: bài mới nộp, hoặc bị đưa lại hàng đợi để giao lại khi worker mất kết nối (mục 2.6). Bài được chấm lại (rejudge) giữ `state` là `queued` và không đẩy `STATUS` lúc xếp hàng; `STATUS` chỉ đẩy khi có kết quả mới.
+- `judging`: bài đã giao cho worker (không có `progress`), và mỗi khi worker báo `PROGRESS` (có `progress`). `tests_total` là tổng số test của đề, gồm cả test ẩn (xem mục 4.8).
+- `judged`: có kết quả. Field `submission` là đối tượng bài nộp giống phần tử của `GET /api/submissions` (mục 3.3), qua cùng quy tắc chỉ trả field phù hợp với verdict. Nó là ảnh chụp tại lúc gửi, có thể mới hơn sự kiện đã gây ra. Một lượt chấm lại bị lỗi (verdict cũ được giữ) vẫn đẩy một `STATUS` `judged` mang đối tượng với verdict cũ.
+- `STATUS` không bao giờ mang `code`, `ce_message`, `sample_stdout`, `sample_input`, `sample_expected_output`: client lấy chúng bằng `GET /api/submissions/{id}` khi cần. Test ẩn, stdout/stderr của test ẩn và mã thoát không bao giờ xuất hiện (quy tắc ở mục 3.3).
+
+#### 4.3. Message client gửi
+
+- Chỉ `{"type": "PONG", "seq": 7}`, trong đó `seq` **phải lặp lại** đúng `seq` của `PING` vừa nhận (số nguyên). Server không đối chiếu giá trị `seq` với `PING` đã gửi, nhưng `PONG` thiếu `seq` hoặc `seq` không phải số nguyên bị coi là message sai và bỏ qua (xem dòng dưới). Server coi mọi frame JSON nhận được, kể cả frame bị bỏ qua, là bằng chứng kết nối còn sống (mốc 60 giây ở mục 4.4).
+- Message có `type` khác `PONG`, `PONG` thiếu hoặc sai kiểu `seq`, hoặc frame không phải object JSON: bị bỏ qua (server ghi log), kết nối giữ nguyên.
+- Frame lớn hơn 4 096 byte: server đóng với mã 1009. Frame nhị phân: đóng với mã 1003.
+
+#### 4.4. Giữ kết nối và gửi chậm
+
+- Server gửi `PING` mỗi 30 giây và cứ 30 giây kiểm tra các kết nối. Kết nối không nhận được gì từ client quá 60 giây thì bị đóng và gỡ, nên một kết nối chết thường bị đóng sau khoảng 60 đến 90 giây.
+- Client coi kết nối đã chết khi quá 60 giây không nhận được message nào (mọi `type` đều tính), rồi tự đóng và nối lại.
+- Mỗi kết nối có hàng đợi gửi riêng, tối đa 32 message, và mỗi lần gửi có hạn 5 giây. Kết nối nhận chậm (hàng đợi đầy, hoặc một lần gửi không xong trong 5 giây) thì bị đóng với mã 1013 và gỡ; một kết nối chậm không làm chậm các kết nối khác.
+- `SCOREBOARD` chưa gửi được mà đã có bản mới hơn thì bản cũ bị bỏ; client luôn nhận bản mới nhất, không nhất thiết nhận từng bản trung gian.
+
+#### 4.5. Đóng kết nối do phiên
+
+- `POST /api/logout`: mọi WebSocket thuộc phiên bị hủy bị đóng với mã 4401 ngay sau khi logout trả lời. WebSocket thuộc các phiên khác của cùng người giữ nguyên.
+- Phiên hết hạn khi WebSocket đang mở: server kiểm tra lại phiên của mọi kết nối định kỳ 30 giây một lần, và đóng 4401 kết nối không còn phiên hợp lệ; nên có thể trễ tối đa khoảng 30 giây sau khi hết hạn.
+- Khi admin đặt lại mật khẩu của một người (PR sau), mọi WebSocket của người đó bị đóng 4401.
+- Server tắt: đóng mọi kết nối với mã 1001.
+
+#### 4.6. Bảo đảm chuyển phát
+
+- Các message tới một kết nối theo đúng thứ tự phát sinh. Không có phát lại: message phát khi kết nối chưa có hoặc đã mất thì bị lỡ (tối đa một lần, cố gắng hết sức).
+- `STATUS` và `SCOREBOARD` là gợi ý để cập nhật giao diện ngay; nguồn sự thật là REST (`GET /api/submissions`, `GET /api/submissions/{id}`, `GET /api/scoreboard`).
+
+#### 4.7. Nối lại (quy tắc cho client)
+
+1. Mã 4401: ngừng nối lại, về trang đăng nhập. Mã 4429 (quá 10 kết nối của cùng một người): ngừng nối lại và không tự thử lại, chuyển sang lấy dữ liệu bằng REST (gọi lại định kỳ `GET /api/submissions/{id}` cho bài đang chờ như mục 3.3, và `GET /api/scoreboard` cho bảng xếp hạng) và báo cho người dùng biết đang có quá nhiều tab mở; chỉ thử WebSocket lại khi người dùng tải lại trang.
+2. Mọi trường hợp khác, gồm 1013 (mất mạng, mã khác 4401 và 4429, 1006, quá 60 giây không nhận gì): nối lại sau 1, 2, 4, 8 rồi 10 giây (tối đa 10 giây), cộng một khoảng ngẫu nhiên (jitter). Nối thành công thì khoảng chờ đặt lại về 1 giây.
+3. Sau khi nối lại, client gọi `GET /api/submissions` để lấy kết quả bị lỡ trong lúc mất kết nối. Bảng xếp hạng không cần gọi riêng: server gửi `SCOREBOARD` ngay khi nối.
+4. Client giữ bản `SCOREBOARD` có `version` lớn nhất nhận được **kể từ lần nối WebSocket gần nhất**, từ cả WebSocket và `GET /api/scoreboard`. Mỗi lần nối lại phải bỏ mốc `version` đang giữ, vì `version` bắt đầu lại khi server khởi động lại.
+5. Khi cần đóng một kết nối cũ để thay bằng kết nối mới, client dùng mã 4000 và gỡ các handler của kết nối cũ trước khi đóng, để sự kiện đóng đến muộn không kích hoạt nối lại lần thứ hai. Server không bao giờ gửi mã 4000.
+
+#### 4.8. Hạn chế đã biết của phần này
+
+- Không có HTTPS: cookie phiên và message đi dạng rõ trong mạng nội bộ.
+- Header `Origin` chỉ do trình duyệt bảo đảm. Client không phải trình duyệt có thể giả `Origin`, nhưng vẫn cần cookie phiên hợp lệ, nên không có quyền hơn chính người sở hữu phiên.
+- `progress.tests_total` cho biết số test của đề, gồm cả test ẩn, nhưng chỉ người nộp bài thấy và chỉ cho bài của chính họ. Cùng loại với kênh rò hẹp đã ghi ở mục 3.4.
+- Không phát lại và không có số thứ tự trên `STATUS`; client dựa vào REST để đồng bộ lại sau khi mất kết nối.
+- Đóng một kết nối đã chết có thể làm sự kiện đóng đến chậm ở phía client; vì vậy client tự phát hiện bằng mốc 60 giây (mục 4.4) chứ không chờ sự kiện đóng.
+- Một proxy hoặc giới hạn kết nối của hạ tầng có thể từ chối handshake (ví dụ 503 khi quá nhiều kết nối đồng thời, mục 3.5); client chỉ thấy 1006 và xử lý như mất mạng.
 
 ### 5. Danh sách mã lỗi
 
@@ -702,6 +816,22 @@ Mọi mã dưới đây do server gửi cho worker trong message `ERROR` (mục 
 #### 5.2. REST
 
 Mã lỗi của REST nằm ở mục 3.5, cùng định dạng `{"error": {"code", "message"}}`; hai bảng mã độc lập nhau.
+
+#### 5.3. WebSocket
+
+WebSocket không có thân lỗi JSON; lý do đóng nằm ở mã đóng (close code). Cột "Client" là cách xử lý bắt buộc (chi tiết ở mục 4.7).
+
+| Mã | Ai gửi | Khi nào | Client |
+|----|--------|---------|--------|
+| 403 (HTTP, không phải close code) | server | Handshake: thiếu `Origin` hoặc `Origin` không được phép (mục 4.1). Client chỉ thấy 1006 | Nối lại có backoff |
+| 4401 | server | Thiếu phiên, phiên sai hoặc hết hạn; logout; admin đặt lại mật khẩu (mục 4.1, 4.5) | Ngừng nối lại, về trang đăng nhập |
+| 4429 | server | Người dùng đã có 10 kết nối WebSocket (mục 4.1) | Ngừng nối lại, chuyển sang lấy dữ liệu bằng REST, báo người dùng (mục 4.7) |
+| 1013 | server | Vượt 400 kết nối toàn server (mục 4.1); kết nối nhận quá chậm (mục 4.4) | Nối lại có backoff |
+| 1009 | server | Client gửi frame lớn hơn 4 096 byte | Nối lại có backoff |
+| 1003 | server | Client gửi frame nhị phân | Nối lại có backoff |
+| 1001 | server | Server tắt | Nối lại có backoff |
+| 4000 | client | Client đóng kết nối cũ để thay bằng kết nối mới (mục 4.7); server không bao giờ gửi mã này | |
+| 1006 | không ai gửi | Kết nối đóng bất thường (không có frame đóng): mất mạng, handshake bị từ chối, server không phản hồi | Nối lại có backoff |
 
 ---
 
@@ -741,6 +871,7 @@ assignment-network-project/
 - [ ] Cải thiện giao diện người dùng
 - [ ] Đề bài viết bằng Markdown (render qua thư viện có sanitize); hiện `statement` chỉ là văn bản thường
 - [ ] Thêm tính năng xác thực và phân quyền
+- [ ] Bảng xếp hạng có lưới theo từng đề (AC hay số lần sai của mỗi người trên mỗi đề); hiện `GET /api/scoreboard` chỉ có tổng hợp theo người
 - [ ] Tối ưu hóa hiệu suất
 - [ ] Triển khai trên cloud
 
