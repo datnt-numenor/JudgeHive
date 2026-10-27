@@ -61,8 +61,8 @@ def test_startup_steps_run_in_the_documented_order(cfg):
         async with app.router.lifespan_context(app):
             return list(app.state.startup_steps)
 
-    assert run(scenario()) == ["loop", "migrate", "seed", "reload_queue", "worker_port", "dispatcher",
-                             "rest"]
+    assert run(scenario()) == ["loop", "migrate", "seed", "reload_queue", "scoreboard", "worker_port",
+                             "dispatcher", "rest"]
     assert app.state.startup_steps[-1] == "stopped"
 
 
@@ -206,3 +206,65 @@ def test_load_config_refuses_to_start_without_a_secret_or_with_bad_numbers(env):
 
 def test_default_worker_port_is_9000():
     assert config_module.load_config({"JH_WORKER_SECRET": "abc"}).worker_port == 9000
+
+
+def scoreboard_threads():
+    import threading
+
+    return [t for t in threading.enumerate() if t.name.startswith("scoreboard-db")]
+
+
+def test_the_scoreboard_is_stopped_when_startup_fails_after_it_started(cfg, monkeypatch):
+    def boom(self):
+        raise RuntimeError("không mở được cổng worker")
+
+    monkeypatch.setattr(WorkerServer, "start", boom)
+    app = create_app(cfg)
+
+    async def scenario():
+        with pytest.raises(RuntimeError):
+            async with app.router.lifespan_context(app):
+                pass
+
+    run(scenario())
+    assert scoreboard_threads() == []
+
+
+def test_the_scoreboard_is_stopped_even_if_stopping_the_worker_port_fails(cfg, monkeypatch):
+    original = WorkerServer.stop
+
+    def bad_stop(self):
+        original(self)
+        raise RuntimeError("lỗi khi dừng cổng worker")
+
+    monkeypatch.setattr(WorkerServer, "stop", bad_stop)
+    app = create_app(cfg)
+
+    async def scenario():
+        with pytest.raises(RuntimeError):
+            async with app.router.lifespan_context(app):
+                pass
+
+    run(scenario())
+    assert scoreboard_threads() == []
+    assert app.state.startup_steps[-1] == "stopped"
+
+
+def test_a_failure_computing_the_first_scoreboard_stops_the_server_from_starting(cfg, monkeypatch):
+    import server.main as main_module
+
+    class Broken(main_module.ScoreboardService):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, compute=lambda db: 1 / 0, **{k: v for k, v in kwargs.items() if k != "compute"})
+
+    monkeypatch.setattr(main_module, "ScoreboardService", Broken)
+    app = create_app(cfg)
+
+    async def scenario():
+        with pytest.raises(ZeroDivisionError):
+            async with app.router.lifespan_context(app):
+                pass
+
+    run(scenario())
+    assert scoreboard_threads() == []
+    assert "worker_port" not in app.state.startup_steps

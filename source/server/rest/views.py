@@ -3,7 +3,7 @@
 Mỗi field đi qua whitelist theo verdict, không sao chép nguyên dòng DB: dữ liệu không áp dụng cho verdict đó (ví dụ
 `failed_test` của một bài AC, `sample_stdout` khi test sai là test ẩn) không bao giờ ra khỏi server dù DB có lỡ chứa."""
 
-import time
+from server.timefmt import iso_ms  # noqa: F401  (các route REST dùng `views.iso_ms`)
 
 RE_KINDS = frozenset({"SIGSEGV", "SIGFPE", "SIGABRT", "SIGKILL", "OTHER_SIGNAL", "EXIT_NONZERO"})
 _HAS_TIMING = frozenset({"AC", "WA", "TLE", "MLE"})
@@ -14,10 +14,6 @@ LIST_COLUMNS = ("s.id, s.problem_id, p.title AS problem_title, s.language, s.sub
                 "s.time_ms, s.memory_kib, s.failed_test, s.failed_is_sample, s.re_kind, s.rejudged_at")
 DETAIL_COLUMNS = (LIST_COLUMNS + ", s.code, s.ce_message, s.sample_stdout, s.verdict_test_hash, "
                   "p.tests_hash AS problem_tests_hash, p.hidden AS problem_hidden")
-
-
-def iso_ms(ms):
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ms // 1000)) + f".{ms % 1000:03d}Z"
 
 
 def _text(value):

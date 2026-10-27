@@ -22,12 +22,22 @@ class Hooks:
 class LoopHooks(Hooks):
     def __init__(self, loop):
         self._loop = loop
+        self._scoreboard = None
+
+    def bind_scoreboard(self, service):
+        """Gắn `ScoreboardService`; từ đó `scoreboard_dirty` đánh dấu cần tính lại bảng xếp hạng."""
+        self._scoreboard = service
 
     def status(self, submission_id, user_id, event, **info):
         self._post(log.info, "STATUS submission=%s user=%s event=%s %s", submission_id, user_id, event, info)
 
     def scoreboard_dirty(self):
-        self._post(log.info, "SCOREBOARD dirty")
+        # Gọi từ thread dispatcher/cổng worker sau khi commit: chỉ chuyển sang event loop rồi trả về, không bao giờ ném.
+        service = self._scoreboard
+        if service is None:
+            self._post(log.info, "SCOREBOARD dirty")
+        else:
+            self._post(service.mark_dirty)
 
     def _post(self, fn, *args):
         try:

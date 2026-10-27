@@ -38,6 +38,7 @@ class ServerConfig:
     login_rate_limit: int = 10
     login_rate_window_s: float = 60.0
     login_max_concurrent: int = 8
+    scoreboard_min_interval_s: float = 1.0  # bảng xếp hạng tính lại tối đa một lần mỗi khoảng này (README 3.3)
 
 
 def db_path_from_env(env):

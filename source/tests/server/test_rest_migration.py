@@ -35,7 +35,7 @@ def test_migration_2_keeps_old_data_and_adds_sessions(tmp_path):
     db = Database(path)
     db.migrate()
     conn = db.conn()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(db_module.MIGRATIONS) == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(db_module.MIGRATIONS)
     assert [tuple(r) for r in conn.execute("SELECT id, language, code, client_token FROM submissions ORDER BY id")] == \
            [(1, "python", "old-1", None), (2, "java", "old-2", uuid_token(5))]
     assert conn.execute("SELECT username FROM users").fetchone()[0] == "alice"
@@ -49,7 +49,7 @@ def test_migrating_twice_is_a_noop(tmp_path):
     db = Database(str(tmp_path / "twice.db"))
     db.migrate()
     db.migrate()
-    assert db.conn().execute("PRAGMA user_version").fetchone()[0] == 2
+    assert db.conn().execute("PRAGMA user_version").fetchone()[0] == len(db_module.MIGRATIONS)
 
 
 def test_old_password_hashes_still_verify_after_migration(tmp_path):

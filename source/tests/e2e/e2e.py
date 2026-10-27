@@ -128,6 +128,11 @@ def check(name, ok, detail_text=""):
         failures.append(name)
 
 
+def scoreboard(cookie):
+    status, _, body = http_call("GET", "/api/scoreboard", cookie=cookie)
+    return body if status == 200 else {"version": 0, "rows": []}
+
+
 def restart_server():
     compose("restart", "server")
     compose("up", "-d", "--wait", "--no-recreate")
@@ -202,6 +207,23 @@ def main():
                   (s["submission_id"] for s in history["submissions"]), reverse=True)
               and history["next_before_id"] is not None)
 
+        # bảng xếp hạng: cần phiên; alice giải đề aplusb bằng bài py-ac nộp đầu tiên (các bài sau AC không thành lần sai)
+        check("bảng xếp hạng cần phiên", http_call("GET", "/api/scoreboard")[0] == 401)
+        board = wait_for(lambda: (b := scoreboard(cookie))["rows"] and b["rows"][0]["solved"] == 1 and b, 30,
+                         "bảng xếp hạng có alice với 1 đề đã giải")
+        received = detail(cookie, ids["py-ac"])["received_at"]
+        check("bảng xếp hạng: alice hạng 1, giải 1 đề, 0 lần sai, mốc AC là lúc nhận bài py-ac",
+              board["rows"] == [{"rank": 1, "username": "alice", "solved": 1, "wrong": 0, "last_ac_at": received}],
+              str(board["rows"]))
+        root_login = http_call("POST", "/api/login", {"username": "root", "password": PASSWORD})
+        root_cookie = root_login[1]["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+        root_id, _ = submit(root_cookie, *SOLUTIONS["py-ac"][:2])
+        wait_judged(root_cookie, root_id, "bài AC của admin chấm xong")
+        time.sleep(3)  # chờ bảng được tính lại sau kết quả của admin
+        check("bảng xếp hạng: admin không bao giờ có hàng",
+              [r["username"] for r in scoreboard(cookie)["rows"]] == ["alice"])
+        version_before = scoreboard(cookie)["version"]
+
         # worker chết giữa chừng: bài được giao lại với attempt_id mới
         wait_for(lambda: detail(cookie, slow_id)["state"] in ("judging", "judged"), 120, "bài chậm được giao")
         if detail(cookie, slow_id)["state"] == "judging":
@@ -219,6 +241,10 @@ def main():
         restart_server()
         check("verdict còn sau khi restart server", detail(cookie, ids["py-ac"])["verdict"] == "AC")
         check("phiên còn sau khi restart server", http_call("GET", "/api/me", cookie=cookie)[0] == 200)
+        after_restart = scoreboard(cookie)
+        check("restart: bảng dựng lại từ DB, phiên bản bắt đầu lại",
+              [r["username"] for r in after_restart["rows"]] == ["alice"] and after_restart["version"] <= 3,
+              f"version={after_restart['version']}")
 
         # secret không lộ cho code thí sinh: chạy một bài nộp thật in môi trường và cố đọc /proc/1/environ
         secret_value = open(secret_file, encoding="utf-8").read().strip().split("=", 1)[1]
@@ -229,6 +255,12 @@ def main():
               f"{probe['verdict']} {out[:200]}")
         check("code thí sinh không thấy secret trong env, /proc/1/environ hay file", secret_value not in out)
         check("code thí sinh bị từ chối khi đọc /proc/1/environ", "/proc/1/environ PermissionError" in out, out[:300])
+
+        wait_for(lambda: scoreboard(cookie)["version"] > after_restart["version"], 30,
+                 "bảng xếp hạng được tính lại sau kết quả của bài dò secret")
+        check("bảng xếp hạng được tính lại khi có kết quả mới (phiên bản tăng)",
+              scoreboard(cookie)["version"] > after_restart["version"])
+        check("version trước restart là số dương", version_before >= 1)
 
         # không endpoint nào của REST trả test ẩn hay secret
         blob = b"".join(rest_output)

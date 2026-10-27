@@ -683,7 +683,7 @@ Mỗi phần tử của `rows`:
 
 #### 3.4. Hạn chế đã biết của phần này
 
-- Bảng xếp hạng hiện tên người dùng cho mọi người đã đăng nhập. Khi một đề bị ẩn, các AC trên đề đó biến khỏi bảng (hiện lại thì trở về). Trong lúc chấm lại dở dang, bảng mang verdict cũ.
+- Bảng xếp hạng hiện tên người dùng cho mọi người đã đăng nhập. Với hàng chục nghìn bài nộp, mỗi lần server tính lại bảng (tối đa một lần mỗi giây) có thể làm các request khác chậm đi vài chục mili giây; chưa đo dưới tải. Khi một đề bị ẩn, các AC trên đề đó biến khỏi bảng (hiện lại thì trở về). Trong lúc chấm lại dở dang, bảng mang verdict cũ.
 - Không có HTTPS: mật khẩu đi dạng rõ trong mạng nội bộ.
 - Cookie `SameSite=Lax` không chặn request từ origin khác cùng site (ví dụ khác cổng trên cùng máy). Lớp bảo vệ còn lại là: `POST` chỉ nhận `application/json` và không mở CORS, nên trình duyệt không cho trang khác gửi được request như vậy.
 - Số test sai, thời gian và bộ nhớ trong kết quả là kênh rò thông tin rất hẹp về test ẩn; rate limit nộp bài là chặn trên của kênh này.
