@@ -770,7 +770,7 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 
 #### 4.4. Giữ kết nối và gửi chậm
 
-- Server gửi `PING` mỗi 30 giây và cứ 30 giây kiểm tra các kết nối. Kết nối không nhận được gì từ client quá 60 giây thì bị đóng và gỡ, nên một kết nối chết thường bị đóng sau khoảng 60 đến 90 giây.
+- Server gửi `PING` mỗi 30 giây và cứ 30 giây kiểm tra các kết nối. Kết nối không nhận được gì từ client quá 60 giây thì bị đóng với mã 4408 và gỡ, nên một kết nối chết thường bị đóng sau khoảng 60 đến 90 giây.
 - Client coi kết nối đã chết khi quá 60 giây không nhận được message nào (mọi `type` đều tính), rồi tự đóng và nối lại.
 - Mỗi kết nối có hàng đợi gửi riêng, tối đa 32 message, và mỗi lần gửi có hạn 5 giây. Kết nối nhận chậm (hàng đợi đầy, hoặc một lần gửi không xong trong 5 giây) thì bị đóng với mã 1013 và gỡ; một kết nối chậm không làm chậm các kết nối khác.
 - `SCOREBOARD` chưa gửi được mà đã có bản mới hơn thì bản cũ bị bỏ; client luôn nhận bản mới nhất, không nhất thiết nhận từng bản trung gian.
@@ -778,6 +778,7 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 #### 4.5. Đóng kết nối do phiên
 
 - `POST /api/logout`: mọi WebSocket thuộc phiên bị hủy bị đóng với mã 4401 ngay sau khi logout trả lời. WebSocket thuộc các phiên khác của cùng người giữ nguyên.
+- `POST /api/login` khi request đã mang một phiên còn hiệu lực (mục 3.2: phiên cũ bị hủy và cấp phiên mới): mọi WebSocket thuộc phiên cũ bị đóng với mã 4401, giống logout.
 - Phiên hết hạn khi WebSocket đang mở: server kiểm tra lại phiên của mọi kết nối định kỳ 30 giây một lần, và đóng 4401 kết nối không còn phiên hợp lệ; nên có thể trễ tối đa khoảng 30 giây sau khi hết hạn.
 - Khi admin đặt lại mật khẩu của một người (PR sau), mọi WebSocket của người đó bị đóng 4401.
 - Server tắt: đóng mọi kết nối với mã 1001.
@@ -790,7 +791,7 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 #### 4.7. Nối lại (quy tắc cho client)
 
 1. Mã 4401: ngừng nối lại, về trang đăng nhập. Mã 4429 (quá 10 kết nối của cùng một người): ngừng nối lại và không tự thử lại, chuyển sang lấy dữ liệu bằng REST (gọi lại định kỳ `GET /api/submissions/{id}` cho bài đang chờ như mục 3.3, và `GET /api/scoreboard` cho bảng xếp hạng) và báo cho người dùng biết đang có quá nhiều tab mở; chỉ thử WebSocket lại khi người dùng tải lại trang.
-2. Mọi trường hợp khác, gồm 1013 (mất mạng, mã khác 4401 và 4429, 1006, quá 60 giây không nhận gì): nối lại sau 1, 2, 4, 8 rồi 10 giây (tối đa 10 giây), cộng một khoảng ngẫu nhiên (jitter). Nối thành công thì khoảng chờ đặt lại về 1 giây.
+2. Mọi trường hợp khác, gồm 1013 và 4408 (mất mạng, mã khác 4401 và 4429, 1006, quá 60 giây không nhận gì): nối lại sau 1, 2, 4, 8 rồi 10 giây (tối đa 10 giây), cộng một khoảng ngẫu nhiên (jitter). Nối thành công thì khoảng chờ đặt lại về 1 giây.
 3. Sau khi nối lại, client gọi `GET /api/submissions` để lấy kết quả bị lỡ trong lúc mất kết nối. Bảng xếp hạng không cần gọi riêng: server gửi `SCOREBOARD` ngay khi nối.
 4. Client giữ bản `SCOREBOARD` có `version` lớn nhất nhận được **kể từ lần nối WebSocket gần nhất**, từ cả WebSocket và `GET /api/scoreboard`. Mỗi lần nối lại phải bỏ mốc `version` đang giữ, vì `version` bắt đầu lại khi server khởi động lại.
 5. Khi cần đóng một kết nối cũ để thay bằng kết nối mới, client dùng mã 4000 và gỡ các handler của kết nối cũ trước khi đóng, để sự kiện đóng đến muộn không kích hoạt nối lại lần thứ hai. Server không bao giờ gửi mã 4000.
@@ -839,6 +840,7 @@ WebSocket không có thân lỗi JSON; lý do đóng nằm ở mã đóng (close
 |----|--------|---------|--------|
 | 403 (HTTP, không phải close code) | server | Handshake: thiếu `Origin` hoặc `Origin` không được phép (mục 4.1). Client chỉ thấy 1006 | Nối lại có backoff |
 | 4401 | server | Thiếu phiên, phiên sai hoặc hết hạn; logout; admin đặt lại mật khẩu (mục 4.1, 4.5) | Ngừng nối lại, về trang đăng nhập |
+| 4408 | server | Không nhận được gì từ client quá 60 giây (mục 4.4) | Nối lại có backoff |
 | 4429 | server | Người dùng đã có 10 kết nối WebSocket (mục 4.1) | Ngừng nối lại, chuyển sang lấy dữ liệu bằng REST, báo người dùng (mục 4.7) |
 | 1013 | server | Vượt 400 kết nối toàn server (mục 4.1); kết nối nhận quá chậm (mục 4.4) | Nối lại có backoff |
 | 1009 | server | Client gửi frame lớn hơn 4 096 byte | Nối lại có backoff |
