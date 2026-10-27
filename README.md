@@ -639,7 +639,7 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 | `sample_expected_output` | string hoặc null | Output mong đợi của test mẫu sai |
 
 - `sample_input` và `sample_expected_output` lấy từ test mẫu số `failed_test` của đề. Chúng là `null` khi đề đang ẩn mà người gọi không phải admin, hoặc khi bộ test của đề đã đổi sau lần chấm này (không còn tra được đúng test đã chấm). `sample_stdout` vẫn có trong các trường hợp đó.
-- Client theo dõi bài vừa nộp bằng cách gọi lại endpoint này khoảng 1 giây một lần **[ĐỀ XUẤT]** cho tới khi `state` là `judged`. Endpoint này không có rate limit. Khi WebSocket (PR sau) có mặt, cách này chỉ còn là đường dự phòng.
+- Client theo dõi bài vừa nộp bằng cách gọi lại endpoint này, mỗi lần cách lần nhận phản hồi trước 1 giây, cho tới khi `state` là `judged`. Endpoint này không có rate limit. Khi WebSocket (PR sau) có mặt, cách này chỉ còn là đường dự phòng.
 
 ```json
 {"submission_id": 42, "problem_id": "sum-two", "problem_title": "Tổng hai số", "language": "python", "received_at": "2026-10-24T08:15:30.123Z", "state": "judged", "verdict": "WA", "time_ms": 12, "memory_kib": 9216, "failed_test": 1, "failed_is_sample": true, "re_kind": null, "rejudged_at": null, "code": "print(int(input()) + int(input()))\n", "ce_message": null, "sample_stdout": "4\n", "sample_input": "1 2\n", "sample_expected_output": "3\n"}
