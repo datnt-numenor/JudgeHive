@@ -718,13 +718,13 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 
 - Client gửi `GET /ws` với header `Upgrade: websocket`. Cookie phiên `jh_session` đi kèm tự động khi cùng origin.
 - **Kiểm tra `Origin` (chống chiếm kết nối từ trang khác):** handshake bị từ chối bằng HTTP 403, không mở WebSocket, nếu thiếu header `Origin`, hoặc `Origin` không nằm trong các origin được phép. Origin được phép là:
-  - origin có cùng host và cổng với header `Host` của request và scheme `http`; và
-  - các origin liệt kê trong biến môi trường `JH_ALLOWED_ORIGINS` (danh sách origin đầy đủ, phân tách bằng dấu phẩy, ví dụ `http://localhost:5173,https://judge.example.org`). Dùng biến này khi server đứng sau proxy đổi scheme hoặc host.
+  - origin có cùng host và cổng với header `Host` của request, với scheme `http` hoặc `https` (host so sánh không phân biệt hoa thường; cổng mặc định 80 của `http` và 443 của `https` có thể bỏ); và
+  - các origin liệt kê trong biến môi trường `JH_ALLOWED_ORIGINS` (danh sách origin đầy đủ, phân tách bằng dấu phẩy, ví dụ `http://localhost:5173,https://judge.example.org`). Dùng biến này khi host của `Origin` khác với host trong `Host` của request, ví dụ server đứng sau proxy đổi `Host`.
   - Khi chạy frontend bằng Vite dev server, proxy `/ws` phải đặt `ws: true` và `changeOrigin: false`, để `Host` giữ nguyên là địa chỉ của Vite và khớp với `Origin` của trang.
   - Trình duyệt không cho JavaScript đọc mã HTTP của handshake bị từ chối: client chỉ thấy kết nối đóng bất thường (mã 1006), không phân biệt được với lỗi mạng.
 - **Phiên:** thiếu cookie, phiên sai hoặc đã hết hạn thì handshake vẫn hoàn tất, rồi server đóng ngay với mã **4401**. Client gặp 4401 thì ngừng nối lại và quay về trang đăng nhập. (Cố ý không từ chối ở handshake, để client phân biệt được "hết phiên" với "mất mạng".)
 - Kết nối hợp lệ thì server gửi ngay `SCOREBOARD` hiện có (mục 4.2), nên client không cần gọi `GET /api/scoreboard` riêng sau khi nối.
-- **Giới hạn:** mỗi người tối đa 10 kết nối cùng lúc (nhiều tab), toàn server tối đa 400. Vượt thì handshake hoàn tất rồi server đóng với mã 1013.
+- **Giới hạn:** mỗi người tối đa 10 kết nối cùng lúc (nhiều tab), toàn server tối đa 400. Vượt giới hạn của người đó thì handshake hoàn tất rồi server đóng với mã **4429**; vượt giới hạn toàn server thì đóng với mã 1013. Hai mã khác nhau vì cách xử lý khác nhau: 4429 là lỗi của chính người dùng (quá nhiều tab) nên nối lại ngay cũng bị từ chối tiếp, còn 1013 là quá tải tạm thời (mục 4.7).
 - Một người có thể mở nhiều kết nối. `STATUS` chỉ được gửi tới các kết nối của đúng chủ bài nộp; không ai nhận `STATUS` của người khác, kể cả admin.
 
 #### 4.2. Message server gửi
@@ -750,8 +750,8 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 
 #### 4.3. Message client gửi
 
-- Chỉ `{"type": "PONG", "seq": 7}` (trả lại `seq` của `PING`). Server coi mọi message nhận được là bằng chứng kết nối còn sống; `seq` không bị kiểm.
-- Message có `type` khác, hoặc không phải object JSON: bị bỏ qua (server ghi log), kết nối giữ nguyên.
+- Chỉ `{"type": "PONG", "seq": 7}`, trong đó `seq` **phải lặp lại** đúng `seq` của `PING` vừa nhận (số nguyên). Server không đối chiếu giá trị `seq` với `PING` đã gửi, nhưng `PONG` thiếu `seq` hoặc `seq` không phải số nguyên bị coi là message sai và bỏ qua (xem dòng dưới). Server coi mọi frame JSON nhận được, kể cả frame bị bỏ qua, là bằng chứng kết nối còn sống (mốc 60 giây ở mục 4.4).
+- Message có `type` khác `PONG`, `PONG` thiếu hoặc sai kiểu `seq`, hoặc frame không phải object JSON: bị bỏ qua (server ghi log), kết nối giữ nguyên.
 - Frame lớn hơn 4 096 byte: server đóng với mã 1009. Frame nhị phân: đóng với mã 1003.
 
 #### 4.4. Giữ kết nối và gửi chậm
@@ -775,8 +775,8 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 
 #### 4.7. Nối lại (quy tắc cho client)
 
-1. Mã 4401: ngừng nối lại, về trang đăng nhập.
-2. Mọi trường hợp khác (mất mạng, mã khác 4401, 1006, quá 60 giây không nhận gì): nối lại sau 1, 2, 4, 8 rồi 10 giây (tối đa 10 giây), cộng một khoảng ngẫu nhiên (jitter). Nối thành công thì khoảng chờ đặt lại về 1 giây.
+1. Mã 4401: ngừng nối lại, về trang đăng nhập. Mã 4429 (quá 10 kết nối của cùng một người): ngừng nối lại và không tự thử lại, chuyển sang lấy dữ liệu bằng REST (gọi lại định kỳ `GET /api/submissions/{id}` cho bài đang chờ như mục 3.3, và `GET /api/scoreboard` cho bảng xếp hạng) và báo cho người dùng biết đang có quá nhiều tab mở; chỉ thử WebSocket lại khi người dùng tải lại trang.
+2. Mọi trường hợp khác, gồm 1013 (mất mạng, mã khác 4401 và 4429, 1006, quá 60 giây không nhận gì): nối lại sau 1, 2, 4, 8 rồi 10 giây (tối đa 10 giây), cộng một khoảng ngẫu nhiên (jitter). Nối thành công thì khoảng chờ đặt lại về 1 giây.
 3. Sau khi nối lại, client gọi `GET /api/submissions` để lấy kết quả bị lỡ trong lúc mất kết nối. Bảng xếp hạng không cần gọi riêng: server gửi `SCOREBOARD` ngay khi nối.
 4. Client giữ bản `SCOREBOARD` có `version` lớn nhất nhận được **kể từ lần nối WebSocket gần nhất**, từ cả WebSocket và `GET /api/scoreboard`. Mỗi lần nối lại phải bỏ mốc `version` đang giữ, vì `version` bắt đầu lại khi server khởi động lại.
 5. Khi cần đóng một kết nối cũ để thay bằng kết nối mới, client dùng mã 4000 và gỡ các handler của kết nối cũ trước khi đóng, để sự kiện đóng đến muộn không kích hoạt nối lại lần thứ hai. Server không bao giờ gửi mã 4000.
@@ -825,7 +825,8 @@ WebSocket không có thân lỗi JSON; lý do đóng nằm ở mã đóng (close
 |----|--------|---------|--------|
 | 403 (HTTP, không phải close code) | server | Handshake: thiếu `Origin` hoặc `Origin` không được phép (mục 4.1). Client chỉ thấy 1006 | Nối lại có backoff |
 | 4401 | server | Thiếu phiên, phiên sai hoặc hết hạn; logout; admin đặt lại mật khẩu (mục 4.1, 4.5) | Ngừng nối lại, về trang đăng nhập |
-| 1013 | server | Vượt 10 kết nối mỗi người hoặc 400 kết nối toàn server; kết nối nhận quá chậm (mục 4.4) | Nối lại có backoff |
+| 4429 | server | Người dùng đã có 10 kết nối WebSocket (mục 4.1) | Ngừng nối lại, chuyển sang lấy dữ liệu bằng REST, báo người dùng (mục 4.7) |
+| 1013 | server | Vượt 400 kết nối toàn server (mục 4.1); kết nối nhận quá chậm (mục 4.4) | Nối lại có backoff |
 | 1009 | server | Client gửi frame lớn hơn 4 096 byte | Nối lại có backoff |
 | 1003 | server | Client gửi frame nhị phân | Nối lại có backoff |
 | 1001 | server | Server tắt | Nối lại có backoff |
