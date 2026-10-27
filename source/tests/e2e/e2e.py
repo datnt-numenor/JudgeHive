@@ -158,7 +158,8 @@ def main():
 
         status, headers, body = http_call("GET", "/api/health")
         check("health công khai và tối thiểu", status == 200 and body == {"status": "ok"})
-        check("không lộ header server (cờ --no-server-header)", "server" not in headers, headers.get("server", ""))        check("không lộ tài liệu API", http_call("GET", "/openapi.json")[0] == 404 and http_call("GET", "/docs")[0] == 404)
+        check("không lộ header server (cờ --no-server-header)", "server" not in headers, headers.get("server", ""))
+        check("không lộ tài liệu API", http_call("GET", "/openapi.json")[0] == 404 and http_call("GET", "/docs")[0] == 404)
         check("chưa đăng nhập thì 401", http_call("GET", "/api/problems")[0] == 401)
 
         manage("users", "create", "alice", "--password-stdin", input_text=PASSWORD + "\n")
