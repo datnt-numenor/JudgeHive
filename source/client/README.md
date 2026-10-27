@@ -11,7 +11,7 @@ Giao diện web của JudgeHive: đăng nhập, xem đề, nộp bài, xem lịc
 | Test | Vitest, Testing Library, jsdom |
 | Giao thức | `fetch` cùng origin, cookie phiên `jh_session` (HttpOnly, trình duyệt tự gửi) |
 
-Phiên bản phụ thuộc được ghim chính xác trong `package.json` và `package-lock.json` (cài bằng `npm ci`). **Cần npm 11 trở lên** (đã thử 11.21.1 và 12.2.1; lockfile sinh bằng 11.21.1): npm 10.9.9, bản đi kèm `node:22-slim`, lỗi nội bộ "Cannot read properties of null (reading 'edgesOut')" khi giải peer dependency của `vitest` 5. Vì vậy các lệnh trong container bên dưới chạy `npm i -g npm@11.21.1` trước. `.npmrc` chỉ đặt `save-exact=true`.
+Phiên bản phụ thuộc được ghim chính xác trong `package.json` và `package-lock.json`. **Sinh hoặc cập nhật lockfile (`npm install`) cần npm 11 trở lên** (lockfile sinh bằng 11.21.1; thử 12.2.1 cũng được): npm 10.9.9, bản đi kèm `node:22-slim`, lỗi nội bộ "Cannot read properties of null (reading 'edgesOut')" khi giải peer dependency của `vitest` 5, nên các lệnh trong container bên dưới chạy `npm i -g npm@11.21.1` trước. Chỉ **cài từ lockfile (`npm ci`) thì npm 10.9.3 vẫn chạy được** (đã thử trên Windows với Node 22.18, `npm test` 61 test pass), kèm cảnh báo `EBADENGINE`: `engines` ghi npm >=11, và một số phụ thuộc của jsdom đòi Node 22.19 hoặc 22.22. `.npmrc` chỉ đặt `save-exact=true`.
 
 ## Chạy khi phát triển
 
@@ -20,7 +20,7 @@ Cần Node 22.12 trở lên, npm 11 trở lên và backend đang chạy ở cổ
 ```bash
 cd source/client
 npm ci
-npm run dev        # http://localhost:5173, proxy /api và /ws sang http://localhost:8000
+npm run dev        # http://localhost:5173, proxy /api và /ws sang http://127.0.0.1:8000
 ```
 
 Backend ở địa chỉ khác: `JH_BACKEND=http://host:8000 npm run dev`.
