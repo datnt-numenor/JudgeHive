@@ -118,8 +118,9 @@ container Linux; cần chạy lại trong container khi có Docker.**
 
 Với 50 000 bài thì xếp hạng bằng Python (`ranking.py`) mất thêm khoảng 70 đến 95 ms; tổng một lần tính khoảng 294 ms (có chỉ mục)
 so với 1 030 ms (không). Chi phí ghi thêm một bài do chỉ mục không đo được đáng tin (0,4 đến 0,6 ms so với 0,6 đến 1,7 ms, nhiễu do
-thứ tự chạy và bộ nhớ đệm của hệ điều hành). Kết luận: giữ chỉ mục. Một lần tính chạy trong thread riêng nhưng phần xếp hạng bằng
-Python giữ GIL, nên với hàng chục nghìn bài nó làm event loop chậm đi trong vài chục mili giây mỗi lần (chưa đo).
+thứ tự chạy và bộ nhớ đệm của hệ điều hành). Kết luận: giữ chỉ mục.
+
+**Hạn chế đã biết (bảng xếp hạng):** phần xếp hạng chạy Python thuần (`ranking.py`) trong thread riêng của dịch vụ nhưng giữ GIL, nên trong lúc nó chạy các request khác trên event loop có thể chậm đi. Đo trên dữ liệu 50 000 bài thì xếp hạng mất khoảng 70 đến 95 ms mỗi lần (cộng khoảng 240 ms đọc SQL, phần này không giữ GIL), và dịch vụ chỉ tính tối đa một lần mỗi `scoreboard_min_interval_s` (mặc định 1 giây). Mỗi lần tính cũng nạp toàn bộ bài có verdict vào bộ nhớ. Chưa đo tác động lên độ trễ của request khác khi có tải; **phải kiểm lại khi đo tải** (script giả lập nhiều thí sinh), và nếu cần thì tổng hợp bằng SQL hoặc tính tăng dần.
 
 ---
 
