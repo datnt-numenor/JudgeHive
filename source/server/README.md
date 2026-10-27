@@ -107,20 +107,23 @@ Hết 5 giây `busy_timeout` thì endpoint trả 500; client gửi lại cùng `
 ### Số đo chỉ mục `idx_submissions_board` (migration 3)
 
 Chạy bằng `python tests/perf/measure_scoreboard.py --rows N --code-kib K` từ `source/` (script chạy tay, không nằm trong bộ test;
-mỗi cấu hình chạy một lần). Lý do của chỉ mục: cột `code` (tới 64 KB) nằm trước `verdict` trong bảng `submissions`, nên quét bảng
-phải đi qua các trang tràn của `code`. **Số đo dưới đây chạy trực tiếp trên Windows 11, Python 3.13.3, SQLite 3.49.1, không phải trong
-container Linux; cần chạy lại trong container khi có Docker.**
+mỗi cấu hình chạy một lần, mỗi bên 7 lần truy vấn, lấy trung vị). Lý do của chỉ mục: cột `code` (tới 64 KB) nằm trước `verdict`
+trong bảng `submissions`, nên quét bảng phải đi qua các trang tràn của `code`. Số đo trong container (`judgehive-server-test`,
+Linux/WSL2, Python 3.11.17, SQLite 3.46.1, đĩa thật của container) và trực tiếp trên Windows 11 (Python 3.13.3, SQLite 3.49.1):
 
-| Dữ liệu | Có chỉ mục (đọc SQL, trung vị) | Không chỉ mục | Tỉ lệ |
-|---------|-------------------------------|---------------|-------|
-| 5 000 bài x 64 KiB (316 MiB), 300 người | 8,9 ms | 759 ms (lần đầu 173 ms) | khoảng 85 lần |
-| 50 000 bài x 4 KiB (225 MiB), 1 000 người | 242 ms | 944 ms | khoảng 3,9 lần |
+| Dữ liệu | Nơi chạy | Đọc SQL, có chỉ mục | Đọc SQL, không chỉ mục | Cả lần tính (đọc + xếp hạng), có / không |
+|---------|----------|---------------------|------------------------|------------------------------------------|
+| 5 000 bài x 64 KiB (316 MiB), 300 người | container | 6,2 ms | 73,5 ms | 8,8 / 75,8 ms (8,6 lần) |
+| 5 000 bài x 64 KiB | Windows | 8,9 ms (tổng) | 759 ms (tổng) | khoảng 85 lần |
+| 50 000 bài x 4 KiB (225 MiB), 1 000 người | container | 72,0 ms | 156,7 ms | 99 / 195 ms (2,0 lần) |
+| 50 000 bài x 4 KiB | Windows | 242 ms | 944 ms | 294 / 1 030 ms (3,5 lần) |
 
-Với 50 000 bài thì xếp hạng bằng Python (`ranking.py`) mất thêm khoảng 70 đến 95 ms; tổng một lần tính khoảng 294 ms (có chỉ mục)
-so với 1 030 ms (không). Chi phí ghi thêm một bài do chỉ mục không đo được đáng tin (0,4 đến 0,6 ms so với 0,6 đến 1,7 ms, nhiễu do
-thứ tự chạy và bộ nhớ đệm của hệ điều hành). Kết luận: giữ chỉ mục.
+Xếp hạng bằng Python (`ranking.py`) với 50 000 bài: 22,6 ms (container) và 69 đến 95 ms (Windows). Chi phí ghi thêm một bài do
+chỉ mục: 0,19 so với 0,12 ms (50 000 x 4 KiB, container), 0,35 so với 0,44 ms (5 000 x 64 KiB, container): cùng bậc, phần chênh
+nằm trong nhiễu của hệ điều hành. Lần đo đầu trong container dùng nhầm tmpfs (RAM) nên đã bỏ; số ở bảng là trên đĩa thật.
+Kết luận: giữ chỉ mục (nhanh hơn 2 đến 8,6 lần trong container, nhiều nhất khi `code` lớn).
 
-**Hạn chế đã biết (bảng xếp hạng):** phần xếp hạng chạy Python thuần (`ranking.py`) trong thread riêng của dịch vụ nhưng giữ GIL, nên trong lúc nó chạy các request khác trên event loop có thể chậm đi. Đo trên dữ liệu 50 000 bài thì xếp hạng mất khoảng 70 đến 95 ms mỗi lần (cộng khoảng 240 ms đọc SQL, phần này không giữ GIL), và dịch vụ chỉ tính tối đa một lần mỗi `scoreboard_min_interval_s` (mặc định 1 giây). Mỗi lần tính cũng nạp toàn bộ bài có verdict vào bộ nhớ. Chưa đo tác động lên độ trễ của request khác khi có tải; **phải kiểm lại khi đo tải** (script giả lập nhiều thí sinh), và nếu cần thì tổng hợp bằng SQL hoặc tính tăng dần.
+**Hạn chế đã biết (bảng xếp hạng):** phần xếp hạng chạy Python thuần (`ranking.py`) trong thread riêng của dịch vụ nhưng giữ GIL, nên trong lúc nó chạy các request khác trên event loop có thể chậm đi. Với 50 000 bài nó mất khoảng 23 ms (container) đến 70 đến 95 ms (Windows) mỗi lần, cộng 72 đến 240 ms đọc SQL (phần này không giữ GIL), và dịch vụ chỉ tính tối đa một lần mỗi `scoreboard_min_interval_s` (mặc định 1 giây). Mỗi lần tính cũng nạp toàn bộ bài có verdict vào bộ nhớ. Chưa đo tác động lên độ trễ của request khác khi có tải; **phải kiểm lại khi đo tải** (script giả lập nhiều thí sinh), và nếu cần thì tổng hợp bằng SQL hoặc tính tăng dần.
 
 ---
 
