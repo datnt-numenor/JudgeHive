@@ -442,12 +442,13 @@ Khi đó:
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
-Phần này mô tả tám endpoint đủ để đăng nhập, xem đề, nộp bài và xem kết quả. Chưa có trong phần này, sẽ thêm ở PR sau: endpoint admin, `GET /api/scoreboard`, WebSocket `/ws`.
+Phần này mô tả chín endpoint đủ để đăng nhập, xem đề, nộp bài và xem kết quả. Chưa có trong phần này, sẽ thêm ở PR sau: endpoint admin, `GET /api/scoreboard`, WebSocket `/ws`.
 
 #### 3.1. Bảng tóm tắt
 
 | Endpoint | Protocol | Method | Input | Output |
 |----------|----------|--------|-------|--------|
+| `/api/health` | HTTP/1.1 | GET | — | 200 `{"status":"ok"}`, không cần phiên |
 | `/api/login` | HTTP/1.1 | POST | `{"username","password"}` | 200 `{"user":{"id","username","role"}}` + cookie `jh_session` |
 | `/api/logout` | HTTP/1.1 | POST | `{}` | 204, xóa cookie |
 | `/api/me` | HTTP/1.1 | GET | — | 200 `{"user":{"id","username","role"}}` |
@@ -463,11 +464,11 @@ Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
 **Định dạng.**
 
-- Request có body và response đều là JSON UTF-8. Response có `Content-Type: application/json; charset=utf-8` và `Cache-Control: no-store` **[ĐỀ XUẤT]**.
+- Request có body và response đều là JSON UTF-8. Response có `Content-Type: application/json; charset=utf-8` và `Cache-Control: no-store`.
 - Mọi `POST` phải có `Content-Type: application/json` (cho phép tham số `charset`). Thiếu hoặc khác thì trả 415. Body phải là một object JSON, kể cả khi endpoint không cần field nào (`/api/logout` gửi `{}`).
 - Field thừa trong request bị bỏ qua. Server không bao giờ dùng `user_id`, `role` hay field tương tự do client gửi; danh tính và quyền chỉ lấy từ phiên.
 - Quy ước ở mục 1 áp dụng: thời điểm ISO 8601 UTC có mili giây, thời gian `_ms`, bộ nhớ `_kib`, ngôn ngữ `python`/`cpp`/`java`, verdict `AC`/`WA`/`TLE`/`MLE`/`RE`/`CE`/`SE`.
-- Mã đề (`problem_id`) là chuỗi 1–64 ký tự trong `[A-Za-z0-9_-]` **[ĐỀ XUẤT]**; `submission_id` là số nguyên dương.
+- Mã đề (`problem_id`) là chuỗi 1–64 ký tự trong `[A-Za-z0-9_-]`; `submission_id` là số nguyên dương.
 - Mọi `{id}` trên đường dẫn không đúng định dạng được coi như không tồn tại (404, không phải 400).
 
 **Phiên và cookie `jh_session`.**
@@ -475,8 +476,8 @@ Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 - `POST /api/login` thành công thì server tạo phiên mới và đặt cookie: `jh_session=<giá trị ngẫu nhiên không đoán được>; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`. Không có `Secure` vì hệ thống không có HTTPS.
 - Phiên hết hạn đúng 7 ngày kể từ lúc đăng nhập (tuyệt đối, dùng hoạt động cũng không gia hạn). Phiên lưu ở server nên khởi động lại server không làm mất phiên.
 - Một người có thể có nhiều phiên cùng lúc (nhiều tab, nhiều máy). `POST /api/logout` chỉ hủy phiên đang dùng.
-- Đăng nhập khi request đã mang một phiên còn hiệu lực thì phiên cũ bị hủy và cấp phiên mới **[ĐỀ XUẤT]**.
-- Chỉ `POST /api/login` (và file tĩnh) không cần phiên. Mọi endpoint khác: chưa đăng nhập, cookie sai hoặc phiên hết hạn thì 401 `UNAUTHENTICATED`; kể cả `POST /api/logout`, client coi 401 ở đây là đã đăng xuất.
+- Đăng nhập khi request đã mang một phiên còn hiệu lực thì phiên cũ bị hủy và cấp phiên mới.
+- Chỉ `POST /api/login`, `GET /api/health` (và file tĩnh) không cần phiên. Mọi endpoint khác: chưa đăng nhập, cookie sai hoặc phiên hết hạn thì 401 `UNAUTHENTICATED`; kể cả `POST /api/logout`, client coi 401 ở đây là đã đăng xuất.
 - Đã đăng nhập mà không đủ quyền thì 403 `FORBIDDEN`. Endpoint trong phần này không trả 403 (chưa có endpoint admin).
 
 **Định dạng lỗi.** Mọi response lỗi của `/api/*`, kể cả đường dẫn không tồn tại (404), sai method (405), body quá lớn (413) và lỗi server (500), có đúng dạng:
@@ -501,26 +502,30 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 
 **Rate limit (429).**
 
-- Mỗi người được nộp tối đa 10 bài trong bất kỳ khoảng 60 giây nào (cửa sổ trượt, tính cả admin) **[ĐỀ XUẤT]**. Vượt thì 429 `RATE_LIMITED` kèm header `Retry-After` là số giây nguyên ≥ 1 cần chờ.
+- Mỗi người được nộp tối đa 10 bài trong bất kỳ khoảng 60 giây nào (cửa sổ trượt, tính cả admin). Vượt thì 429 `RATE_LIMITED` kèm header `Retry-After` là số giây nguyên ≥ 1 cần chờ.
 - Chỉ bài được chấp nhận mới tính vào giới hạn. Request lỗi (400, 404, 413, 415) không tính. Request trùng `client_token` (mục 3.3) không tính và không bị chặn.
 - Các endpoint khác trong phần này không có rate limit.
-- `POST /api/login`: tối đa 10 lần thử trong bất kỳ khoảng 60 giây nào cho mỗi `username` (cửa sổ trượt) **[ĐỀ XUẤT]**. Vượt thì 429 `RATE_LIMITED` kèm `Retry-After`, kể cả khi mật khẩu đúng. Mọi lần thử hợp lệ về định dạng đều tính (đúng, sai, hay username không tồn tại, để không lộ username nào có thật); request 400 hoặc 413 không tính. Server kiểm tra giới hạn trước khi kiểm tra mật khẩu. Hạn chế: người khác có thể cố ý khóa tạm một username bằng cách thử liên tục, nhưng chỉ tối đa mỗi lần 60 giây và không ảnh hưởng username khác.
+- `POST /api/login`: tối đa 10 lần thử trong bất kỳ khoảng 60 giây nào cho mỗi `username` (cửa sổ trượt). Vượt thì 429 `RATE_LIMITED` kèm `Retry-After`, kể cả khi mật khẩu đúng. Mọi lần thử hợp lệ về định dạng đều tính (đúng, sai, hay username không tồn tại, để không lộ username nào có thật); request 400 hoặc 413 không tính. Server kiểm tra giới hạn trước khi kiểm tra mật khẩu. Ngoài ra tối đa 8 đăng nhập được xử lý cùng lúc trên toàn server (băm mật khẩu tốn bộ nhớ và thread); lượt thứ 9 trở đi trả ngay 429 `RATE_LIMITED` kèm `Retry-After: 1`, không chờ, và không tính vào giới hạn theo `username`. Hạn chế: người khác có thể cố ý khóa tạm một username bằng cách thử liên tục, nhưng chỉ tối đa mỗi lần 60 giây và không ảnh hưởng username khác.
 
 **Thứ tự kiểm tra của `POST /api/submissions`** (lỗi đầu tiên gặp được trả về): phiên (401) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → kích thước mã (413 `CODE_TOO_LARGE`) → trùng `client_token` (200) → đề tồn tại và hiện với người gọi (404) → rate limit (429) → chấp nhận (201).
 
 #### 3.3. Chi tiết từng endpoint
 
+##### `GET /api/health`
+
+- Không cần phiên; dùng cho healthcheck của `docker compose`. Luôn 200 `{"status": "ok"}` khi server đã khởi động xong. Cố ý chỉ trả trạng thái tối thiểu: không có phiên bản, số worker hay đường dẫn.
+
 ##### `POST /api/login`
 
 | Field | Kiểu | Bắt buộc | Ràng buộc |
 |-------|------|----------|-----------|
-| `username` | string | có | 1–64 ký tự **[ĐỀ XUẤT]**; so khớp chính xác, phân biệt hoa thường **[ĐỀ XUẤT]** |
-| `password` | string | có | Tối đa 128 byte UTF-8 **[ĐỀ XUẤT]** (độ dài tối thiểu chỉ áp khi admin đặt mật khẩu, PR sau) |
+| `username` | string | có | 1–64 ký tự; so khớp chính xác, phân biệt hoa thường |
+| `password` | string | có | Tối đa 128 byte UTF-8 (độ dài tối thiểu chỉ áp khi admin đặt mật khẩu, PR sau) |
 
-- Thành công: 200, header `Set-Cookie` như mục 3.2, body `{"user": {"id": 5, "username": "alice", "role": "user"}}`. `role` là `user` hoặc `admin` **[ĐỀ XUẤT]**.
+- Thành công: 200, header `Set-Cookie` như mục 3.2, body `{"user": {"id": 5, "username": "alice", "role": "user"}}`. `role` là `user` hoặc `admin`.
 - Username không tồn tại, mật khẩu sai, và mật khẩu vượt độ dài tối đa: cùng 401 `INVALID_CREDENTIALS`, cùng `message`, thời gian trả lời xấp xỉ nhau; response không cho biết trường hợp nào.
 - Thiếu field, sai kiểu, username rỗng hoặc quá dài: 400 `INVALID_REQUEST`.
-- Quá 10 lần thử cho cùng `username` trong 60 giây: 429 `RATE_LIMITED` (mục 3.2).
+- Quá 10 lần thử cho cùng `username` trong 60 giây, hoặc đã có 8 đăng nhập đang xử lý cùng lúc: 429 `RATE_LIMITED` (mục 3.2).
 
 ```json
 {"username": "alice", "password": "…"}
@@ -573,11 +578,11 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 | `problem_id` | string | có | Mã đề |
 | `language` | string | có | `python`, `cpp` hoặc `java` |
 | `code` | string | có | Không rỗng, tối đa 64 KB (byte UTF-8) |
-| `client_token` | string | có | UUID dạng `8-4-4-4-12` chữ số hex, không phân biệt hoa thường **[ĐỀ XUẤT]** |
+| `client_token` | string | có | UUID dạng `8-4-4-4-12` chữ số hex, không phân biệt hoa thường |
 
 - Thành công: **201** `{"submission_id": 42, "state": "queued", "received_at": "2026-10-24T08:15:30.123Z"}`. Bài đã được lưu và nằm trong hàng đợi; từ lúc này worker có chết thì bài vẫn được chấm (mục 2.6).
-- Trùng `client_token` của chính người gọi (mỗi người một không gian token riêng): **200**, cùng dạng body, với `submission_id` và `received_at` của bài cũ và `state` hiện tại của nó; không tạo bài mới, không đưa vào hàng đợi, không tính rate limit. Các field khác trong request lần sau bị bỏ qua. Client phân biệt "mới" và "trùng" bằng status 201/200.
-- Thiếu field, sai kiểu, `language` lạ, `code` rỗng, `client_token` thiếu hoặc không phải UUID: 400 `INVALID_REQUEST`.
+- Trùng `client_token` của chính người gọi (mỗi người một không gian token riêng): **200**, cùng dạng body, với `submission_id` và `received_at` của bài cũ và `state` hiện tại của nó; không tạo bài mới, không đưa vào hàng đợi, không tính rate limit. Nội dung mới của request lần sau (đề, ngôn ngữ, mã nguồn) bị bỏ qua hoàn toàn: server trả bài gốc, không so sánh. Client phân biệt "mới" và "trùng" bằng status 201/200.
+- Thiếu field, sai kiểu, `problem_id` không đúng định dạng mục 3.2 (khác với đường dẫn, nơi id sai định dạng là 404), `language` lạ, `code` rỗng hoặc chứa surrogate lẻ, `client_token` thiếu hoặc không phải UUID: 400 `INVALID_REQUEST`.
 - Đề không tồn tại, hoặc đề ẩn mà người gọi không phải admin: 404 `PROBLEM_NOT_FOUND` (giống `GET /api/problems/{id}`). Admin nộp được vào đề ẩn; bài của admin không vào bảng xếp hạng.
 - Quy tắc client: giữ nguyên `client_token` khi request lỗi mạng hoặc hết thời gian chờ mà chưa nhận phản hồi; sinh token mới sau khi đã nhận `submission_id`; vô hiệu hóa nút nộp trong lúc chờ phản hồi.
 
@@ -596,7 +601,7 @@ Mọi field luôn có mặt; field không áp dụng có giá trị `null`.
 | `problem_title` | string | Hiện cả khi đề đã bị ẩn |
 | `language` | string | |
 | `received_at` | string | Thời điểm server nhận bài |
-| `state` | string | `queued` (chờ, kể cả đang giao lại hoặc chờ chấm lại), `judging` (đang chấm), `judged` (đã có kết quả cho lần chấm gần nhất) **[ĐỀ XUẤT]** |
+| `state` | string | `queued` (chờ, kể cả đang giao lại hoặc chờ chấm lại), `judging` (đang chấm), `judged` (đã có kết quả cho lần chấm gần nhất) |
 | `verdict` | string hoặc null | Kết quả gần nhất; `null` cho tới khi có kết quả đầu tiên. Khi chấm lại, `verdict` giữ giá trị cũ trong lúc `state` ≠ `judged` |
 | `time_ms` | integer hoặc null | Có khi `verdict` là `AC`, `WA`, `TLE`, `MLE` (nghĩa như trong `RESULT`) |
 | `memory_kib` | integer hoặc null | Như `time_ms`. Với `MLE`, UI không hiện con số này (mục 2.5, `RESULT`) |
@@ -610,7 +615,7 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 ##### `GET /api/submissions`
 
 - Chỉ trả bài nộp của chính người gọi (kể cả admin), kể cả bài trên đề hiện đang ẩn. Sắp theo `submission_id` giảm dần (mới nhất trước). Mỗi phần tử là đối tượng bài nộp ở trên, không có `code`, `ce_message` và các field `sample_*`.
-- Query: `limit` (1–200, mặc định 50), `before_id` (chỉ lấy bài có `submission_id` nhỏ hơn giá trị này). Giá trị sai kiểu hoặc ngoài khoảng: 400 `INVALID_REQUEST`.
+- Query: `limit` (1–200, mặc định 50), `before_id` (chỉ lấy bài có `submission_id` nhỏ hơn giá trị này). Giá trị sai kiểu hoặc ngoài khoảng (chỉ nhận chữ số ASCII; `before_id` tối đa 2^63−1), hoặc tham số xuất hiện nhiều lần: 400 `INVALID_REQUEST`. Tham số lạ bị bỏ qua.
 - Response: `{"submissions": [...], "next_before_id": 17}`; `next_before_id` là `submission_id` nhỏ nhất của trang này nếu còn bài cũ hơn, ngược lại là `null`. Muốn trang kế, gọi lại với `before_id` = giá trị đó.
 - Client gọi endpoint này sau khi mất kết nối để lấy kết quả bị lỡ.
 
@@ -644,14 +649,13 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 - Không có HTTPS: mật khẩu đi dạng rõ trong mạng nội bộ.
 - Cookie `SameSite=Lax` không chặn request từ origin khác cùng site (ví dụ khác cổng trên cùng máy). Lớp bảo vệ còn lại là: `POST` chỉ nhận `application/json` và không mở CORS, nên trình duyệt không cho trang khác gửi được request như vậy.
 - Số test sai, thời gian và bộ nhớ trong kết quả là kênh rò thông tin rất hẹp về test ẩn; rate limit nộp bài là chặn trên của kênh này.
+- Giới hạn đăng nhập (theo `username` và số lượt đồng thời) nằm trong bộ nhớ của process: khởi động lại server thì mất. Giới hạn nộp bài đếm bằng cơ sở dữ liệu nên không mất.
 
 #### 3.5. Mã lỗi REST
 
-Tên mã là **[ĐỀ XUẤT]**.
-
 | `code` | HTTP | Khi nào |
 |--------|------|---------|
-| `INVALID_REQUEST` | 400 | JSON hỏng hoặc không phải object, thiếu field, sai kiểu hoặc sai giá trị (kể cả `language` lạ, `client_token` không phải UUID, tham số query sai) |
+| `INVALID_REQUEST` | 400 | JSON hỏng hoặc không phải object, thiếu field, sai kiểu hoặc sai giá trị (kể cả `language` lạ, `client_token` không phải UUID, tham số query sai hoặc trùng) |
 | `UNAUTHENTICATED` | 401 | Thiếu cookie, phiên sai hoặc hết hạn |
 | `INVALID_CREDENTIALS` | 401 | `POST /api/login` sai thông tin đăng nhập |
 | `FORBIDDEN` | 403 | Đã đăng nhập nhưng không đủ quyền (chưa endpoint nào ở phần này dùng) |
@@ -662,8 +666,10 @@ Tên mã là **[ĐỀ XUẤT]**.
 | `BODY_TOO_LARGE` | 413 | Body vượt giới hạn mục 3.2 |
 | `CODE_TOO_LARGE` | 413 | `code` vượt 64 KB (byte UTF-8) |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | `POST` không có `Content-Type: application/json` |
-| `RATE_LIMITED` | 429 | Vượt 10 bài nộp mỗi 60 giây (mỗi người), hoặc 10 lần đăng nhập mỗi 60 giây (mỗi `username`); kèm `Retry-After` |
+| `RATE_LIMITED` | 429 | Vượt 10 bài nộp mỗi 60 giây (mỗi người), 10 lần đăng nhập mỗi 60 giây (mỗi `username`), hoặc quá 8 đăng nhập đang xử lý cùng lúc; kèm `Retry-After` |
 | `INTERNAL_ERROR` | 500 | Lỗi server; `message` chung, chi tiết chỉ ở log |
+
+**Ngoại lệ: 503 do hạ tầng.** Khi có quá nhiều kết nối đồng thời (giới hạn `--limit-concurrency` của uvicorn, xem `server/README.md`), uvicorn trả 503 ngay ở tầng hạ tầng, trước khi request tới ứng dụng. Response này **không** theo định dạng `{"error": {...}}` (thân là văn bản thường) và không có `Cache-Control: no-store`. Client coi mọi 503 là lỗi tạm thời: thử lại sau, không phân tích thân response, và với `POST /api/submissions` giữ nguyên `client_token` khi thử lại (mục 3.3).
 
 
 ### 4. WebSocket

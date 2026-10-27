@@ -61,7 +61,8 @@ def test_startup_steps_run_in_the_documented_order(cfg):
         async with app.router.lifespan_context(app):
             return list(app.state.startup_steps)
 
-    assert run(scenario()) == ["loop", "migrate", "seed", "reload_queue", "worker_port", "dispatcher"]
+    assert run(scenario()) == ["loop", "migrate", "seed", "reload_queue", "worker_port", "dispatcher",
+                             "rest"]
     assert app.state.startup_steps[-1] == "stopped"
 
 

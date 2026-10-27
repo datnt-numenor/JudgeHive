@@ -62,3 +62,12 @@ def test_length_limits_are_inclusive():
 def test_verify_rejects_overlong_passwords_without_hashing_them():
     stored = auth.hash_password("correct horse")
     assert auth.verify_password("x" * 100_000, stored) is False
+
+
+def test_nul_bytes_are_refused_because_openssl_scrypt_ignores_trailing_nul():
+    # Đã đo: hashlib.scrypt(b"abc") == hashlib.scrypt(b"abc\x00"), nên "pw" và "pw\x00" sẽ là cùng một mật khẩu.
+    stored = auth.hash_password("correct horse")
+    assert auth.verify_password("correct horse", stored)
+    assert not auth.verify_password("correct horse\x00", stored)
+    with pytest.raises(auth.PasswordError):
+        auth.hash_password("has\x00nul")

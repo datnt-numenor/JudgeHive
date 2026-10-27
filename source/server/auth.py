@@ -25,6 +25,8 @@ class PasswordError(ValueError):
 
 
 def check_password_length(password):
+    if "\x00" in password:  # scrypt của OpenSSL coi "abc" và "abc\x00" là một mật khẩu (đã đo), nên cấm ký tự NUL
+        raise PasswordError("mật khẩu không được chứa ký tự NUL")
     size = len(password.encode("utf-8"))
     if size < MIN_PASSWORD_BYTES or size > MAX_PASSWORD_BYTES:
         raise PasswordError(f"mật khẩu phải dài {MIN_PASSWORD_BYTES} đến {MAX_PASSWORD_BYTES} byte UTF-8")
@@ -44,8 +46,8 @@ def hash_password(password):
 
 
 def verify_password(password, stored):
-    """True nếu `password` khớp `stored`. Chuỗi lưu hỏng hoặc mật khẩu quá dài thì False, không raise."""
-    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+    """True nếu `password` khớp `stored`. Chuỗi lưu hỏng, mật khẩu quá dài hoặc có NUL thì False, không raise."""
+    if "\x00" in password or len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
         return False
     try:
         scheme, params, salt_b64, key_b64 = stored.split("$")

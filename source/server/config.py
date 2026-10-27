@@ -31,6 +31,13 @@ class ServerConfig:
     per_test_overhead_s: float = protocol.PER_TEST_OVERHEAD_S
     monitor_tick_s: float = 0.5  # [ĐỀ XUẤT] độ phân giải của quét last_seen, watchdog và lịch PING
     max_deliveries: int = 3  # D1
+    # REST (README mục 3.2); test thu nhỏ để chạy nhanh
+    session_ttl_s: int = 7 * 24 * 3600
+    submit_rate_limit: int = 10
+    submit_rate_window_s: float = 60.0
+    login_rate_limit: int = 10
+    login_rate_window_s: float = 60.0
+    login_max_concurrent: int = 8
 
 
 def db_path_from_env(env):

@@ -1,8 +1,8 @@
 # MODULE SERVER
 
 Server chính của JudgeHive: nhận worker qua cổng TCP thuần (framing JSON-lines do nhóm tự viết, xem README gốc mục
-"Giao tiếp" 2), giao bài, lưu kết quả vào SQLite. Phần REST/WebSocket cho trình duyệt (nộp bài, đăng nhập, bảng xếp
-hạng) thuộc các PR sau; hiện chỉ có `GET /api/health`.
+"Giao tiếp" 2), giao bài, lưu kết quả vào SQLite. REST cho trình duyệt (đăng nhập, phiên, đề, nộp bài, lịch sử; README gốc mục 3)
+nằm trong `rest/`. WebSocket, bảng xếp hạng và endpoint admin thuộc các PR sau.
 
 ---
 
@@ -26,7 +26,8 @@ hạng) thuộc các PR sau; hiện chỉ có `GET /api/health`.
 | `dispatcher.py` | Hàng đợi ba mức (giao lại > bài mới > rejudge), transaction giao bài, commit verdict, giao lại khi worker chết |
 | `db.py` | Kết nối SQLite, schema và migration (`PRAGMA user_version`) |
 | `problems.py` | Đọc thư mục đề, hash bộ test, kiểm giới hạn 8 MB và 16 MB, seed và reimport |
-| `auth.py` | Băm mật khẩu scrypt (chưa có endpoint web) |
+| `auth.py` | Băm mật khẩu scrypt (từ chối mật khẩu có ký tự NUL: scrypt của OpenSSL bỏ qua NUL cuối) |
+| `rest/` | REST: `errors.py` (định dạng lỗi), `body.py` (Content-Type, giới hạn body, JSON), `sessions.py` (cookie và bảng `sessions`), `limits.py` (giới hạn đăng nhập), `views.py` (đối tượng bài nộp, whitelist theo verdict), `auth_routes.py`, `problem_routes.py`, `submission_routes.py` |
 | `hooks.py` | Điểm móc để PR sau đẩy `STATUS`/`SCOREBOARD` xuống WebSocket (hiện chỉ ghi log) |
 | `config.py` | Cấu hình từ biến môi trường |
 | `manage.py` | Script quản lý (xem dưới) |
@@ -39,8 +40,7 @@ hạng) thuộc các PR sau; hiện chỉ có `GET /api/health`.
 Từ thư mục `source/`:
 
 ```bash
-mkdir secrets
-python -c "import secrets; print('JH_WORKER_SECRET=' + secrets.token_hex(32))" > secrets/worker.env
+python -c "import secrets, pathlib; pathlib.Path('secrets/worker.env').write_text('JH_WORKER_SECRET=' + secrets.token_hex(32) + '\n', encoding='utf-8', newline='\n')"   # một lần; thư mục secrets/ có sẵn trong repo
 docker compose up --build                    # server + một worker
 docker compose up --build --scale worker=3   # ba worker
 ```
@@ -57,6 +57,17 @@ Server nghe `8000` (HTTP) và `9000` (cổng worker). Biến môi trường:
 | `JH_PROBLEMS_DIR` | `server/problems` | Thư mục đề seed |
 | `JH_LOG_LEVEL` | `INFO` | Mức log |
 
+Cờ uvicorn cố định trong `CMD` của `server/Dockerfile` (không đọc từ biến môi trường):
+
+| Cờ | Giá trị | Lý do |
+|----|---------|-------|
+| `--no-server-header` | | Không lộ `server: uvicorn` trong response |
+| `--timeout-keep-alive` | `5` | Kết nối HTTP rảnh bị đóng sau 5 giây, kết nối bỏ không không chiếm chỗ lâu |
+| `--limit-concurrency` | `200` | Quá 200 kết nối/tác vụ đồng thời thì uvicorn trả 503 ngay (một process, một event loop). Cổng worker là socket riêng nên không tính. PR WebSocket phải cân lại số này vì mỗi WebSocket là một kết nối |
+| `--workers` | không dùng | Đúng một process |
+
+Chưa có timeout đọc body ở tầng ứng dụng: client chậm chiếm một kết nối (không chiếm thread vì phần đọc body là `async`) tới khi gửi xong, tối đa 512 KB; trần đồng thời ở trên là lớp chặn kết nối treo hàng loạt.
+
 ### Quản lý (`manage.py`)
 
 DB nằm trong named volume nên chạy trong container server:
@@ -71,15 +82,17 @@ docker compose exec server python -m server.manage problems reimport aplusb     
 `problems/` rồi restart không có tác dụng; dùng `problems reimport` (và build lại image nếu đổi file, vì `problems/`
 nằm trong image). `reimport` đổi hash bộ test nhưng không tự chấm lại và không đổi cờ ẩn.
 
-Công cụ dev tạm (đến khi có REST nộp bài ở PR 5):
+Nộp bài và xem kết quả qua REST (`POST /api/submissions`, `GET /api/submissions/{id}`). `submissions show ID` chỉ để
+xem một dòng bài nộp khi gỡ lỗi (in cả cờ nội bộ như `delivery_count`).
 
-```bash
-docker compose exec -T server python -m server.manage submissions add --user alice --problem aplusb --language python --file - < sol.py
-docker compose exec server python -m server.manage submissions show 1
-```
+### REST và SQLite
 
-`add` chỉ ghi dòng `queued` vào DB; hàng đợi nằm trong bộ nhớ của server nên bài chỉ được giao sau khi
-`docker compose restart server` (lifespan nạp lại mọi bài chưa chấm xong).
+Endpoint và dependency của REST khai báo bằng `def`, nên FastAPI chạy chúng trong threadpool; event loop không gọi
+SQLite (chỉ `rest/body.py` là `async`, và nó chỉ đọc stream). Mỗi thread của pool tự mở kết nối riêng qua
+`Database.conn()` (thread-local, không chia sẻ giữa thread, cùng mô hình với cổng worker) và giữ nó suốt đời thread,
+tối đa khoảng 40 kết nối. Đọc dùng autocommit; ghi dùng `Database.write()` (`BEGIN IMMEDIATE`). Nộp bài kiểm token
+trùng, kiểm đề, đếm rate limit và ghi bài trong một transaction như vậy, rồi mới `Dispatcher.enqueue` sau commit.
+Hết 5 giây `busy_timeout` thì endpoint trả 500; client gửi lại cùng `client_token` là an toàn.
 
 ---
 

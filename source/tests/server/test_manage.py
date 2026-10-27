@@ -1,4 +1,4 @@
-"""manage.py: users create, problems reimport, submissions add|show (D18)."""
+"""manage.py: users create, problems reimport, submissions show (D18; `submissions add` đã bỏ ở PR 5, có REST)."""
 
 import io
 import os
@@ -54,6 +54,14 @@ def test_users_create_rejects_bad_passwords(env, password):
     assert db_of(env).conn().execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("password", ["s3cret-pass\x00", "s3cret\x00-pass", "\x00s3cret-pass"])
+def test_users_create_rejects_passwords_with_nul(env, password, capsys):
+    # scrypt của OpenSSL coi "pw" và "pw\x00" là một mật khẩu, nên NUL bị từ chối ở chỗ băm duy nhất (auth.py)
+    assert call(env, "users", "create", "alice", "--password-stdin", stdin=password + "\n") == 1
+    assert "NUL" in capsys.readouterr().err
+    assert db_of(env).conn().execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+
+
 @pytest.mark.parametrize("name", ["", "has space", "a" * 33, "bad/slash"])
 def test_users_create_rejects_bad_usernames(env, name):
     assert call(env, "users", "create", name, "--password-stdin", stdin="s3cret-pass\n") == 1
@@ -87,44 +95,16 @@ def ready(env, tmp_path):
     return env, str(code)
 
 
-def test_submissions_add_queues_a_row_and_prints_its_id(ready, capsys):
-    env, code = ready
-    assert call(env, "submissions", "add", "--user", "alice", "--problem", "sum", "--language", "python",
-                "--file", code) == 0
-    sid = int(capsys.readouterr().out.strip())
-    row = db_of(env).conn().execute("SELECT * FROM submissions WHERE id = ?", (sid,)).fetchone()
-    assert (row["state"], row["language"], row["code"], row["problem_id"]) == ("queued", "python", "print(3)\n", "sum")
-    assert row["attempt_id"] == 0 and row["delivery_count"] == 0 and row["verdict"] is None
-
-
-@pytest.mark.parametrize("override", [{"--user": "nobody"}, {"--problem": "nope"}, {"--file": "/does/not/exist"}])
-def test_submissions_add_rejects_unknown_things(ready, override, capsys):
-    env, code = ready
-    args = {"--user": "alice", "--problem": "sum", "--language": "python", "--file": code, **override}
-    argv = ["submissions", "add"] + [x for kv in args.items() for x in kv]
-    assert call(env, *argv) == 1
-    assert db_of(env).conn().execute("SELECT COUNT(*) FROM submissions").fetchone()[0] == 0
-    assert capsys.readouterr().err.startswith("lỗi:")
-
-
-def test_submissions_add_rejects_unknown_language(ready):
+def test_submissions_add_no_longer_exists(ready, capsys):
     env, code = ready
     with pytest.raises(SystemExit):
-        call(env, "submissions", "add", "--user", "alice", "--problem", "sum", "--language", "ruby", "--file", code)
-
-
-def test_submissions_add_rejects_code_over_64_kb(ready, tmp_path):
-    env, _ = ready
-    big = tmp_path / "big.py"
-    big.write_text("#" * 70_000)
-    assert call(env, "submissions", "add", "--user", "alice", "--problem", "sum", "--language", "python",
-                "--file", str(big)) == 1
+        call(env, "submissions", "add", "--user", "alice", "--problem", "sum", "--language", "python", "--file", code)
+    assert db_of(env).conn().execute("SELECT COUNT(*) FROM submissions").fetchone()[0] == 0
 
 
 def test_submissions_show_prints_state_and_verdict(ready, capsys):
-    env, code = ready
-    call(env, "submissions", "add", "--user", "alice", "--problem", "sum", "--language", "python", "--file", code)
-    sid = int(capsys.readouterr().out.strip())
+    env, _ = ready
+    sid = db_of(env).create_submission(1, "sum", "python", "print(3)\n")
     with db_of(env).write() as c:
         c.execute("UPDATE submissions SET state = 'done', verdict = 'CE', ce_message = 'a\nb' WHERE id = ?", (sid,))
     assert call(env, "submissions", "show", str(sid)) == 0
