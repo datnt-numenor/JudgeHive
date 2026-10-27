@@ -50,7 +50,12 @@ def cmd_users_create(db, args, stdin):
     if not USERNAME.match(args.username):
         raise CommandError("username chỉ gồm chữ, số, '_', '.', '-' và dài 1 đến 32 ký tự")
     if args.password_stdin:
-        password = stdin.readline().rstrip("\r\n")
+        # Windows PowerShell 5.1 chèn BOM (U+FEFF) vào đầu dữ liệu pipe; không bỏ thì mật khẩu lưu ra là "﻿..." và
+        # đăng nhập bằng mật khẩu đúng bị từ chối. `utf-8-sig` bỏ BOM đầu luồng và ép UTF-8 bất kể locale của container;
+        # `lstrip` là lớp thứ hai cho luồng không có `reconfigure` (StringIO của test).
+        if hasattr(stdin, "reconfigure"):
+            stdin.reconfigure(encoding="utf-8-sig")
+        password = stdin.readline().lstrip("﻿").rstrip("\r\n")
     else:
         password = getpass.getpass("Mật khẩu: ")
         if password != getpass.getpass("Nhập lại: "):
