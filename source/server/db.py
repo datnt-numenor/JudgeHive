@@ -91,6 +91,12 @@ MIGRATIONS = [
     CREATE INDEX idx_sessions_expires ON sessions(expires_at);
     CREATE INDEX idx_submissions_user_id ON submissions(user_id, id);
     """,
+    # PR 7 (B1): chỉ mục phủ một phần cho truy vấn bảng xếp hạng (`server/scoreboard/loader.py`). Cột `code` (tới 64 KB)
+    # nằm trước `verdict` trong bảng nên quét bảng phải đi qua các trang tràn; chỉ mục này trả đủ cột mà không chạm bảng.
+    """
+    CREATE INDEX idx_submissions_board ON submissions(problem_id, user_id, submitted_at, id, verdict)
+        WHERE verdict IS NOT NULL;
+    """,
 ]
 
 

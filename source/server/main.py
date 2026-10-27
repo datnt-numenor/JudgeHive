@@ -1,7 +1,6 @@
 """FastAPI app. Mọi thứ khởi động trong lifespan (PLAN mục 2.1), không phải lúc import.
 
-Thứ tự: lưu event loop; migrate DB; nạp seed `problems/` (D5); nạp lại hàng đợi từ DB; (PR 7: tính bảng xếp hạng đầu
-tiên); rồi mới mở cổng worker và dispatcher. Teardown: dừng cổng worker (đóng listener và socket) rồi dispatcher.
+Thứ tự: lưu event loop; migrate DB; nạp seed `problems/` (D5); nạp lại hàng đợi từ DB; tính bảng xếp hạng đầu tiên; rồi mới mở cổng worker và dispatcher. Teardown: dừng cổng worker (đóng listener và socket) rồi dispatcher.
 Chạy đúng một process uvicorn (`--workers 1`): hàng đợi và danh sách worker nằm trong bộ nhớ."""
 
 import asyncio
@@ -17,6 +16,7 @@ from server.db import Database
 from server.dispatcher import Dispatcher
 from server.hooks import LoopHooks
 from server.rest.state import build_state, system_clock_ms
+from server.scoreboard.service import ScoreboardService
 from server.worker_server import WorkerServer
 
 log = logging.getLogger("judgehive.main")
@@ -61,7 +61,18 @@ def create_app(cfg=None, clock=None):
         server.set_handler(dispatcher)
         await in_thread(dispatcher.load_pending)
         steps.append("reload_queue")
-        # PR 7: tính bản bảng xếp hạng đầu tiên ở đây (asyncio.to_thread, D12)
+        # Bản bảng xếp hạng đầu tiên (phiên bản 1) tính xong trước khi mở cổng worker (PLAN 2.1, D12); lỗi thì server
+        # không khởi động. Truy vấn chạy trong thread riêng của dịch vụ, không trên event loop.
+        scoreboard = ScoreboardService(db, loop=loop, clock=clock or system_clock_ms,
+                                       min_interval_s=config.scoreboard_min_interval_s)
+        try:
+            await scoreboard.start()
+        except BaseException:
+            await scoreboard.stop()
+            raise
+        hooks.bind_scoreboard(scoreboard)
+        app.state.scoreboard = scoreboard
+        steps.append("scoreboard")
         server.start()
         steps.append("worker_port")
         dispatcher.start()
@@ -79,6 +90,7 @@ def create_app(cfg=None, clock=None):
                 dispatcher.stop()
 
             await asyncio.to_thread(shutdown)
+            await scoreboard.stop()  # sau cổng worker và dispatcher: hết nguồn gọi mark_dirty
             steps.append("stopped")
 
     # Không có /docs, /redoc, /openapi.json (công khai, lộ danh sách route) và không tự chuyển hướng dấu "/" cuối
