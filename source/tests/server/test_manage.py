@@ -67,6 +67,39 @@ def test_users_create_rejects_bad_usernames(env, name):
     assert call(env, "users", "create", name, "--password-stdin", stdin="s3cret-pass\n") == 1
 
 
+def stored_hash(env, username):
+    return db_of(env).conn().execute("SELECT password_hash FROM users WHERE username = ?", (username,)).fetchone()[0]
+
+
+def test_users_create_drops_a_leading_bom_from_the_stdin_password(env):
+    # Windows PowerShell 5.1 đặt U+FEFF ở đầu dữ liệu pipe; mật khẩu lưu ra không được chứa nó
+    assert call(env, "users", "create", "alice", "--password-stdin", stdin="﻿s3cret-pass\r\n") == 0
+    stored = stored_hash(env, "alice")
+    assert auth.verify_password("s3cret-pass", stored)
+    assert not auth.verify_password("﻿s3cret-pass", stored)
+
+
+def test_users_create_keeps_a_bom_that_is_not_at_the_start(env):
+    assert call(env, "users", "create", "alice", "--password-stdin", stdin="s3cret﻿-pass\n") == 0
+    assert auth.verify_password("s3cret﻿-pass", stored_hash(env, "alice"))
+
+
+@pytest.mark.parametrize("raw,password", [
+    (b"\xef\xbb\xbfs3cret-pass\r\n", "s3cret-pass"),  # có BOM, kết thúc CRLF
+    (b"s3cret-pass\n", "s3cret-pass"),  # không BOM
+    ("mật-khẩu-9\n".encode("utf-8"), "mật-khẩu-9"),  # không ASCII, không BOM
+    (b"\xef\xbb\xbf" + "mật-khẩu-9\r\n".encode("utf-8"), "mật-khẩu-9"),  # không ASCII, có BOM
+])
+def test_real_stdin_bytes_are_read_as_utf8_without_bom(env, raw, password):
+    proc = subprocess.run([sys.executable, "-m", "server.manage", "users", "create", "carol", "--password-stdin"],
+                          input=raw, capture_output=True, timeout=30,
+                          env={"PATH": os.environ["PATH"], "PYTHONPATH": os.getcwd(), **env})
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    stored = stored_hash(env, "carol")
+    assert auth.verify_password(password, stored)
+    assert not auth.verify_password("﻿" + password, stored)
+
+
 def test_password_is_never_an_argument(env):
     with pytest.raises(SystemExit):  # không có tùy chọn --password: mật khẩu không vào lịch sử shell hay danh sách process
         call(env, "users", "create", "alice", "--password", "s3cret-pass")

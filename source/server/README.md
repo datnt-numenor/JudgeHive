@@ -78,6 +78,8 @@ docker compose exec server python -m server.manage users create root --role admi
 docker compose exec server python -m server.manage problems reimport aplusb      # D5: nạp lại một đề từ thư mục
 ```
 
+`--password-stdin` đọc mật khẩu từ dòng đầu của stdin theo UTF-8 và bỏ BOM (U+FEFF) ở đầu luồng (Windows PowerShell 5.1 tự chèn BOM khi pipe); mật khẩu bắt đầu bằng U+FEFF không được hỗ trợ.
+
 `problems/` chỉ là dữ liệu khởi tạo: lúc khởi động server chỉ nạp đề chưa có trong DB, không ghi đè. Sửa file trong
 `problems/` rồi restart không có tác dụng; dùng `problems reimport` (và build lại image nếu đổi file, vì `problems/`
 nằm trong image). `reimport` đổi hash bộ test nhưng không tự chấm lại và không đổi cờ ẩn.
