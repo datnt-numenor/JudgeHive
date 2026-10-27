@@ -12,10 +12,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from server import config as config_module
-from server import problems
+from server import problems, rest
 from server.db import Database
 from server.dispatcher import Dispatcher
 from server.hooks import LoopHooks
+from server.rest.state import build_state, system_clock_ms
 from server.worker_server import WorkerServer
 
 log = logging.getLogger("judgehive.main")
@@ -26,8 +27,9 @@ def _setup_logging():
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
-def create_app(cfg=None):
-    """`cfg`: ServerConfig có sẵn (test); None thì đọc từ biến môi trường lúc lifespan chạy."""
+def create_app(cfg=None, clock=None):
+    """`cfg`: ServerConfig có sẵn (test); None thì đọc từ biến môi trường lúc lifespan chạy. `clock`: hàm trả thời
+    gian hiện tại (ms) cho phiên và rate limit của REST; test truyền đồng hồ giả, mặc định là đồng hồ hệ thống."""
 
     @asynccontextmanager
     async def lifespan(app):
@@ -65,6 +67,10 @@ def create_app(cfg=None):
         dispatcher.start()
         steps.append("dispatcher")
         app.state.db, app.state.worker_server, app.state.dispatcher = db, server, dispatcher
+        app.state.hooks = hooks
+        # Băm mật khẩu giả (tốn khoảng chục mili giây) nên chạy trong thread, không chặn event loop.
+        app.state.rest = await asyncio.to_thread(build_state, config, db, dispatcher, hooks, clock or system_clock_ms)
+        steps.append("rest")
         try:
             yield
         finally:
@@ -75,12 +81,10 @@ def create_app(cfg=None):
             await asyncio.to_thread(shutdown)
             steps.append("stopped")
 
-    app = FastAPI(lifespan=lifespan)
-
-    @app.get("/api/health")
-    def health():
-        return {"status": "ok"}
-
+    # Không có /docs, /redoc, /openapi.json (công khai, lộ danh sách route) và không tự chuyển hướng dấu "/" cuối
+    # (README 3.2: đường dẫn không tồn tại là 404 JSON).
+    app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False)
+    rest.install(app)
     return app
 
 
