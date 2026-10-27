@@ -23,13 +23,26 @@ class LoopHooks(Hooks):
     def __init__(self, loop):
         self._loop = loop
         self._scoreboard = None
+        self._status_consumer = None
+
+    def bind_status(self, consumer):
+        """Gắn `StatusConsumer` (WebSocket); từ đó `status` chuyển sự kiện sang event loop cho nó."""
+        self._status_consumer = consumer
 
     def bind_scoreboard(self, service):
         """Gắn `ScoreboardService`; từ đó `scoreboard_dirty` đánh dấu cần tính lại bảng xếp hạng."""
         self._scoreboard = service
 
     def status(self, submission_id, user_id, event, **info):
-        self._post(log.info, "STATUS submission=%s user=%s event=%s %s", submission_id, user_id, event, info)
+        # Gọi từ thread dispatcher, cổng worker hay threadpool của REST: chỉ chuyển sang event loop rồi trả về, không bao
+        # giờ ném. Mọi thứ còn lại (tra DB, gửi xuống WebSocket) chạy trên event loop hoặc thread riêng của WsHub.
+        consumer = self._status_consumer
+        if consumer is None:
+            self._post(log.info, "STATUS submission=%s user=%s event=%s %s", submission_id, user_id, event, info)
+        else:
+            from server.ws.events import Event
+
+            self._post(consumer.offer, Event(submission_id, user_id, event, info))
 
     def scoreboard_dirty(self):
         # Gọi từ thread dispatcher/cổng worker sau khi commit: chỉ chuyển sang event loop rồi trả về, không bao giờ ném.

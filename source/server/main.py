@@ -18,7 +18,9 @@ from server.db import Database
 from server.dispatcher import Dispatcher
 from server.hooks import LoopHooks
 from server.rest.state import build_state, system_clock_ms
+from server import ws
 from server.scoreboard.service import ScoreboardService
+from server.ws import WsHub
 from server.worker_server import WorkerServer
 
 log = logging.getLogger("judgehive.main")
@@ -75,6 +77,7 @@ def create_app(cfg=None, clock=None):
         hooks.bind_scoreboard(scoreboard)
         app.state.scoreboard = scoreboard
         steps.append("scoreboard")
+        hub = None
         try:
             server.start()
             steps.append("worker_port")
@@ -86,6 +89,12 @@ def create_app(cfg=None, clock=None):
             app.state.rest = await asyncio.to_thread(build_state, config, db, dispatcher, hooks,
                                                      clock or system_clock_ms)
             steps.append("rest")
+            # WebSocket: sau khi REST và hooks sẵn sàng. Từ đây STATUS (hooks) và SCOREBOARD (subscriber) chảy xuống kết nối.
+            hub = WsHub(config, db, scoreboard, loop=loop, clock=clock or system_clock_ms)
+            await hub.start()
+            app.state.ws = hub
+            hooks.bind_status(hub.consumer)
+            steps.append("ws")
             yield
         finally:
             def shutdown():
@@ -93,16 +102,23 @@ def create_app(cfg=None, clock=None):
                 server.stop()  # trước: đánh thức dispatcher đang chờ worker rảnh
                 dispatcher.stop()
 
+            # Thứ tự tắt: WebSocket (đóng kết nối, hủy task) rồi cổng worker và dispatcher rồi bảng xếp hạng. Mỗi bước nằm trong
+            # try/finally riêng để một bước lỗi không làm bỏ qua các bước sau.
             try:
-                await asyncio.to_thread(shutdown)
+                if hub is not None:
+                    await hub.stop()
             finally:
-                await scoreboard.stop()  # sau cổng worker và dispatcher: hết nguồn gọi mark_dirty
-                steps.append("stopped")
+                try:
+                    await asyncio.to_thread(shutdown)
+                finally:
+                    await scoreboard.stop()  # sau cổng worker và dispatcher: hết nguồn gọi mark_dirty
+                    steps.append("stopped")
 
     # Không có /docs, /redoc, /openapi.json (công khai, lộ danh sách route) và không tự chuyển hướng dấu "/" cuối
     # (README 3.2: đường dẫn không tồn tại là 404 JSON).
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False)
     rest.install(app)
+    ws.install(app)  # route /ws; phải đứng trước static.install (fallback SPA không áp cho /ws)
     # Giao diện web (nếu có thư mục build): `/assets` và fallback SPA trong bộ xử lý 404 của REST; không route nào khớp "/".
     static.install(app, cfg.static_dir if cfg is not None else config_module.static_dir_from_env(os.environ))
     return app

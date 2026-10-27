@@ -30,6 +30,13 @@ def _credentials(body):
     return username, password, size <= auth.MAX_PASSWORD_BYTES and "\x00" not in password
 
 
+def _close_websockets(request, token_hash):
+    """Đóng (4401) mọi WebSocket của một phiên vừa bị hủy. Gọi trong threadpool nên đi qua `call_soon_threadsafe`."""
+    hub = getattr(request.app.state, "ws", None)
+    if hub is not None:
+        hub.close_session_threadsafe(token_hash)
+
+
 @router.post("/api/login")
 def login(request: Request, body: dict = Depends(body_default)):
     state = request.app.state.rest
@@ -57,6 +64,7 @@ def login(request: Request, body: dict = Depends(body_default)):
     previous = sessions.lookup(state.db, request.cookies.get(sessions.COOKIE_NAME), now)
     if previous is not None:
         sessions.delete_session(state.db, previous.token_hash)
+        _close_websockets(request, previous.token_hash)  # README 4.5: WebSocket của phiên bị thay đóng 4401
     token = sessions.create_session(state.db, row["id"], now, state.cfg.session_ttl_s)
     user = {"id": row["id"], "username": row["username"], "role": row["role"]}
     return ApiJSONResponse({"user": user},
@@ -67,6 +75,7 @@ def login(request: Request, body: dict = Depends(body_default)):
 def logout(request: Request, user: sessions.SessionUser = Depends(sessions.current_user),
            body: dict = Depends(body_default)):
     sessions.delete_session(request.app.state.rest.db, user.token_hash)
+    _close_websockets(request, user.token_hash)
     return no_content({"Set-Cookie": sessions.clear_cookie_header()})
 
 
