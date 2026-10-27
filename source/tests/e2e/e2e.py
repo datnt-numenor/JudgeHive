@@ -158,7 +158,7 @@ def main():
 
         status, headers, body = http_call("GET", "/api/health")
         check("health công khai và tối thiểu", status == 200 and body == {"status": "ok"})
-        check("không lộ tài liệu API", http_call("GET", "/openapi.json")[0] == 404 and http_call("GET", "/docs")[0] == 404)
+        check("không lộ header server (cờ --no-server-header)", "server" not in headers, headers.get("server", ""))        check("không lộ tài liệu API", http_call("GET", "/openapi.json")[0] == 404 and http_call("GET", "/docs")[0] == 404)
         check("chưa đăng nhập thì 401", http_call("GET", "/api/problems")[0] == 401)
 
         manage("users", "create", "alice", "--password-stdin", input_text=PASSWORD + "\n")
@@ -173,6 +173,10 @@ def main():
         check("danh sách đề có aplusb", [p["id"] for p in problems] == ["aplusb"])
         problem = http_call("GET", "/api/problems/aplusb", cookie=cookie)[2]
         check("chi tiết đề có test mẫu", len(problem["samples"]) >= 1 and problem["statement"])
+        check("số 5000 chữ số trong query là 400, không phải 500",
+              http_call("GET", "/api/submissions?limit=" + "1" * 5000, cookie=cookie)[0] == 400)
+        check("id 5000 chữ số trên đường dẫn là 404",
+              http_call("GET", "/api/submissions/" + "1" * 5000, cookie=cookie)[0] == 404)
 
         ids = {}
         tokens = {}

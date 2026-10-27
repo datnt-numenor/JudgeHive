@@ -76,8 +76,9 @@ class Web:
         self.app = create_app(self.cfg, clock=self.clock)
         if self.prepare:
             self.prepare(self.app)
+        # log_config=None: logger của uvicorn truyền lên root, nên caplog thấy cả "Exception in ASGI application"
         config = uvicorn.Config(self.app, host="127.0.0.1", port=0, log_level="warning", lifespan="on",
-                                access_log=False)
+                                access_log=False, log_config=None)
         self.server = uvicorn.Server(config)
         self.thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
