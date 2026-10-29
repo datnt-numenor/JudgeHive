@@ -41,14 +41,15 @@ client  <-->  server  <-->  (database / service nếu có)
 
 ## ⚙️ CÔNG NGHỆ SỬ DỤNG
 
-> Liệt kê công nghệ, framework, thư viện chính mà nhóm sử dụng.
-
 | Thành phần | Công nghệ | Ghi chú |
 |------------|-----------|---------|
-| Server | Python 3.11 + Flask | REST API |
-| Client | Node.js 20 + Axios | Giao tiếp HTTP |
-| Database | SQLite | Lưu trữ dữ liệu tạm thời |
-| Triển khai | Docker | (nếu có) |
+| Server web | Python 3.11, FastAPI 0.162, uvicorn 0.54 (đúng một process) | REST (JSON) cho trình duyệt; phục vụ luôn giao diện đã build, cùng origin. WebSocket thời gian thực chưa có |
+| Cổng worker | Python `socket` + `threading`, TCP thuần, mỗi message một dòng JSON | Nhóm tự viết framing, heartbeat, giao lại bài khi worker chết (mục "Giao tiếp" phần 2); không dùng HTTP hay thư viện RPC |
+| Worker chấm bài | Python 3.11 trong container Linux (`python:3.11-slim-trixie`, g++, OpenJDK 21) | Chấm Python, C++, Java; giới hạn thời gian và bộ nhớ bằng `setrlimit`, chạy code thí sinh bằng user không đặc quyền |
+| Client | React 19, React Router 7, Vite 8 (JavaScript) | Đăng nhập, xem đề, nộp bài, lịch sử, kết quả; gọi REST bằng `fetch` |
+| Cơ sở dữ liệu | SQLite (chế độ WAL) | File nằm trong named volume của Docker |
+| Kiểm thử | pytest 9; Vitest 5 và Testing Library | Test hợp đồng, test server, test worker, kiểm thử đầu cuối bằng Docker Compose |
+| Triển khai | Docker Compose | Một server và một hoặc nhiều worker; image server đã gồm giao diện build sẵn |
 
 ---
 
@@ -864,16 +865,36 @@ assignment-network-project/
 ├── INSTRUCTION.md
 ├── statics/
 │   ├── diagram.png
+│   ├── logo.png
 │   └── dataset_sample.csv
 └── source/
-    ├── .gitignore
-    ├── client/
-    │   ├── README.md
-    │   └── (client source files...)
-    ├── server/
-    │   ├── README.md
-    │   └── (server source files...)
-    └── (các module khác nếu có)
+    ├── docker-compose.yml      # server + worker
+    ├── pytest.ini, requirements-dev.txt, constraints-dev.txt   # cấu hình và phiên bản ghim cho test (image test của worker)
+    ├── secrets/                # worker.env.example; worker.env (shared secret) tự tạo, không đưa lên git
+    ├── common/                 # protocol.py: framing JSON-lines và hằng số giao thức, dùng chung server và worker
+    ├── server/                 # FastAPI, cổng worker, dispatcher, SQLite (README.md riêng)
+    │   ├── main.py             #   khởi động (lifespan)
+    │   ├── worker_server.py    #   cổng worker TCP: đăng ký, PING/PONG, watchdog
+    │   ├── dispatcher.py       #   hàng đợi, giao bài, giao lại khi worker chết
+    │   ├── config.py, db.py, auth.py, hooks.py, timefmt.py   # cấu hình, SQLite, băm mật khẩu, điểm cắm sự kiện, định dạng thời gian
+    │   ├── Dockerfile, requirements.txt, constraints.txt    # image server (đã gồm giao diện build sẵn) và phiên bản ghim
+    │   ├── rest/               #   REST: đăng nhập, đề, bài nộp, bảng xếp hạng
+    │   ├── scoreboard/         #   tính bảng xếp hạng
+    │   ├── static.py           #   phục vụ giao diện web đã build
+    │   ├── problems/           #   đề seed (ví dụ aplusb)
+    │   └── manage.py           #   tạo tài khoản, nạp lại đề
+    ├── worker/                 # chấm bài trong container (README.md riêng)
+    │   ├── main.py, executor.py, sandbox.py, launcher.py, languages.py, checker.py
+    │   ├── Dockerfile          #   image worker (stage test và runtime)
+    │   └── spike/              #   chương trình và kết quả đo thử nghiệm giới hạn tài nguyên
+    ├── client/                 # React + Vite (README.md riêng)
+    │   └── src/                #   pages/ (các màn hình), lib/ (gọi API, nộp bài, poll kết quả)
+    └── tests/
+        ├── invariants/         #   test hợp đồng đã khóa: framing, hằng số giao thức, worker, cổng worker phía server
+        ├── server/             #   test server (REST, cổng worker, dispatcher, bảng xếp hạng, tĩnh)
+        ├── worker/             #   test worker (chạy trong container)
+        ├── e2e/                #   kiểm thử đầu cuối: docker compose thật
+        └── perf/               #   đo hiệu năng tính bảng xếp hạng
 ```
 
 ---
