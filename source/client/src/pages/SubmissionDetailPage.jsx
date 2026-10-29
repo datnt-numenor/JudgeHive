@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { errorText, formatKib, formatTime, reKindLabel, stateLabel, verdictLabel } from "../lib/format.js";
 import { startPolling } from "../lib/poll.js";
+import { isPollingMode, useRealtime, useStatusEvents } from "../realtime.jsx";
 
 function Verdict({ s }) {
   if (s.verdict == null) return <p>Chưa có kết quả.</p>;
@@ -66,16 +67,52 @@ function Details({ s }) {
   );
 }
 
+/**
+ * Áp một message `STATUS` (README 4.2) lên bài đang hiển thị. Không bao giờ hạ `judged` xuống `queued`/`judging`: thứ tự
+ * message có thể lệch chốc lát (mục 4.8). STATUS không mang `code`, `ce_message`, `sample_*`, nên khi `judged` trang còn
+ * phải gọi REST một lần để lấy các field đó.
+ */
+function applyStatus(prev, msg) {
+  if (!prev) return prev;
+  if (prev.state === "judged" && msg.state !== "judged") return prev;
+  if (msg.state === "queued") return { ...prev, state: "queued", progress: undefined };
+  if (msg.state === "judging") return { ...prev, state: "judging", progress: msg.progress };
+  if (msg.state === "judged") {
+    const fresh = msg.submission && typeof msg.submission === "object" ? msg.submission : {};
+    // `code: undefined` đánh dấu "chưa có chi tiết": REST sẽ được gọi lại (kể cả sau chấm lại, khi ce_message/sample_* đổi).
+    return { ...prev, ...fresh, state: "judged", progress: undefined, code: undefined };
+  }
+  return prev;
+}
+
 export default function SubmissionDetailPage() {
   const { id } = useParams();
+  const { mode, resyncKey } = useRealtime();
+  const polling = isPollingMode(mode);
   const [submission, setSubmission] = useState(null);
   const [error, setError] = useState(null);
   const [retrying, setRetrying] = useState(false);
+  const [judgedTick, setJudgedTick] = useState(0); // tăng khi STATUS `judged` đến: cần gọi REST lấy field chi tiết
+  const current = useRef(null);
+  current.current = submission;
 
   useEffect(() => {
     setSubmission(null);
     setError(null);
     setRetrying(false);
+  }, [id]);
+
+  useStatusEvents((msg) => {
+    if (String(msg.submission_id) !== id) return;
+    setSubmission((prev) => applyStatus(prev, msg));
+    if (msg.state === "judged") setJudgedTick((n) => n + 1);
+  });
+
+  // Gọi REST khi mở trang, khi mất WebSocket (poll 1 giây tới `judged`), khi nối lại (`resyncKey`), và một lần khi
+  // STATUS `judged` đến. Khi WebSocket sống và bài đã có đủ chi tiết thì không gọi gì.
+  useEffect(() => {
+    const have = current.current;
+    if (!polling && have && String(have.submission_id) === id && have.state === "judged" && have.code !== undefined) return undefined;
     return startPolling({
       fetchOnce: (signal) => api.submission(id, { signal }),
       onResult: (data) => {
@@ -87,9 +124,9 @@ export default function SubmissionDetailPage() {
         if (fatal) setError(e);
         else setRetrying(true);
       },
-      isDone: (data) => data.state === "judged",
+      isDone: (data) => data.state === "judged" || !polling,
     });
-  }, [id]);
+  }, [id, polling, resyncKey, judgedTick]);
 
   if (error) {
     return (
@@ -111,10 +148,11 @@ export default function SubmissionDetailPage() {
       </h1>
       <p className="muted">
         {s.language} · {formatTime(s.received_at)} · <span data-testid="state">{stateLabel(s.state)}</span>
+        {s.state === "judging" && s.progress && ` (${s.progress.tests_done}/${s.progress.tests_total} test)`}
       </p>
       {retrying && <p className="muted">Mất kết nối tạm thời, đang thử lại…</p>}
       <Verdict s={s} />
-      <Details s={s} />
+      {s.code !== undefined && <Details s={s} />}
     </>
   );
 }

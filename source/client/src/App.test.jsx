@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App.jsx";
+import { FakeWebSocket } from "./test/fakeWebSocket.js";
 import { PROBLEM, USER, apiError, installFetch, json, submissionObject } from "./test/fakeServer.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -182,7 +183,14 @@ describe("trang bài nộp", () => {
     if (path.startsWith("/api/submissions/")) return getSubmission();
   };
 
-  it("poll tới khi judged rồi dừng", async () => {
+  // Poll là đường dự phòng khi không có WebSocket (README 3.3, 4.7): các test dưới đây cho WebSocket rớt rồi mới poll.
+  const dropWebSocket = () =>
+    act(async () => {
+      FakeWebSocket.last.serverClose(1006);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+  it("không có WebSocket thì poll tới khi judged rồi dừng", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const states = ["queued", "judging", "judged"];
     const calls = installFetch(
@@ -196,9 +204,7 @@ describe("trang bài nộp", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.getByTestId("state")).toHaveTextContent("Đang chờ");
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1000);
-    });
+    await dropWebSocket(); // lần gọi đầu tiên của chế độ poll
     expect(screen.getByTestId("state")).toHaveTextContent("Đang chấm");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
@@ -224,6 +230,7 @@ describe("trang bài nộp", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.getByTestId("state")).toHaveTextContent("Đang chấm");
+    await dropWebSocket();
     expired = true;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);

@@ -43,10 +43,10 @@ client  <-->  server  <-->  (database / service nếu có)
 
 | Thành phần | Công nghệ | Ghi chú |
 |------------|-----------|---------|
-| Server web | Python 3.11, FastAPI 0.162, uvicorn 0.54 (đúng một process) | REST (JSON) cho trình duyệt; phục vụ luôn giao diện đã build, cùng origin. WebSocket thời gian thực chưa có |
+| Server web | Python 3.11, FastAPI 0.162, uvicorn 0.54 (đúng một process) | REST (JSON) cho trình duyệt; phục vụ luôn giao diện đã build, cùng origin. WebSocket `/ws` đẩy trạng thái chấm bài và bảng xếp hạng |
 | Cổng worker | Python `socket` + `threading`, TCP thuần, mỗi message một dòng JSON | Nhóm tự viết framing, heartbeat, giao lại bài khi worker chết (mục "Giao tiếp" phần 2); không dùng HTTP hay thư viện RPC |
 | Worker chấm bài | Python 3.11 trong container Linux (`python:3.11-slim-trixie`, g++, OpenJDK 21) | Chấm Python, C++, Java; giới hạn thời gian và bộ nhớ bằng `setrlimit`, chạy code thí sinh bằng user không đặc quyền |
-| Client | React 19, React Router 7, Vite 8 (JavaScript) | Đăng nhập, xem đề, nộp bài, lịch sử, kết quả; gọi REST bằng `fetch` |
+| Client | React 19, React Router 7, Vite 8 (JavaScript) | Đăng nhập, xem đề, nộp bài, lịch sử, kết quả, bảng xếp hạng; gọi REST bằng `fetch`, nhận cập nhật tức thời qua WebSocket |
 | Cơ sở dữ liệu | SQLite (chế độ WAL) | File nằm trong named volume của Docker |
 | Kiểm thử | pytest 9; Vitest 5 và Testing Library | Test hợp đồng, test server, test worker, kiểm thử đầu cuối bằng Docker Compose |
 | Triển khai | Docker Compose | Một server và một hoặc nhiều worker; image server đã gồm giao diện build sẵn |
@@ -654,7 +654,7 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 | `sample_expected_output` | string hoặc null | Output mong đợi của test mẫu sai |
 
 - `sample_input` và `sample_expected_output` lấy từ test mẫu số `failed_test` của đề. Chúng là `null` khi đề đang ẩn mà người gọi không phải admin, hoặc khi bộ test của đề đã đổi sau lần chấm này (không còn tra được đúng test đã chấm). `sample_stdout` vẫn có trong các trường hợp đó.
-- Client theo dõi bài vừa nộp bằng cách gọi lại endpoint này, mỗi lần cách lần nhận phản hồi trước 1 giây, cho tới khi `state` là `judged`. Endpoint này không có rate limit. Khi WebSocket (PR sau) có mặt, cách này chỉ còn là đường dự phòng.
+- Client theo dõi bài vừa nộp bằng cách gọi lại endpoint này, mỗi lần cách lần nhận phản hồi trước 1 giây, cho tới khi `state` là `judged`. Endpoint này không có rate limit. Khi WebSocket đang mở, client dùng `STATUS` (mục 4.2) thay cho cách này; gọi lại endpoint này khi WebSocket mất hoặc bị đóng bằng 4429 (mục 4.7), và một lần khi nhận `STATUS` `judged` để lấy các field chi tiết ở bảng trên.
 
 ```json
 {"submission_id": 42, "problem_id": "sum-two", "problem_title": "Tổng hai số", "language": "python", "received_at": "2026-10-24T08:15:30.123Z", "state": "judged", "verdict": "WA", "time_ms": 12, "memory_kib": 9216, "failed_test": 1, "failed_is_sample": true, "re_kind": null, "rejudged_at": null, "code": "print(int(input()) + int(input()))\n", "ce_message": null, "sample_stdout": "4\n", "sample_input": "1 2\n", "sample_expected_output": "3\n"}
@@ -886,6 +886,7 @@ assignment-network-project/
     │   ├── Dockerfile, requirements.txt, constraints.txt    # image server (đã gồm giao diện build sẵn) và phiên bản ghim
     │   ├── rest/               #   REST: đăng nhập, đề, bài nộp, bảng xếp hạng
     │   ├── scoreboard/         #   tính bảng xếp hạng
+    │   ├── ws/                 #   WebSocket /ws: kết nối, PING/PONG, đẩy STATUS và SCOREBOARD
     │   ├── static.py           #   phục vụ giao diện web đã build
     │   ├── problems/           #   đề seed (ví dụ aplusb)
     │   └── manage.py           #   tạo tài khoản, nạp lại đề
@@ -894,7 +895,7 @@ assignment-network-project/
     │   ├── Dockerfile          #   image worker (stage test và runtime)
     │   └── spike/              #   chương trình và kết quả đo thử nghiệm giới hạn tài nguyên
     ├── client/                 # React + Vite (README.md riêng)
-    │   └── src/                #   pages/ (các màn hình), lib/ (gọi API, nộp bài, poll kết quả)
+    │   └── src/                #   pages/ (các màn hình), lib/ (gọi API, nộp bài, poll kết quả, kết nối WebSocket)
     └── tests/
         ├── invariants/         #   test hợp đồng đã khóa: framing, hằng số giao thức, worker, cổng worker phía server
         ├── server/             #   test server (REST, cổng worker, dispatcher, bảng xếp hạng, tĩnh)

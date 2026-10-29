@@ -1,6 +1,6 @@
 # MODULE CLIENT
 
-Giao diện web của JudgeHive: đăng nhập, xem đề, nộp bài, xem lịch sử và kết quả chấm. Chạy trong trình duyệt, chỉ nói chuyện với server qua REST đã đặc tả ở README gốc, mục "Giao tiếp", phần 3. Chưa dùng WebSocket (kết quả được theo dõi bằng cách gọi lại API, xem bên dưới); chưa có trang admin và bảng xếp hạng.
+Giao diện web của JudgeHive: đăng nhập, xem đề, nộp bài, xem lịch sử, kết quả chấm và bảng xếp hạng. Chạy trong trình duyệt, chỉ nói chuyện với server qua REST (README gốc, mục "Giao tiếp", phần 3) và WebSocket `/ws` (phần 4). Chưa có trang admin.
 
 ## Công nghệ
 
@@ -35,7 +35,7 @@ docker run --rm -v "${PWD}:/src:ro" node:22-slim sh -c "npm i -g npm@11.21.1 && 
 
 Mã nguồn được mount chỉ đọc rồi chép sang `/app` (bỏ `node_modules` của host), nên không để lại file nào trong repo. Đừng pipe output (che mất exit code của vitest). Nếu đã có Node 22.12 trở lên và npm 11 trở lên trên máy: `npm ci && npm test`.
 
-Test dùng `fetch` giả dựng lại đúng hình dạng request/response của README. Việc đối chiếu với server thật làm riêng khi REST của server có mặt.
+Test dùng `fetch` và `WebSocket` giả (`src/test/`) dựng lại đúng hình dạng request/response/message của README. Việc đối chiếu với server thật (handshake `Origin` qua proxy của Vite, mã đóng thật, restart server...) là các lượt kiểm tay riêng, không nằm trong bộ test này.
 
 ## Cấu trúc
 
@@ -43,12 +43,13 @@ Test dùng `fetch` giả dựng lại đúng hình dạng request/response của
 client/
 ├── index.html, vite.config.js, package.json, package-lock.json, .npmrc
 └── src/
-    ├── main.jsx, App.jsx, auth.jsx, styles.css
-    ├── pages/        # Login, Problems, ProblemDetail (kèm form nộp), Submissions, SubmissionDetail
+    ├── main.jsx, App.jsx, auth.jsx, realtime.jsx, styles.css
+    ├── pages/        # Login, Problems, ProblemDetail (kèm form nộp), Submissions, SubmissionDetail, Scoreboard
     └── lib/
         ├── api.js        # mọi request REST: Content-Type, timeout 15 s, lỗi, 401 hết phiên
         ├── submitter.js  # quy tắc client_token của một lần nộp
         ├── poll.js       # theo dõi bài nộp: 1 s sau mỗi phản hồi, giãn khi lỗi, nghỉ khi tab ẩn
+        ├── realtime.js   # kết nối /ws: mã đóng, backoff, PING/PONG, quá 60 s im lặng (máy trạng thái, không phụ thuộc React)
         ├── uuid.js       # UUID v4, có đường dự phòng khi trình duyệt không có crypto.randomUUID
         └── format.js     # nhãn hiển thị, thông báo lỗi theo mã
 ```
@@ -57,6 +58,8 @@ client/
 
 - **Hết phiên:** mọi 401 `UNAUTHENTICATED` đưa về trang đăng nhập. 401 `INVALID_CREDENTIALS` của chính trang đăng nhập thì không.
 - **`client_token`:** mỗi lần nộp một UUID mới. Lỗi mạng, hết giờ chờ hoặc 5xx thì bấm nộp lại dùng đúng token đó (không nộp trùng), nhưng chỉ khi mã, đề và ngôn ngữ không đổi; sửa nội dung là một lần nộp khác nên có token mới. Nút nộp bị khóa trong lúc chờ phản hồi.
-- **Theo dõi kết quả:** gọi `GET /api/submissions/{id}` 1 giây một lần tính từ lúc nhận phản hồi trước, cho tới khi `state` là `judged`. Lỗi mạng thì giãn khoảng nghỉ (gấp đôi mỗi lần, tối đa 10 s); 401 hoặc 404 thì dừng; tab ẩn thì không gọi, tab hiện lại thì gọi ngay.
+- **Một kết nối WebSocket cho cả ứng dụng** (`realtime.jsx`): mở sau khi đăng nhập, đóng (mã 1000, không nối lại) khi đăng xuất. Mã đóng 4401 đưa về trang đăng nhập và không nối lại. Mã 4429 (quá 10 tab) không nối lại, hiện thông báo; chỉ tải lại trang mới thử WebSocket lại. Mọi trường hợp khác (mất mạng, 1006, 1008, 1012, 1013, 4408, quá 60 s không nhận gì) nối lại sau 1, 2, 4, 8, 10 s (cộng ngẫu nhiên tới 25%); khoảng chờ về 1 s khi nhận message hợp lệ đầu tiên của kết nối mới. `PING` được trả `PONG` với đúng `seq`.
+- **Theo dõi kết quả:** khi WebSocket đang sống, trang chi tiết và lịch sử bài nộp cập nhật theo `STATUS` và không poll; khi `judged`, trang chi tiết gọi `GET /api/submissions/{id}` một lần để lấy mã nguồn và các field chi tiết (STATUS không mang chúng). Khi WebSocket mất hoặc bị 4429 thì quay về gọi REST: trang chi tiết 1 giây một lần tính từ lúc nhận phản hồi trước cho tới khi `state` là `judged`, lịch sử gọi lại trang 1 mỗi 2 giây chừng nào còn bài chưa chấm xong. Lỗi mạng thì giãn khoảng nghỉ (gấp đôi mỗi lần, tối đa 10 s); 401 hoặc 404 thì dừng; tab ẩn thì không gọi, tab hiện lại thì gọi ngay. Sau khi nối lại, trang lấy lại dữ liệu từ REST (kết quả bị lỡ trong lúc mất kết nối); `STATUS` đến trễ không hạ bài đã `judged`.
+- **Bảng xếp hạng** (`/scoreboard`): hiển thị theo `SCOREBOARD` (server gửi ngay khi nối và mỗi khi tính lại). Chỉ nhận bản có `version` lớn hơn bản đang giữ, và bỏ mốc này mỗi khi trạng thái kết nối đổi (server khởi động lại thì `version` bắt đầu lại). `GET /api/scoreboard` chỉ gọi khi chưa có bản nào, hoặc mỗi 5 s khi không có WebSocket.
 - **Hiển thị:** mọi chuỗi từ server (đề bài, mã nguồn, thông báo biên dịch, output) đi qua escape mặc định của React; không dùng `dangerouslySetInnerHTML` (có test quét `src/`). MLE không hiện số bộ nhớ; SE chỉ hiện thông báo chung.
 - **Giới hạn mã 64 KB** tính theo byte UTF-8 được kiểm ở client để báo sớm; server vẫn là nơi quyết định.
