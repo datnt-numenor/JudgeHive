@@ -51,6 +51,8 @@ class ServerConfig:
     ws_ping_interval_s: float = 30.0  # chu kỳ PING ứng dụng và kiểm tra phiên
     ws_idle_timeout_s: float = 60.0  # im lặng quá khoảng này thì đóng 4408
     ws_max_message_bytes: int = 4096  # frame lớn hơn thì đóng 1009
+    ws_max_frames: int = 20  # quá số frame này trong ws_frame_window_s giây thì đóng 1008
+    ws_frame_window_s: float = 10.0
     ws_event_queue_size: int = 10000  # hàng đợi sự kiện STATUS từ các thread; đầy thì bỏ sự kiện và ghi log
 
 

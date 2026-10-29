@@ -63,6 +63,49 @@ def test_a_text_frame_over_the_limit_closes_1009_counting_utf8_bytes():
     run(scenario())
 
 
+def test_more_than_the_allowed_frames_in_the_window_closes_1008():
+    async def scenario():
+        pong = text('{"type":"PONG","seq":1}')
+        ws = ScriptedWs([pong] * 20)  # đúng 20 frame trong cửa sổ: còn được
+        conn = make(ws)
+        await read_loop(conn, 4096, asyncio.get_running_loop(), max_frames=20, window_s=10.0)
+        assert ws.closed_with == []
+        ws = ScriptedWs([pong] * 21 + [text("unreachable")])  # frame thứ 21: đóng 1008, không đọc tiếp
+        conn = make(ws)
+        await read_loop(conn, 4096, asyncio.get_running_loop(), max_frames=20, window_s=10.0)
+        assert ws.closed_with == [1008] and conn.closed.is_set()
+        assert len(ws._messages) == 1
+
+    run(scenario())
+
+
+def test_frames_spread_over_more_than_the_window_are_never_limited():
+    async def scenario():
+        class Slow(ScriptedWs):
+            async def receive(self):
+                await asyncio.sleep(0.03)
+                return await super().receive()
+
+        pong = text('{"type":"PONG","seq":1}')
+        # Cách nhau >= 0,03 giây (sleep không bao giờ ngắn hơn), nên hai frame cách nhau một frame thì cách >= 0,06 giây, vượt cửa sổ 0,05 giây
+        ws = Slow([pong] * 12)
+        conn = make(ws)
+        await read_loop(conn, 4096, asyncio.get_running_loop(), max_frames=2, window_s=0.05)
+        assert ws.closed_with == []
+
+    run(scenario())
+
+
+def test_ignored_frames_count_toward_the_rate_limit():
+    async def scenario():
+        ws = ScriptedWs([text("not json")] * 6)
+        conn = make(ws)
+        await read_loop(conn, 4096, asyncio.get_running_loop(), max_frames=5, window_s=10.0)
+        assert ws.closed_with == [1008]
+
+    run(scenario())
+
+
 def test_unknown_malformed_and_deeply_nested_messages_are_ignored_and_the_loop_continues():
     async def scenario():
         junk = ['{"type":"HELLO"}', "not json", "[]", '{"type":"PONG"}', '{"type":"PONG","seq":"1"}', "null", "[" * 3000]

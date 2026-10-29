@@ -17,6 +17,7 @@ CODE_IDLE = 4408
 CODE_TRY_AGAIN_LATER = 1013  # quá tải toàn server, hoặc kết nối nhận quá chậm
 CODE_GOING_AWAY = 1001
 CODE_BINARY = 1003
+CODE_POLICY = 1008  # client gửi quá nhiều frame
 CODE_TOO_BIG = 1009
 
 _ids = itertools.count(1)

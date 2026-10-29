@@ -125,6 +125,27 @@ def test_consumer_delivers_events_in_order_to_listeners_only():
     run(scenario())
 
 
+def test_a_queued_that_arrives_after_judging_of_the_same_attempt_is_dropped():
+    async def scenario():
+        registry = FakeRegistry(listening={1})
+        consumer = StatusConsumer(registry, None, maxsize=100)
+        task = asyncio.ensure_future(consumer.run())
+        consumer.offer(Event(1, 1, "judging", {"attempt_id": 5}))
+        consumer.offer(Event(1, 1, "queued", {"attempt_id": 5}))  # đến muộn, cùng lượt: bỏ
+        consumer.offer(Event(1, 1, "queued", {"attempt_id": 4}))  # lượt cũ hơn: bỏ
+        consumer.offer(Event(2, 1, "queued", {"attempt_id": 5}))  # bài khác chưa judging: giữ
+        consumer.offer(Event(1, 1, "queued", {"attempt_id": 6}))  # lượt mới hơn (giao lại tiếp): giữ
+        consumer.offer(Event(1, 1, "queued", {}))  # không có attempt_id: giữ nguyên như cũ
+        consumer.offer(Event(1, 1, "judging", {"attempt_id": 6}))
+        assert await settle(lambda: len(registry.received) == 5)
+        await asyncio.sleep(0.05)  # chờ thêm để chắc không có message thừa
+        assert [(m["submission_id"], m["state"]) for _, m in registry.received] == [
+            (1, "judging"), (2, "queued"), (1, "queued"), (1, "queued"), (1, "judging")]
+        task.cancel()
+
+    run(scenario())
+
+
 def test_a_snapshot_that_no_longer_exists_sends_nothing_but_the_consumer_continues():
     async def scenario():
         registry = FakeRegistry()

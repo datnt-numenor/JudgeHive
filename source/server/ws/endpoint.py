@@ -41,7 +41,8 @@ async def ws_endpoint(websocket: WebSocket):
         text = hub.scoreboard_text()
         if text is not None:
             conn.offer_scoreboard(text)
-        reader = hub.loop.create_task(read_loop(conn, cfg.ws_max_message_bytes, hub.loop))
+        reader = hub.loop.create_task(read_loop(conn, cfg.ws_max_message_bytes, hub.loop, max_frames=cfg.ws_max_frames,
+                                                   window_s=cfg.ws_frame_window_s))
         # Logout có thể xảy ra giữa lúc tra phiên và lúc đăng ký: kiểm lại một lần.
         if user.token_hash not in await hub.live_sessions({user.token_hash}):
             conn.close_soon(CODE_UNAUTHENTICATED)

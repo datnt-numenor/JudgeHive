@@ -4,6 +4,7 @@ Client là `tests/e2e/ws_client.py` (thư viện chuẩn, mask mọi frame): ser
 mask bằng 1002, vì vậy nếu client mask sai thì các test này không chạy được. Ứng viên khóa được đánh dấu [khóa]; mọi test dùng
 khoảng thời gian thật ngắn (ping, idle, hết hạn phiên) là [không khóa]."""
 
+import json
 import os
 import socket
 import sys
@@ -308,6 +309,20 @@ def test_websockets_count_against_limit_concurrency_so_http_gets_503(make_web): 
 
 
 # ---- frame của client ---------------------------------------------------------------------------------------------
+
+def test_too_many_frames_in_the_window_close_with_1008(make_web):  # [khóa mã đóng]
+    web = make_web(ws_max_frames=5, ws_frame_window_s=30.0)
+    populate(web.db)
+    web.start()
+    client = open_ws(web, web.login("alice"))
+    client.recv_json()
+    for i in range(6):
+        client.send_text(json.dumps({"type": "PONG", "seq": i}))
+    expect_close(client, 1008)
+    again = open_ws(web, web.login("alice"))  # nối lại (có backoff ở client) thì được nhận lại bình thường
+    assert again.recv_json()["type"] == "SCOREBOARD"
+    again.close()
+
 
 def test_a_binary_frame_is_closed_with_1003(wsweb):  # [khóa]
     client = open_ws(wsweb, wsweb.login("alice"))
