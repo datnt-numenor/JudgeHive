@@ -79,19 +79,38 @@ def test_more_than_the_allowed_frames_in_the_window_closes_1008():
     run(scenario())
 
 
+class FakeLoop:
+    """Chỉ cần `time()` (read_loop không dùng gì khác của loop); đồng hồ chỉ tiến khi test cho tiến."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def time(self):
+        return self.now
+
+
 def test_frames_spread_over_more_than_the_window_are_never_limited():
     async def scenario():
-        class Slow(ScriptedWs):
+        loop = FakeLoop()
+
+        class Spaced(ScriptedWs):
+            def __init__(self, messages, step):
+                super().__init__(messages)
+                self.step = step
+
             async def receive(self):
-                await asyncio.sleep(0.03)
+                loop.now += self.step
                 return await super().receive()
 
         pong = text('{"type":"PONG","seq":1}')
-        # Cách nhau >= 0,03 giây (sleep không bao giờ ngắn hơn), nên hai frame cách nhau một frame thì cách >= 0,06 giây, vượt cửa sổ 0,05 giây
-        ws = Slow([pong] * 12)
-        conn = make(ws)
-        await read_loop(conn, 4096, asyncio.get_running_loop(), max_frames=2, window_s=0.05)
+        # Tối đa 2 frame trong 5 giây. Cách nhau 2,5 giây: frame thứ n và n-2 cách đúng 5 giây, không "dưới" cửa sổ: còn được.
+        ws = Spaced([pong] * 12, 2.5)
+        await read_loop(make(ws), 4096, loop, max_frames=2, window_s=5.0)
         assert ws.closed_with == []
+        # Cách nhau 2,4 giây: frame thứ n và n-2 cách 4,8 giây < 5 giây: frame thứ 3 bị đóng.
+        ws = Spaced([pong] * 12, 2.4)
+        await read_loop(make(ws), 4096, loop, max_frames=2, window_s=5.0)
+        assert ws.closed_with == [1008]
 
     run(scenario())
 

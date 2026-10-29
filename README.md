@@ -803,7 +803,7 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 - Header `Origin` chỉ do trình duyệt bảo đảm. Client không phải trình duyệt có thể giả `Origin`, nhưng vẫn cần cookie phiên hợp lệ, nên không có quyền hơn chính người sở hữu phiên.
 - `progress.tests_total` cho biết số test của đề, gồm cả test ẩn, nhưng chỉ người nộp bài thấy và chỉ cho bài của chính họ. Cùng loại với kênh rò hẹp đã ghi ở mục 3.4.
 - Không phát lại và không có số thứ tự trên `STATUS`; client dựa vào REST để đồng bộ lại sau khi mất kết nối.
-- Khi một bài được giao lại vì worker mất kết nối (mục 2.6) và còn worker rảnh, client có thể thấy `STATUS` `judging` trước `queued` trong chốc lát; message kế tiếp (`progress` hoặc `judged`) sửa lại, và REST luôn cho trạng thái đúng. Server chỉ bỏ được `queued` đến muộn khi sự kiện mang `attempt_id` của cùng lượt giao; hiện sự kiện `queued` chưa mang `attempt_id`, nên hạn chế này vẫn còn.
+- Khi một bài được giao lại vì worker mất kết nối (mục 2.6) và còn worker rảnh, client có thể thấy `STATUS` `judging` trước `queued` trong chốc lát; message kế tiếp (`progress` hoặc `judged`) sửa lại, và REST luôn cho trạng thái đúng.
 - Mọi WebSocket tính vào giới hạn số kết nối đồng thời của server (`--limit-concurrency`, xem `server/README.md`): khi gần hết hạn mức, request HTTP mới và handshake `/ws` mới có thể nhận 503 (mục 3.5).
 - Đóng một kết nối đã chết có thể làm sự kiện đóng đến chậm ở phía client; vì vậy client tự phát hiện bằng mốc 60 giây (mục 4.4) chứ không chờ sự kiện đóng.
 - Một proxy hoặc giới hạn kết nối của hạ tầng có thể từ chối handshake (ví dụ 503 khi quá nhiều kết nối đồng thời, mục 3.5); client chỉ thấy 1006 và xử lý như mất mạng.

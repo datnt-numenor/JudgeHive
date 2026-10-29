@@ -11,7 +11,6 @@ import logging
 from typing import Any, NamedTuple
 
 log = logging.getLogger("judgehive.ws")
-MAX_TRACKED_ATTEMPTS = 10000  # số bài tối đa nhớ lượt `judging` gần nhất
 
 
 class Event(NamedTuple):
@@ -55,7 +54,6 @@ class StatusConsumer:
         self._queue = asyncio.Queue(maxsize=maxsize)
         self._dropped = 0
         self._stopped = False
-        self._judging_attempt = {}  # submission_id -> attempt_id lớn nhất đã thấy ở `judging` (xem _is_stale_queued)
 
     def offer(self, event):
         """Chỉ gọi trên event loop (qua `call_soon_threadsafe`). Không bao giờ ném. Đầy thì bỏ sự kiện và ghi log: `STATUS` chỉ
@@ -82,28 +80,7 @@ class StatusConsumer:
             except Exception:
                 log.exception("xử lý sự kiện STATUS lỗi: %r", event)
 
-    def _is_stale_queued(self, event):
-        """README 4.8: bài giao lại có thể thấy `judging` trước `queued`. Nếu `queued` mang `attempt_id` không lớn hơn lượt đã
-        `judging` thì bỏ. `queued` không có `attempt_id` (hiện tại cả REST lẫn giao lại đều vậy) thì giữ nguyên, nên hiện nhánh này chưa có tác dụng.
-        CHƯA CHỐT: khi dispatcher gắn `attempt_id` vào `queued`, đó là id của lượt đã chết hay của lượt kế tiếp? Nếu là lượt
-        đã chết (từng phát `judging`) thì quy tắc này bỏ nhầm `queued` hợp lệ; phải chốt trước khi dispatcher phát field này."""
-        if event.event == "judging":
-            attempt = event.info.get("attempt_id")
-            if isinstance(attempt, int) and not isinstance(attempt, bool):
-                if len(self._judging_attempt) >= MAX_TRACKED_ATTEMPTS:
-                    self._judging_attempt.pop(next(iter(self._judging_attempt)))  # bỏ mục cũ nhất; chỉ là gợi ý
-                self._judging_attempt[event.submission_id] = max(attempt, self._judging_attempt.get(event.submission_id, attempt))
-        elif event.event == "done":
-            self._judging_attempt.pop(event.submission_id, None)
-        elif event.event == "queued":
-            attempt = event.info.get("attempt_id")
-            seen = self._judging_attempt.get(event.submission_id)
-            return isinstance(attempt, int) and not isinstance(attempt, bool) and seen is not None and attempt <= seen
-        return False
-
     async def _handle(self, event):
-        if self._is_stale_queued(event):
-            return
         if not self._registry.conns_of_user(event.user_id):
             return  # không ai đang nghe: khỏi tốn truy vấn DB
         snapshot = None
