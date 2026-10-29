@@ -158,6 +158,8 @@ class Dispatcher:
             if not self.server.assign_job(conn, job):
                 self.job_lost(job, "worker chết trước khi gửi JOB")  # lần giao này đã tính
                 return
+            # Tên worker đã qua kiểm ở REGISTER (chuỗi 1 đến 64 ký tự); %r để tên không chèn được dòng log.
+            log.info("submission %s attempt %s giao cho worker #%s (%r)", sid, attempt, conn.worker_id, conn.name)
             self._hook_status(job.submission_id, job.user_id, "judging", attempt_id=job.attempt_id)
             self.server.send_job(conn, data)
         except Exception:

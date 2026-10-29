@@ -157,6 +157,20 @@ def test_job_is_redelivered_with_a_new_attempt_when_the_worker_dies(stack):
     assert stack.wait_row(sid, lambda r: r["state"] == "done")["verdict"] == "AC"
 
 
+def test_each_delivery_logs_submission_attempt_and_worker(stack, caplog):
+    caplog.set_level("INFO", logger="judgehive.dispatcher")
+    first = stack.worker("a")
+    sid = stack.submit()
+    first.take_job()
+    second = stack.worker("b")
+    first.close()
+    second.take_job()
+    lines = [r.getMessage() for r in caplog.records if "giao cho worker" in r.getMessage()]
+    assert len(lines) == 2
+    assert lines[0].startswith(f"submission {sid} attempt 1 giao cho worker #") and lines[0].endswith("('a')")
+    assert lines[1].startswith(f"submission {sid} attempt 2 giao cho worker #") and lines[1].endswith("('b')")
+
+
 def test_late_result_of_a_lost_attempt_is_not_applied(stack):
     first = stack.worker("a")
     sid = stack.submit()
