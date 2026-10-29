@@ -121,6 +121,10 @@ def test_priority_is_redelivery_then_new_then_rejudge(stack):
     s_new = stack.submit()
     first.close()  # s1 giao lại, mức cao nhất
     assert wait_until(lambda: not stack.server.snapshot())
+    # Worker rời không có nghĩa là s1 đã nằm trong hàng đợi (xếp hàng giao lại là bất đồng bộ, thread dispatcher-lost);
+    # hook `queued` được phát sau khi s1 vào hàng đợi, nên chờ nó trước khi có worker mới, không thì s_new có thể được
+    # giao trước. Cùng cách với bản đã khóa trong tests/invariants.
+    assert wait_until(lambda: "queued" in stack.hooks.names(s1))
     second = stack.worker("b")
     order = []
     for _ in range(3):

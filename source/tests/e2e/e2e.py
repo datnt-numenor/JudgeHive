@@ -154,6 +154,13 @@ def kill_container(container_id):
         raise RuntimeError(f"docker kill {container_id} -> {proc.returncode}\n{proc.stdout}\n{proc.stderr}")
 
 
+def container_states(containers):
+    """{ID container: (đang chạy, số lần restart, StartedAt)} qua `docker inspect`."""
+    out = subprocess.run(["docker", "inspect", "-f", "{{.Id}} {{.State.Running}} {{.RestartCount}} {{.State.StartedAt}}",
+                          *containers], capture_output=True, text=True, timeout=60).stdout.splitlines()
+    return {f[0]: (f[1] == "true", int(f[2]), f[3]) for f in (line.split() for line in out) if len(f) == 4}
+
+
 def check(name, ok, detail_text=""):
     print(("PASS " if ok else "FAIL ") + name + (f"  [{detail_text}]" if detail_text and not ok else ""), flush=True)
     if not ok:
@@ -287,14 +294,26 @@ def main():
               f"hostnames={hostnames} containers={[c[:12] for c in containers]}")
         if not prefix_ok:
             raise RuntimeError("hostname worker không phải tiền tố ID container: không dò được container giữ bài")
+        before = container_states(containers)
+        killed = set()
         slow_id, _ = submit(cookie, *SLOW)
         for attempt in range(1, KILLS + 1):
             _, name = delivered_to(slow_id, attempt)
             holder = [c for c in containers if c.startswith(name)]
             if len(holder) != 1:
                 raise RuntimeError(f"lần giao {attempt}: tên worker {name!r} khớp {len(holder)} container")
+            killed.add(holder[0])
             kill_container(holder[0])  # kill ngay, không truy vấn DB giữa hai lần kill: cửa sổ mỗi lần chỉ 2 s
         delivered_to(slow_id, KILLS + 1)  # quá hạn chờ thì ném TimeoutError: bài không được giao lại
+        time.sleep(5)  # chờ restart policy (nếu có) tác động trước khi `compose up` dựng lại đủ số worker
+        after = container_states(containers)
+        untouched = [c for c in containers if c not in killed]
+        check("chỉ kill container đang giữ bài: các worker khác không bị khởi động lại",
+              all(after.get(c, (False,))[0] and after[c][2] == before[c][2] for c in untouched),
+              f"untouched={[c[:12] for c in untouched]} before={before} after={after}")
+        for c in killed:  # chỉ quan sát: restart policy của compose (`unless-stopped`) có khởi động lại container bị kill không
+            print(f"INFO container {c[:12]} sau docker kill: đang chạy={after[c][0]}, RestartCount={after[c][1]}, "
+                  f"khởi động lại={after[c][2] != before[c][2]}", flush=True)
         compose("up", "-d", "--wait", "--no-recreate", "--scale", f"worker={WORKERS}")
         slow = wait_judged(cookie, slow_id, "bài chậm chấm xong sau khi worker chết")
         check("bài giao lại vẫn ra AC", slow["verdict"] == "AC", slow["verdict"])
