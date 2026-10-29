@@ -314,6 +314,8 @@ def main():
         for c in killed:  # chỉ quan sát: restart policy của compose (`unless-stopped`) có khởi động lại container bị kill không
             print(f"INFO container {c[:12]} sau docker kill: đang chạy={after[c][0]}, RestartCount={after[c][1]}, "
                   f"khởi động lại={after[c][2] != before[c][2]}", flush=True)
+        # Docker cố ý không áp restart policy cho container bị dừng bằng tay (kill/stop), nên phải dựng lại đủ worker ở
+        # đây; worker crash thật (không phải do người dùng dừng) vẫn được restart policy dựng lại.
         compose("up", "-d", "--wait", "--no-recreate", "--scale", f"worker={WORKERS}")
         slow = wait_judged(cookie, slow_id, "bài chậm chấm xong sau khi worker chết")
         check("bài giao lại vẫn ra AC", slow["verdict"] == "AC", slow["verdict"])
