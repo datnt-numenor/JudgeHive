@@ -1,7 +1,8 @@
 """Vòng nhận frame của client (README mục 4.3), tách khỏi `endpoint.py` (cần FastAPI) để test được bằng websocket giả.
 
 Quy tắc: chỉ `PONG` hợp lệ có nghĩa; mọi frame (kể cả frame bị bỏ qua) làm mới mốc im lặng; frame nhị phân đóng 1003; frame văn bản
-dài quá `max_bytes` đóng 1009; quá `max_frames` frame trong `window_s` giây đóng 1008 (client chỉ cần gửi một `PONG` mỗi 30 giây) (phòng thủ thứ hai: uvicorn đã chặn bằng `--ws-max-size`); message khác bị bỏ qua và ghi log vài lần đầu."""
+dài quá `max_bytes` đóng 1009 (phòng thủ thứ hai: uvicorn đã chặn bằng `--ws-max-size`); quá `max_frames` frame trong `window_s` giây
+đóng 1008 (client chỉ cần gửi một `PONG` mỗi 30 giây); message khác bị bỏ qua và ghi log vài lần đầu."""
 
 import asyncio
 import collections

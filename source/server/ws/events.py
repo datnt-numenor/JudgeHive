@@ -84,7 +84,9 @@ class StatusConsumer:
 
     def _is_stale_queued(self, event):
         """README 4.8: bài giao lại có thể thấy `judging` trước `queued`. Nếu `queued` mang `attempt_id` không lớn hơn lượt đã
-        `judging` thì bỏ. `queued` không có `attempt_id` (hiện tại cả REST lẫn giao lại đều vậy) thì giữ nguyên."""
+        `judging` thì bỏ. `queued` không có `attempt_id` (hiện tại cả REST lẫn giao lại đều vậy) thì giữ nguyên, nên hiện nhánh này chưa có tác dụng.
+        CHƯA CHỐT: khi dispatcher gắn `attempt_id` vào `queued`, đó là id của lượt đã chết hay của lượt kế tiếp? Nếu là lượt
+        đã chết (từng phát `judging`) thì quy tắc này bỏ nhầm `queued` hợp lệ; phải chốt trước khi dispatcher phát field này."""
         if event.event == "judging":
             attempt = event.info.get("attempt_id")
             if isinstance(attempt, int) and not isinstance(attempt, bool):
