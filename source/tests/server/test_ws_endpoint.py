@@ -293,6 +293,20 @@ def test_the_server_wide_cap_closes_with_1013(make_web):  # [khóa mã đóng]
         c.close()
 
 
+def test_websockets_count_against_limit_concurrency_so_http_gets_503(make_web):  # [khóa hành vi hạ tầng]
+    web = make_web(ws_max_total=50)
+    web.limit_concurrency = 5
+    populate(web.db)
+    web.start()
+    cookie = web.login("alice")
+    clients = [open_ws(web, cookie) for _ in range(5)]
+    for c in clients:
+        assert c.recv_json()["type"] == "SCOREBOARD"
+    assert web.request("GET", "/api/health").status == 503
+    for c in clients:
+        c.close()
+
+
 # ---- frame của client ---------------------------------------------------------------------------------------------
 
 def test_a_binary_frame_is_closed_with_1003(wsweb):  # [khóa]
@@ -403,4 +417,4 @@ def test_server_shutdown_closes_connected_clients_with_a_close_frame(make_web):
     stopper.start()
     kind, value = client.recv(timeout=10)
     stopper.join(15)
-    assert kind == "close" and value in (1001, 1012), (kind, value)  # mã thật do uvicorn quyết định; xem README 4.5
+    assert kind == "close" and value == 1012, (kind, value)  # uvicorn đóng 1012 (service restart) khi tắt; README 4.5

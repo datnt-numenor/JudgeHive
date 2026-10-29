@@ -21,9 +21,10 @@ class WsError(Exception):
 
 
 class HandshakeRejected(WsError):
-    def __init__(self, status):
-        super().__init__(f"handshake bị từ chối: {status}")
+    def __init__(self, status, status_line=""):
+        super().__init__(f"handshake bị từ chối: {status_line or status}")
         self.status = status
+        self.status_line = status_line
 
 
 def accept_key(key):
@@ -75,7 +76,7 @@ class WsClient:
         self.headers = {k.strip().lower(): v.strip() for k, _, v in (l.partition(":") for l in text.split("\r\n")[1:])}
         if self.status != 101:
             self.sock.close()
-            raise HandshakeRejected(self.status_line)
+            raise HandshakeRejected(self.status, self.status_line)
         if self.headers.get("sec-websocket-accept") != accept_key(key):
             self.sock.close()
             raise WsError("Sec-WebSocket-Accept sai")

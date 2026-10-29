@@ -99,6 +99,7 @@ def test_a_stored_submission_is_judged_after_the_server_restarts(web):
 
 
 def test_the_queued_status_hook_fires_after_the_commit(web, caplog):
+    web.app.state.hooks.bind_status(None)  # chưa gắn consumer WebSocket thì `LoopHooks` ghi log; ở đây kiểm đường đó
     cookie = web.login("alice")
     with caplog.at_level(logging.INFO):
         sid = web.submit(cookie, uuid_token(1)).json()["submission_id"]

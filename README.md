@@ -781,7 +781,7 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 - `POST /api/login` khi request đã mang một phiên còn hiệu lực (mục 3.2: phiên cũ bị hủy và cấp phiên mới): mọi WebSocket thuộc phiên cũ bị đóng với mã 4401, giống logout.
 - Phiên hết hạn khi WebSocket đang mở: server kiểm tra lại phiên của mọi kết nối định kỳ 30 giây một lần, và đóng 4401 kết nối không còn phiên hợp lệ; nên có thể trễ tối đa khoảng 30 giây sau khi hết hạn.
 - Khi admin đặt lại mật khẩu của một người (PR sau), mọi WebSocket của người đó bị đóng 4401.
-- Server tắt: đóng mọi kết nối với mã 1001.
+- Server tắt: đóng mọi kết nối với mã 1012 (uvicorn đóng bằng mã này khi nhận SIGTERM; đã kiểm với uvicorn 0.54.0 và `websockets` 17.3).
 
 #### 4.6. Bảo đảm chuyển phát
 
@@ -847,7 +847,7 @@ WebSocket không có thân lỗi JSON; lý do đóng nằm ở mã đóng (close
 | 1013 | server | Vượt 400 kết nối toàn server (mục 4.1); kết nối nhận quá chậm (mục 4.4) | Nối lại có backoff |
 | 1009 | server | Client gửi frame lớn hơn 4 096 byte | Nối lại có backoff |
 | 1003 | server | Client gửi frame nhị phân | Nối lại có backoff |
-| 1001 | server | Server tắt | Nối lại có backoff |
+| 1012 | server | Server tắt | Nối lại có backoff |
 | 4000 | client | Client đóng kết nối cũ để thay bằng kết nối mới (mục 4.7); server không bao giờ gửi mã này | |
 | 1006 | không ai gửi | Kết nối đóng bất thường (không có frame đóng): mất mạng, handshake bị từ chối, server không phản hồi | Nối lại có backoff |
 

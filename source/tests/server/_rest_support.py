@@ -70,6 +70,7 @@ class Web:
         self.db = Database(self.cfg.db_path)
         self.server = self.thread = self.app = None
         self.port = None
+        self.limit_concurrency = None  # đặt trước start() để thử 503 của uvicorn
 
     def start(self):
         self.db.migrate()
@@ -80,8 +81,8 @@ class Web:
         # Cờ WebSocket giống `CMD` của server/Dockerfile: frame tối đa 4096 byte, không nén, không control-ping của uvicorn
         # (nguồn phát hiện kết nối chết duy nhất là PING/PONG của ứng dụng, README 4.4).
         config = uvicorn.Config(self.app, host="127.0.0.1", port=0, log_level="warning", lifespan="on",
-                                access_log=False, log_config=None, ws_max_size=4096, ws_per_message_deflate=False,
-                                ws_ping_interval=None, ws_ping_timeout=None)
+                                access_log=False, log_config=None, ws="websockets-sansio", ws_max_size=4096, ws_per_message_deflate=False,
+                                ws_ping_interval=0, limit_concurrency=self.limit_concurrency)
         self.server = uvicorn.Server(config)
         self.thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()

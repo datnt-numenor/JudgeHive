@@ -63,6 +63,8 @@ EXPOSE 8000 9000
 # (`ws_max_total` = 400) cộng khoảng 200 cho HTTP. Cổng worker (TCP, 9000) là socket riêng, không tính vào số này.
 # --ws-max-size 4096: uvicorn đóng 1009 với frame WebSocket lớn hơn 4096 byte trước khi ứng dụng nhận (README 4.3).
 # --ws-per-message-deflate false: không nén WebSocket (mỗi kết nối nén giữ một ngữ cảnh zlib hàng trăm KB).
-# Còn thiếu (chờ thử với uvicorn 0.54.0 và phiên bản `websockets` ghim): `--ws`, cách tắt control-ping của uvicorn.
+# --ws websockets-sansio --ws-ping-interval 0: với uvicorn 0.54.0 + websockets 17.3 (đã thử), chỉ bản sansio tắt được
+# control-ping khi interval = 0; bản `websockets` vẫn gửi ping. Nhờ vậy nguồn phát hiện kết nối chết duy nhất là PING/PONG
+# của ứng dụng (README 4.4), không có mã đóng ngoài bảng 5.3.
 ENTRYPOINT ["tini", "--"]
-CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${JH_HTTP_PORT:-8000} --no-server-header --timeout-keep-alive 5 --limit-concurrency 600 --ws-max-size 4096 --ws-per-message-deflate false"]
+CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${JH_HTTP_PORT:-8000} --no-server-header --timeout-keep-alive 5 --limit-concurrency 600 --ws-max-size 4096 --ws-per-message-deflate false --ws websockets-sansio --ws-ping-interval 0"]
