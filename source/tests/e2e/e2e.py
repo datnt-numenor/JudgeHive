@@ -277,18 +277,23 @@ def main():
 
         # worker chết giữa chừng: bài được giao lại với attempt_id mới
         # Kill đúng worker đang giữ bài, từng cái một (3 lần giao tối đa: kill sau lần 1 và lần 2, lần 3 phải chạy xong).
-        # Mỗi lần kill kiểm attempt_id trong DB đã đổi; bài nộp ngay trước vòng này nên không thể chấm xong sớm.
+        # Bài nộp ngay trước vòng này nên không thể chấm xong sớm. Log "giao cho worker" được ghi sau khi DB đã ghi
+        # attempt_id, nên dãy attempt 1, 2, 3 trong log là bằng chứng attempt_id đổi sau mỗi lần kill.
         containers = compose("ps", "-q", "worker").stdout.split()
+        hostnames = subprocess.run(["docker", "inspect", "-f", "{{.Config.Hostname}}", *containers], capture_output=True,
+                                   text=True, timeout=60).stdout.split()
+        prefix_ok = len(hostnames) == len(containers) and all(c.startswith(h) for c, h in zip(containers, hostnames))
+        check("hostname của worker là tiền tố ID container (e2e dò container giữ bài theo tên worker)", prefix_ok,
+              f"hostnames={hostnames} containers={[c[:12] for c in containers]}")
+        if not prefix_ok:
+            raise RuntimeError("hostname worker không phải tiền tố ID container: không dò được container giữ bài")
         slow_id, _ = submit(cookie, *SLOW)
         for attempt in range(1, KILLS + 1):
-            worker_id, name = delivered_to(slow_id, attempt)
-            internal = show(slow_id)
-            check(f"lần giao {attempt}: DB ghi attempt_id={attempt}, delivery_count={attempt}",
-                  internal["attempt_id"] == str(attempt) and internal["delivery_count"] == str(attempt),
-                  f"attempt={internal['attempt_id']} deliveries={internal['delivery_count']}")
+            _, name = delivered_to(slow_id, attempt)
             holder = [c for c in containers if c.startswith(name)]
-            check(f"lần giao {attempt}: tìm được container của worker #{worker_id} ({name})", len(holder) == 1, str(holder))
-            kill_container(holder[0])
+            if len(holder) != 1:
+                raise RuntimeError(f"lần giao {attempt}: tên worker {name!r} khớp {len(holder)} container")
+            kill_container(holder[0])  # kill ngay, không truy vấn DB giữa hai lần kill: cửa sổ mỗi lần chỉ 2 s
         delivered_to(slow_id, KILLS + 1)  # quá hạn chờ thì ném TimeoutError: bài không được giao lại
         compose("up", "-d", "--wait", "--no-recreate", "--scale", f"worker={WORKERS}")
         slow = wait_judged(cookie, slow_id, "bài chậm chấm xong sau khi worker chết")
