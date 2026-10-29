@@ -30,6 +30,7 @@ nằm trong `rest/`, bảng xếp hạng (`GET /api/scoreboard`) trong `scoreboa
 | `rest/` | REST: `errors.py` (định dạng lỗi), `body.py` (Content-Type, giới hạn body, JSON), `sessions.py` (cookie và bảng `sessions`), `limits.py` (giới hạn đăng nhập), `views.py` (đối tượng bài nộp, whitelist theo verdict), `auth_routes.py`, `problem_routes.py`, `submission_routes.py` |
 | `scoreboard/` | Bảng xếp hạng: `ranking.py` (hàm thuần theo README 3.3), `loader.py` (một câu SELECT), `service.py` (`ScoreboardService`: giữ bản gần nhất, tính lại gộp tối đa một lần mỗi `scoreboard_min_interval_s`, phát bản mới cho subscriber) |
 | `static.py` | Phục vụ giao diện web đã build (xem "Giao diện web" dưới): `/assets` bằng `StaticFiles`, fallback SPA trong bộ xử lý 404 |
+| `ws/` | WebSocket `/ws` (README mục 4): `origin.py` (hàm thuần kiểm Origin), `connection.py` (hàng đợi gửi riêng, writer, timeout), `registry.py` (kết nối đang mở, trần, đóng theo phiên/người), `events.py` (STATUS: dựng message, `StatusConsumer`), `heartbeat.py` (PING, đóng im lặng 4408, kiểm phiên 4401), `endpoint.py` (handler `/ws`), `__init__.py` (`WsHub`) |
 | `hooks.py` | Cầu thread → event loop. `scoreboard_dirty` đánh dấu `ScoreboardService` bằng `call_soon_threadsafe`; `status` (STATUS) còn chỉ ghi log, WebSocket dùng ở PR sau |
 | `timefmt.py` | `iso_ms`: thời điểm ISO 8601 UTC có mili giây, dùng chung cho REST và bảng xếp hạng |
 | `config.py` | Cấu hình từ biến môi trường |
@@ -67,7 +68,11 @@ Cờ uvicorn cố định trong `CMD` của `server/Dockerfile` (không đọc t
 |----|---------|-------|
 | `--no-server-header` | | Không lộ `server: uvicorn` trong response |
 | `--timeout-keep-alive` | `5` | Kết nối HTTP rảnh bị đóng sau 5 giây, kết nối bỏ không không chiếm chỗ lâu |
-| `--limit-concurrency` | `200` | Quá 200 kết nối/tác vụ đồng thời thì uvicorn trả 503 ngay (một process, một event loop). Cổng worker là socket riêng nên không tính. PR WebSocket phải cân lại số này vì mỗi WebSocket là một kết nối |
+| `--limit-concurrency` | `600` | Quá 600 kết nối/tác vụ đồng thời thì uvicorn trả 503 ngay (một process, một event loop). Mỗi WebSocket tính là một kết nối, nên 600 = trần WebSocket của ứng dụng (`ws_max_total` 400) + khoảng 200 cho HTTP; hạ thấp số này dưới `ws_max_total` thì các kết nối WebSocket làm REST nhận 503 (đã thử: 5 WebSocket mở với giới hạn 5 thì một request HTTP nhận 503; handshake WebSocket thứ 6 vẫn nối được, nên trần WebSocket do ứng dụng giữ bằng 1013). Cổng worker là socket riêng nên không tính |
+| `--ws-max-size` | `4096` | Frame WebSocket lớn hơn 4096 byte bị uvicorn đóng 1009 trước khi tới ứng dụng (README 4.3); ứng dụng còn kiểm lại lần nữa |
+| `--ws-per-message-deflate` | `false` | Không nén: mỗi kết nối nén giữ một ngữ cảnh zlib hàng trăm KB, 400 kết nối có thể ăn một phần lớn `mem_limit` |
+| `--ws` | `websockets-sansio` | Đã thử với uvicorn 0.54.0 + `websockets` 17.3: chỉ bản sansio tắt được control-ping của uvicorn bằng `--ws-ping-interval 0`; bản `websockets` vẫn gửi ping dù interval 0 |
+| `--ws-ping-interval` | `0` | Tắt control-ping của uvicorn (PLAN D14): nguồn phát hiện kết nối chết duy nhất là `PING`/`PONG` của ứng dụng, nên không có kết nối bị uvicorn đóng bằng mã ngoài bảng 5.3 |
 | `--workers` | không dùng | Đúng một process |
 
 Chưa có timeout đọc body ở tầng ứng dụng: client chậm chiếm một kết nối (không chiếm thread vì phần đọc body là `async`) tới khi gửi xong, tối đa 512 KB; trần đồng thời ở trên là lớp chặn kết nối treo hàng loạt.
@@ -122,6 +127,24 @@ Hết 5 giây `busy_timeout` thì endpoint trả 500; client gửi lại cùng `
 `ScoreboardService` giữ mọi trạng thái (bản gần nhất, phiên bản, cờ cần tính lại, danh sách subscriber) chỉ trên event loop. Truy vấn SQLite chạy trong một thread riêng của dịch vụ (`scoreboard-db`, một thread duy nhất, nên không có hai lần tính song song), vẫn qua `Database.conn()` nên cùng pragma với mọi chỗ khác. Thread khác (dispatcher, cổng worker) chỉ gọi `LoopHooks.scoreboard_dirty`, hàm này làm `loop.call_soon_threadsafe(service.mark_dirty)` rồi trả về và không bao giờ ném. Số phiên bản tăng trên event loop ngay trước khi giao việc cho thread, nên bản mang phiên bản v phản ánh mọi commit đã đánh dấu trước đó; bản đầu (phiên bản 1) tính xong trước khi mở cổng worker, lỗi thì server không khởi động. `GET /api/scoreboard` chỉ đọc bản đã tính, không bao giờ tự tính lại.
 
 Điểm cắm cho PR WebSocket (đều gọi trên event loop): `service.latest()` (bản hiện có, gửi ngay khi một kết nối nối thành công), `service.subscribe(callback)` (`callback(snapshot)` được gọi theo đúng thứ tự phiên bản và không bao giờ đồng thời; phải trả về nhanh; trả hàm hủy đăng ký) và `service.mark_dirty()`. **Mọi chỗ làm đổi dữ liệu mà bảng phụ thuộc ngoài việc ghi một kết quả chấm (ẩn/hiện đề, đổi role của người dùng) phải gọi `mark_dirty()`** bằng `loop.call_soon_threadsafe` nếu đứng ngoài event loop; hiện chưa có endpoint nào như vậy.
+
+### WebSocket và event loop
+
+`WsHub` giữ mọi trạng thái WebSocket (registry, hàng đợi, task) chỉ trên event loop. Thread khác chỉ đi qua `call_soon_threadsafe`:
+`LoopHooks.status` (thread dispatcher, cổng worker, threadpool của REST) đẩy `Event` vào `StatusConsumer`; logout và đăng nhập thay
+phiên (threadpool của REST) gọi `WsHub.close_session_threadsafe`. Mọi truy vấn SQLite của WebSocket (tra phiên lúc handshake, ảnh chụp
+bài nộp cho `STATUS judged`, kiểm lại phiên mỗi 30 giây) chạy trong một thread riêng `ws-db`, vẫn qua `Database.conn()`; event loop
+không bao giờ gọi SQLite. Không dùng `run_coroutine_threadsafe`: không có coroutine nào phải chạy từ thread khác, chỉ có callback ngắn.
+
+- Mỗi kết nối có hàng đợi gửi riêng (`ws_queue_size`, mặc định 32) và writer task; mỗi lần gửi có hạn `ws_send_timeout_s` (5 giây). Hàng
+  đợi đầy hoặc gửi quá hạn thì đóng 1013 và gỡ; một kết nối chậm không làm chậm kết nối khác. `SCOREBOARD` chỉ giữ bản mới nhất chưa gửi.
+- `StatusConsumer` xử lý sự kiện tuần tự nên thứ tự theo từng bài nộp được giữ; sự kiện của người không có kết nối nào bị bỏ qua (không
+  truy vấn DB). Hàng đợi sự kiện đầy (`ws_event_queue_size`) thì bỏ sự kiện và ghi log. `REST` báo `queued` TRƯỚC khi `enqueue`, để
+  `judging` (từ thread dispatcher) không bao giờ tới trước `queued`.
+- Origin: `JH_ALLOWED_ORIGINS` (danh sách origin đầy đủ, phân tách bằng dấu phẩy) cho trường hợp khác host; mặc định chỉ cùng host với `Host`.
+- Hạn chế: một truy vấn `done` chậm làm trễ `STATUS` của mọi người (không mất); `STATUS` không có số thứ tự và không phát lại (client đồng bộ
+  lại bằng REST sau khi nối lại); sau khi một người logout, WebSocket của phiên đó đóng ngay, còn phiên hết hạn thì đóng trong vòng một
+  nhịp 30 giây.
 
 ### Số đo chỉ mục `idx_submissions_board` (migration 3)
 

@@ -767,10 +767,11 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 - Chỉ `{"type": "PONG", "seq": 7}`, trong đó `seq` **phải lặp lại** đúng `seq` của `PING` vừa nhận (số nguyên). Server không đối chiếu giá trị `seq` với `PING` đã gửi, nhưng `PONG` thiếu `seq` hoặc `seq` không phải số nguyên bị coi là message sai và bỏ qua (xem dòng dưới). Server coi mọi frame JSON nhận được, kể cả frame bị bỏ qua, là bằng chứng kết nối còn sống (mốc 60 giây ở mục 4.4).
 - Message có `type` khác `PONG`, `PONG` thiếu hoặc sai kiểu `seq`, hoặc frame không phải object JSON: bị bỏ qua (server ghi log), kết nối giữ nguyên.
 - Frame lớn hơn 4 096 byte: server đóng với mã 1009. Frame nhị phân: đóng với mã 1003.
+- Giới hạn tốc độ: client gửi quá 20 frame trong 10 giây (tính mọi frame, kể cả frame bị bỏ qua) thì server đóng với mã 1008. Client đúng chỉ gửi một `PONG` mỗi 30 giây nên không bao giờ chạm giới hạn này; nó chặn client lỗi hoặc cố ý gửi dồn.
 
 #### 4.4. Giữ kết nối và gửi chậm
 
-- Server gửi `PING` mỗi 30 giây và cứ 30 giây kiểm tra các kết nối. Kết nối không nhận được gì từ client quá 60 giây thì bị đóng và gỡ, nên một kết nối chết thường bị đóng sau khoảng 60 đến 90 giây.
+- Server gửi `PING` mỗi 30 giây và cứ 30 giây kiểm tra các kết nối. Kết nối không nhận được gì từ client quá 60 giây thì bị đóng với mã 4408 và gỡ, nên một kết nối chết thường bị đóng sau khoảng 60 đến 90 giây.
 - Client coi kết nối đã chết khi quá 60 giây không nhận được message nào (mọi `type` đều tính), rồi tự đóng và nối lại.
 - Mỗi kết nối có hàng đợi gửi riêng, tối đa 32 message, và mỗi lần gửi có hạn 5 giây. Kết nối nhận chậm (hàng đợi đầy, hoặc một lần gửi không xong trong 5 giây) thì bị đóng với mã 1013 và gỡ; một kết nối chậm không làm chậm các kết nối khác.
 - `SCOREBOARD` chưa gửi được mà đã có bản mới hơn thì bản cũ bị bỏ; client luôn nhận bản mới nhất, không nhất thiết nhận từng bản trung gian.
@@ -778,19 +779,20 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 #### 4.5. Đóng kết nối do phiên
 
 - `POST /api/logout`: mọi WebSocket thuộc phiên bị hủy bị đóng với mã 4401 ngay sau khi logout trả lời. WebSocket thuộc các phiên khác của cùng người giữ nguyên.
+- `POST /api/login` khi request đã mang một phiên còn hiệu lực (mục 3.2: phiên cũ bị hủy và cấp phiên mới): mọi WebSocket thuộc phiên cũ bị đóng với mã 4401, giống logout.
 - Phiên hết hạn khi WebSocket đang mở: server kiểm tra lại phiên của mọi kết nối định kỳ 30 giây một lần, và đóng 4401 kết nối không còn phiên hợp lệ; nên có thể trễ tối đa khoảng 30 giây sau khi hết hạn.
 - Khi admin đặt lại mật khẩu của một người (PR sau), mọi WebSocket của người đó bị đóng 4401.
-- Server tắt: đóng mọi kết nối với mã 1001.
+- Server tắt: đóng mọi kết nối với mã 1012 (uvicorn đóng bằng mã này khi nhận SIGTERM; đã kiểm với uvicorn 0.54.0 và `websockets` 17.3).
 
 #### 4.6. Bảo đảm chuyển phát
 
-- Các message tới một kết nối theo đúng thứ tự phát sinh. Không có phát lại: message phát khi kết nối chưa có hoặc đã mất thì bị lỡ (tối đa một lần, cố gắng hết sức).
+- Các message `STATUS` và `PING` tới một kết nối theo đúng thứ tự phát sinh; `SCOREBOARD` chưa gửi luôn được gửi sau các message đang chờ (nên có thể tới sau một `STATUS` phát sinh muộn hơn). Không có phát lại: message phát khi kết nối chưa có hoặc đã mất thì bị lỡ (tối đa một lần, cố gắng hết sức).
 - `STATUS` và `SCOREBOARD` là gợi ý để cập nhật giao diện ngay; nguồn sự thật là REST (`GET /api/submissions`, `GET /api/submissions/{id}`, `GET /api/scoreboard`).
 
 #### 4.7. Nối lại (quy tắc cho client)
 
 1. Mã 4401: ngừng nối lại, về trang đăng nhập. Mã 4429 (quá 10 kết nối của cùng một người): ngừng nối lại và không tự thử lại, chuyển sang lấy dữ liệu bằng REST (gọi lại định kỳ `GET /api/submissions/{id}` cho bài đang chờ như mục 3.3, và `GET /api/scoreboard` cho bảng xếp hạng) và báo cho người dùng biết đang có quá nhiều tab mở; chỉ thử WebSocket lại khi người dùng tải lại trang.
-2. Mọi trường hợp khác, gồm 1013 (mất mạng, mã khác 4401 và 4429, 1006, quá 60 giây không nhận gì): nối lại sau 1, 2, 4, 8 rồi 10 giây (tối đa 10 giây), cộng một khoảng ngẫu nhiên (jitter). Nối thành công thì khoảng chờ đặt lại về 1 giây.
+2. Mọi trường hợp khác, gồm 1013, 4408 và 1008 (mất mạng, mã khác 4401 và 4429, 1006, quá 60 giây không nhận gì): nối lại sau 1, 2, 4, 8 rồi 10 giây (tối đa 10 giây), cộng một khoảng ngẫu nhiên (jitter). Nối thành công thì khoảng chờ đặt lại về 1 giây.
 3. Sau khi nối lại, client gọi `GET /api/submissions` để lấy kết quả bị lỡ trong lúc mất kết nối. Bảng xếp hạng không cần gọi riêng: server gửi `SCOREBOARD` ngay khi nối.
 4. Client giữ bản `SCOREBOARD` có `version` lớn nhất nhận được **kể từ lần nối WebSocket gần nhất**, từ cả WebSocket và `GET /api/scoreboard`. Mỗi lần nối lại phải bỏ mốc `version` đang giữ, vì `version` bắt đầu lại khi server khởi động lại.
 5. Khi cần đóng một kết nối cũ để thay bằng kết nối mới, client dùng mã 4000 và gỡ các handler của kết nối cũ trước khi đóng, để sự kiện đóng đến muộn không kích hoạt nối lại lần thứ hai. Server không bao giờ gửi mã 4000.
@@ -801,6 +803,8 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 - Header `Origin` chỉ do trình duyệt bảo đảm. Client không phải trình duyệt có thể giả `Origin`, nhưng vẫn cần cookie phiên hợp lệ, nên không có quyền hơn chính người sở hữu phiên.
 - `progress.tests_total` cho biết số test của đề, gồm cả test ẩn, nhưng chỉ người nộp bài thấy và chỉ cho bài của chính họ. Cùng loại với kênh rò hẹp đã ghi ở mục 3.4.
 - Không phát lại và không có số thứ tự trên `STATUS`; client dựa vào REST để đồng bộ lại sau khi mất kết nối.
+- Khi một bài được giao lại vì worker mất kết nối (mục 2.6) và còn worker rảnh, client có thể thấy `STATUS` `judging` trước `queued` trong chốc lát; message kế tiếp (`progress` hoặc `judged`) sửa lại, và REST luôn cho trạng thái đúng.
+- Mọi WebSocket tính vào giới hạn số kết nối đồng thời của server (`--limit-concurrency`, xem `server/README.md`): khi gần hết hạn mức, request HTTP mới và handshake `/ws` mới có thể nhận 503 (mục 3.5).
 - Đóng một kết nối đã chết có thể làm sự kiện đóng đến chậm ở phía client; vì vậy client tự phát hiện bằng mốc 60 giây (mục 4.4) chứ không chờ sự kiện đóng.
 - Một proxy hoặc giới hạn kết nối của hạ tầng có thể từ chối handshake (ví dụ 503 khi quá nhiều kết nối đồng thời, mục 3.5); client chỉ thấy 1006 và xử lý như mất mạng.
 
@@ -839,11 +843,13 @@ WebSocket không có thân lỗi JSON; lý do đóng nằm ở mã đóng (close
 |----|--------|---------|--------|
 | 403 (HTTP, không phải close code) | server | Handshake: thiếu `Origin` hoặc `Origin` không được phép (mục 4.1). Client chỉ thấy 1006 | Nối lại có backoff |
 | 4401 | server | Thiếu phiên, phiên sai hoặc hết hạn; logout; admin đặt lại mật khẩu (mục 4.1, 4.5) | Ngừng nối lại, về trang đăng nhập |
+| 4408 | server | Không nhận được gì từ client quá 60 giây (mục 4.4) | Nối lại có backoff |
 | 4429 | server | Người dùng đã có 10 kết nối WebSocket (mục 4.1) | Ngừng nối lại, chuyển sang lấy dữ liệu bằng REST, báo người dùng (mục 4.7) |
 | 1013 | server | Vượt 400 kết nối toàn server (mục 4.1); kết nối nhận quá chậm (mục 4.4) | Nối lại có backoff |
 | 1009 | server | Client gửi frame lớn hơn 4 096 byte | Nối lại có backoff |
+| 1008 | server | Client gửi quá 20 frame trong 10 giây (mục 4.3) | Nối lại có backoff |
 | 1003 | server | Client gửi frame nhị phân | Nối lại có backoff |
-| 1001 | server | Server tắt | Nối lại có backoff |
+| 1012 | server | Server tắt | Nối lại có backoff |
 | 4000 | client | Client đóng kết nối cũ để thay bằng kết nối mới (mục 4.7); server không bao giờ gửi mã này | |
 | 1006 | không ai gửi | Kết nối đóng bất thường (không có frame đóng): mất mạng, handshake bị từ chối, server không phản hồi | Nối lại có backoff |
 

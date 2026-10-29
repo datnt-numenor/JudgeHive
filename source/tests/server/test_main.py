@@ -62,7 +62,7 @@ def test_startup_steps_run_in_the_documented_order(cfg):
             return list(app.state.startup_steps)
 
     assert run(scenario()) == ["loop", "migrate", "seed", "reload_queue", "scoreboard", "worker_port",
-                             "dispatcher", "rest"]
+                             "dispatcher", "rest", "ws"]
     assert app.state.startup_steps[-1] == "stopped"
 
 
