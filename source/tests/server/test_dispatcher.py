@@ -121,6 +121,10 @@ def test_priority_is_redelivery_then_new_then_rejudge(stack):
     s_new = stack.submit()
     first.close()  # s1 giao lại, mức cao nhất
     assert wait_until(lambda: not stack.server.snapshot())
+    # Worker rời không có nghĩa là s1 đã nằm trong hàng đợi (xếp hàng giao lại là bất đồng bộ, thread dispatcher-lost);
+    # hook `queued` được phát sau khi s1 vào hàng đợi, nên chờ nó trước khi có worker mới, không thì s_new có thể được
+    # giao trước. Cùng cách với bản đã khóa trong tests/invariants.
+    assert wait_until(lambda: "queued" in stack.hooks.names(s1))
     second = stack.worker("b")
     order = []
     for _ in range(3):
@@ -155,6 +159,20 @@ def test_job_is_redelivered_with_a_new_attempt_when_the_worker_dies(stack):
     assert "queued" in stack.hooks.names(sid)  # D1: STATUS queued khi giao lại
     second.finish_ac(job2)
     assert stack.wait_row(sid, lambda r: r["state"] == "done")["verdict"] == "AC"
+
+
+def test_each_delivery_logs_submission_attempt_and_worker(stack, caplog):
+    caplog.set_level("INFO", logger="judgehive.dispatcher")
+    first = stack.worker("a")
+    sid = stack.submit()
+    first.take_job()
+    second = stack.worker("b")
+    first.close()
+    second.take_job()
+    lines = [r.getMessage() for r in caplog.records if "giao cho worker" in r.getMessage()]
+    assert len(lines) == 2
+    assert lines[0].startswith(f"submission {sid} attempt 1 giao cho worker #") and lines[0].endswith("('a')")
+    assert lines[1].startswith(f"submission {sid} attempt 2 giao cho worker #") and lines[1].endswith("('b')")
 
 
 def test_late_result_of_a_lost_attempt_is_not_applied(stack):

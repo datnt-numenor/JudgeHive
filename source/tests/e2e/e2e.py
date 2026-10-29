@@ -22,6 +22,7 @@ SOURCE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 PROJECT = "judgehive-e2e"
 PASSWORD = "e2e-password"
 WORKERS = 3
+KILLS = 2  # số lần kill worker giữ bài: bằng số lần giao tối đa (3, D1) trừ một, để lần giao cuối còn chấm xong
 HTTP_PORT = 8000
 
 SOLUTIONS = {
@@ -45,7 +46,8 @@ PROBE = (
     "    except Exception as e:\n        print(path, type(e).__name__)\n"
     "print('ENV-DONE')\n"
 )
-SLOW = ("python", "import sys, time\ntime.sleep(3)\nprint(sum(map(int, sys.stdin.read().split())))\n")
+# Chạy 4 s (giới hạn 1 s x hệ số Python 5 = 5 s): đủ rộng để kill worker giữ bài giữa chừng, đủ hẹp để không bị TLE.
+SLOW = ("python", "import sys, time\ntime.sleep(4)\nprint(sum(map(int, sys.stdin.read().split())))\n")
 
 failures = []
 rest_output = []  # mọi body REST đã nhận, để kiểm tra không rò test ẩn
@@ -120,18 +122,43 @@ def detail(cookie, submission_id):
     return body if status == 200 else {"state": f"http-{status}"}
 
 
-def wait_for(predicate, timeout, what):
+def wait_for(predicate, timeout, what, interval=1):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         value = predicate()
         if value:
             return value
-        time.sleep(1)
+        time.sleep(interval)
     raise TimeoutError(f"quá {timeout} giây khi chờ: {what}")
 
 
 def wait_judged(cookie, submission_id, what, timeout=180):
     return wait_for(lambda: (d := detail(cookie, submission_id))["state"] == "judged" and d, timeout, what)
+
+
+def delivered_to(submission_id, attempt, timeout=30):
+    """(worker_id, tên worker) trong dòng log 'submission S attempt A giao cho worker #W (tên)' của server. Tên worker
+    là hostname, tức ID ngắn của container, nên dò được container nào đang giữ bài."""
+    pattern = re.compile(rf"submission {submission_id} attempt {attempt} giao cho worker #(\d+) \('([^']*)'\)")
+
+    def find():
+        m = pattern.search(compose("logs", "--no-color", "--no-log-prefix", "server", check=False).stdout)
+        return m and (int(m.group(1)), m.group(2))
+    return wait_for(find, timeout, f"log giao bài {submission_id} lần {attempt}", interval=0.2)
+
+
+def kill_container(container_id):
+    """Kill đúng một container (`compose kill worker` kill cả ba cùng lúc nên không dùng được)."""
+    proc = subprocess.run(["docker", "kill", container_id], capture_output=True, text=True, timeout=60)
+    if proc.returncode != 0:
+        raise RuntimeError(f"docker kill {container_id} -> {proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+
+
+def container_states(containers):
+    """{ID container: (đang chạy, số lần restart, StartedAt)} qua `docker inspect`."""
+    out = subprocess.run(["docker", "inspect", "-f", "{{.Id}} {{.State.Running}} {{.RestartCount}} {{.State.StartedAt}}",
+                          *containers], capture_output=True, text=True, timeout=60).stdout.splitlines()
+    return {f[0]: (f[1] == "true", int(f[2]), f[3]) for f in (line.split() for line in out) if len(f) == 4}
 
 
 def check(name, ok, detail_text=""):
@@ -220,7 +247,6 @@ def main():
         tokens = {}
         for name, (lang, code, _) in SOLUTIONS.items():
             ids[name], tokens[name] = submit(cookie, lang, code)
-        slow_id, _ = submit(cookie, *SLOW)
         again_id, _ = submit(cookie, SOLUTIONS["py-ac"][0], "print('khác')\n", token=tokens["py-ac"])
         check("nộp trùng client_token trả bài gốc", again_id == ids["py-ac"])
         check("nộp trùng trả 200", http_call("POST", "/api/submissions", {"problem_id": "aplusb", "language": "python",
@@ -257,17 +283,46 @@ def main():
         version_before = scoreboard(cookie)["version"]
 
         # worker chết giữa chừng: bài được giao lại với attempt_id mới
-        wait_for(lambda: detail(cookie, slow_id)["state"] in ("judging", "judged"), 120, "bài chậm được giao")
-        if detail(cookie, slow_id)["state"] == "judging":
-            compose("kill", "worker")
-            compose("up", "-d", "--wait", "--no-recreate", "--scale", f"worker={WORKERS}")
-            slow = wait_judged(cookie, slow_id, "bài chậm chấm xong sau khi worker chết")
-            check("bài giao lại vẫn ra AC", slow["verdict"] == "AC", slow["verdict"])
-            internal = show(slow_id)
-            check("bài giao lại có attempt_id mới", int(internal["attempt_id"]) >= 2 and int(internal["delivery_count"]) >= 2,
-                  f"attempt={internal['attempt_id']} deliveries={internal['delivery_count']}")
-        else:
-            check("bài chậm chấm xong trước khi kịp kill worker (bỏ qua kiểm tra giao lại)", True)
+        # Kill đúng worker đang giữ bài, từng cái một (3 lần giao tối đa: kill sau lần 1 và lần 2, lần 3 phải chạy xong).
+        # Bài nộp ngay trước vòng này nên không thể chấm xong sớm. Log "giao cho worker" được ghi sau khi DB đã ghi
+        # attempt_id, nên dãy attempt 1, 2, 3 trong log là bằng chứng attempt_id đổi sau mỗi lần kill.
+        containers = compose("ps", "-q", "worker").stdout.split()
+        hostnames = subprocess.run(["docker", "inspect", "-f", "{{.Config.Hostname}}", *containers], capture_output=True,
+                                   text=True, timeout=60).stdout.split()
+        prefix_ok = len(hostnames) == len(containers) and all(c.startswith(h) for c, h in zip(containers, hostnames))
+        check("hostname của worker là tiền tố ID container (e2e dò container giữ bài theo tên worker)", prefix_ok,
+              f"hostnames={hostnames} containers={[c[:12] for c in containers]}")
+        if not prefix_ok:
+            raise RuntimeError("hostname worker không phải tiền tố ID container: không dò được container giữ bài")
+        before = container_states(containers)
+        killed = set()
+        slow_id, _ = submit(cookie, *SLOW)
+        for attempt in range(1, KILLS + 1):
+            _, name = delivered_to(slow_id, attempt)
+            holder = [c for c in containers if c.startswith(name)]
+            if len(holder) != 1:
+                raise RuntimeError(f"lần giao {attempt}: tên worker {name!r} khớp {len(holder)} container")
+            killed.add(holder[0])
+            kill_container(holder[0])  # kill ngay, không truy vấn DB giữa hai lần kill: cửa sổ mỗi lần chỉ 2 s
+        delivered_to(slow_id, KILLS + 1)  # quá hạn chờ thì ném TimeoutError: bài không được giao lại
+        time.sleep(5)  # chờ restart policy (nếu có) tác động trước khi `compose up` dựng lại đủ số worker
+        after = container_states(containers)
+        untouched = [c for c in containers if c not in killed]
+        check("chỉ kill container đang giữ bài: các worker khác không bị khởi động lại",
+              all(after.get(c, (False,))[0] and after[c][2] == before[c][2] for c in untouched),
+              f"untouched={[c[:12] for c in untouched]} before={before} after={after}")
+        for c in killed:  # chỉ quan sát: restart policy của compose (`unless-stopped`) có khởi động lại container bị kill không
+            print(f"INFO container {c[:12]} sau docker kill: đang chạy={after[c][0]}, RestartCount={after[c][1]}, "
+                  f"khởi động lại={after[c][2] != before[c][2]}", flush=True)
+        # Docker cố ý không áp restart policy cho container bị dừng bằng tay (kill/stop), nên phải dựng lại đủ worker ở
+        # đây; worker crash thật (không phải do người dùng dừng) vẫn được restart policy dựng lại.
+        compose("up", "-d", "--wait", "--no-recreate", "--scale", f"worker={WORKERS}")
+        slow = wait_judged(cookie, slow_id, "bài chậm chấm xong sau khi worker chết")
+        check("bài giao lại vẫn ra AC", slow["verdict"] == "AC", slow["verdict"])
+        internal = show(slow_id)
+        check(f"chấm xong ở attempt_id={KILLS + 1}, delivery_count={KILLS + 1}",
+              internal["attempt_id"] == str(KILLS + 1) and internal["delivery_count"] == str(KILLS + 1),
+              f"attempt={internal['attempt_id']} deliveries={internal['delivery_count']}")
 
         # DB nằm trong volume: restart server không mất verdict lẫn phiên đăng nhập
         restart_server()
