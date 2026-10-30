@@ -133,4 +133,5 @@ export const api = {
     return request("GET", `/api/submissions${qs ? `?${qs}` : ""}`, opts).then((r) => r.data);
   },
   submission: (id, opts) => request("GET", `/api/submissions/${enc(id)}`, opts).then((r) => r.data),
+  scoreboard: (opts) => request("GET", "/api/scoreboard", opts).then((r) => r.data),
 };

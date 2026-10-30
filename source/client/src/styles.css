@@ -119,6 +119,10 @@ td {
   color: var(--muted);
 }
 
+tr.me {
+  font-weight: 700;
+}
+
 .error {
   color: var(--error);
 }

@@ -15,7 +15,8 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": { target: backend },
-      "/ws": { target: backend, ws: true },
+      // README 4.1: `changeOrigin: false` giữ `Host` là địa chỉ của Vite, để khớp `Origin` của trang (server kiểm tra Origin).
+      "/ws": { target: backend, ws: true, changeOrigin: false },
     },
   },
   test: {

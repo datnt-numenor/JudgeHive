@@ -31,14 +31,16 @@ export function AuthProvider({ children }) {
     return () => controller.abort();
   }, []);
 
-  // Mọi 401 UNAUTHENTICATED ở bất kỳ request nào: hết phiên, về trang đăng nhập.
-  useEffect(() => {
-    setUnauthenticatedHandler(() => {
-      setState({ status: "anon", user: null });
-      navigate("/login", { replace: true });
-    });
-    return () => setUnauthenticatedHandler(null);
+  // Hết phiên (401 UNAUTHENTICATED ở bất kỳ request nào, hoặc WebSocket đóng 4401): về trang đăng nhập.
+  const expire = useCallback(() => {
+    setState({ status: "anon", user: null });
+    navigate("/login", { replace: true });
   }, [navigate]);
+
+  useEffect(() => {
+    setUnauthenticatedHandler(expire);
+    return () => setUnauthenticatedHandler(null);
+  }, [expire]);
 
   const login = useCallback(async (username, password) => {
     const user = await api.login(username, password);
@@ -57,6 +59,6 @@ export function AuthProvider({ children }) {
     setState({ status: "anon", user: null });
   }, []);
 
-  const value = useMemo(() => ({ ...state, login, logout }), [state, login, logout]);
+  const value = useMemo(() => ({ ...state, login, logout, expire }), [state, login, logout, expire]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
