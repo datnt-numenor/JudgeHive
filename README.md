@@ -748,7 +748,7 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 |--------|---------|----------|
 | `STATUS` | Trạng thái một bài nộp của chính người nhận thay đổi | Bên dưới |
 | `SCOREBOARD` | Ngay sau khi nối, và mỗi khi bảng xếp hạng được tính lại | Như thân của `GET /api/scoreboard` (mục 3.3), kèm `type` |
-| `PING` | Mỗi 30 giây | `{"type": "PING", "seq": 7}`; `seq` là số nguyên tăng dần trên mỗi kết nối |
+| `PING` | Theo nhịp chung 30 giây của server (mục 4.4) | `{"type": "PING", "seq": 7}`; `seq` là số nguyên tăng dần trên mỗi kết nối |
 
 **`STATUS`** luôn có `submission_id` và `state` (cùng giá trị với REST: `queued`, `judging`, `judged`):
 
@@ -772,7 +772,7 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 
 #### 4.4. Giữ kết nối và gửi chậm
 
-- Server gửi `PING` mỗi 30 giây và cứ 30 giây kiểm tra các kết nối. Kết nối không nhận được gì từ client quá 60 giây thì bị đóng với mã 4408 và gỡ, nên một kết nối chết thường bị đóng sau khoảng 60 đến 90 giây.
+- Server chạy một nhịp chung 30 giây cho mọi kết nối (không hẹn giờ riêng theo từng kết nối): mỗi nhịp gửi `PING` cho các kết nối đang có và kiểm tra chúng. Vì vậy `PING` đầu tiên của một kết nối đến trong 0 đến 30 giây sau khi nối, và khoảng cách giữa hai `PING` liên tiếp tới cùng một kết nối là khoảng 30 giây (không ít hơn). Client không phụ thuộc vào điều này: nó chỉ dùng mốc im lặng 60 giây của chính nó, ở gạch đầu dòng kế tiếp. Kết nối không nhận được gì từ client quá 60 giây thì bị đóng với mã 4408 và gỡ, nên một kết nối chết thường bị đóng sau khoảng 60 đến 90 giây.
 - Client coi kết nối đã chết khi quá 60 giây không nhận được message nào (mọi `type` đều tính), rồi tự đóng và nối lại.
 - Mỗi kết nối có hàng đợi gửi riêng, tối đa 32 message, và mỗi lần gửi có hạn 5 giây. Kết nối nhận chậm (hàng đợi đầy, hoặc một lần gửi không xong trong 5 giây) thì bị đóng với mã 1013 và gỡ; một kết nối chậm không làm chậm các kết nối khác.
 - `SCOREBOARD` chưa gửi được mà đã có bản mới hơn thì bản cũ bị bỏ; client luôn nhận bản mới nhất, không nhất thiết nhận từng bản trung gian.
