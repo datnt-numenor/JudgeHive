@@ -44,7 +44,8 @@ class ResultError(Exception):
 
 @dataclass
 class JobState:
-    """Lần giao đang nằm ở một worker. `last_done` và `deadline` đổi dưới lock của WorkerServer."""
+    """Lần giao đang nằm ở một worker. `last_done`, `deadline` và `confirmed` đổi dưới lock của WorkerServer.
+    `confirmed` (D22): worker đã xác nhận nhận việc (PROGRESS 0 đúng thứ tự, hoặc RESULT khớp JOB); chỉ ở RAM."""
 
     submission_id: int
     attempt_id: int
@@ -55,6 +56,7 @@ class JobState:
     is_rejudge: bool
     last_done: int = -1
     deadline: float | None = None
+    confirmed: bool = False
 
 
 class WorkerConn:
@@ -454,6 +456,8 @@ class WorkerServer:
             matched = job is not None and job.submission_id == sid and job.attempt_id == aid
             in_order = matched and done == job.last_done + 1 and 0 <= done <= total == job.tests_total
             if in_order:
+                if done == 0:
+                    job.confirmed = True
                 job.last_done = done
                 job.deadline = time.monotonic() + job.time_limit_ms / 1000 * self.cfg.max_time_factor \
                     + self.cfg.per_test_overhead_s  # D18: cả cửa sổ chờ RESULT sau PROGRESS cuối
@@ -475,6 +479,8 @@ class WorkerServer:
             job = conn.job
             matched = (job is not None and job.submission_id == body["submission_id"]
                        and job.attempt_id == body["attempt_id"])
+            if matched:
+                job.confirmed = True  # bật trước check_semantics: RESULT khớp mà sai ngữ nghĩa vẫn xác nhận (D22)
         if not matched:
             self.mark_dead(conn, "RESULT không khớp JOB", error=_error(UNEXPECTED_RESULT, "unexpected RESULT"))
             return False

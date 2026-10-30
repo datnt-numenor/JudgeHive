@@ -60,10 +60,11 @@ class Dispatcher:
         self.queue.put((level, submission_id))
 
     def load_pending(self):
-        """Khởi động lại server (D1, D6, D18): bài `judging` được hoàn lại một lần giao (lần giao đó bị cắt bởi server,
-        không phải lỗi của worker), rồi mọi bài `queued` vào hàng đợi ở mức gốc (mới, hoặc rejudge). Trả số bài nạp."""
+        """Khởi động lại server (D1, D6, D18, D22): bài `judging` được hoàn lại một lần giao tổng (lần giao đó bị cắt
+        bởi server, không phải lỗi của worker; `delivery_count` chỉ tăng khi lần mất đã ghi nên không cần hoàn), rồi
+        mọi bài `queued` vào hàng đợi ở mức gốc (mới, hoặc rejudge). Trả số bài nạp."""
         with self.db.write() as c:
-            c.execute("UPDATE submissions SET state = 'queued', delivery_count = MAX(delivery_count - 1, 0) "
+            c.execute("UPDATE submissions SET state = 'queued', total_deliveries = MAX(total_deliveries - 1, 0) "
                       "WHERE state = 'judging'")
             rows = c.execute("SELECT id, is_rejudge FROM submissions WHERE state = 'queued' ORDER BY id").fetchall()
         for row in rows:
@@ -125,7 +126,7 @@ class Dispatcher:
                                   (row["problem_id"],)).fetchall()
                 tests.sort(key=lambda t: 0 if t["is_sample"] else 1)  # test mẫu trước, giữ thứ tự tương đối (D15)
                 attempt = row["attempt_id"] + 1
-                if row["delivery_count"] >= self.cfg.max_deliveries:
+                if self._deliveries_exhausted(row["delivery_count"], row["total_deliveries"]):
                     failed = "đã đủ số lần giao"
                 else:
                     try:
@@ -137,7 +138,7 @@ class Dispatcher:
                     except protocol.EncodeError as e:
                         failed = f"không dựng được dòng JOB: {e}"  # lưới an toàn D3
                 if failed is None:
-                    c.execute("UPDATE submissions SET attempt_id = ?, delivery_count = delivery_count + 1, "
+                    c.execute("UPDATE submissions SET attempt_id = ?, total_deliveries = total_deliveries + 1, "
                               "delivered_test_hash = ?, rejudge_requested = 0, state = 'judging' WHERE id = ?",
                               (attempt, row["p_hash"], sid))
                     job = JobState(sid, attempt, row["user_id"], len(tests), tuple(bool(t["is_sample"]) for t in tests),
@@ -210,17 +211,22 @@ class Dispatcher:
             self.db.close_thread()
 
     def _job_lost(self, job, reason):
-        """Giao lại, hoặc SE nếu đã đủ số lần giao. Idempotent: gọi lại khi bài đã được xử lý thì không làm gì."""
+        """Giao lại, hoặc SE nếu lần mất này làm chạm một trong hai trần (D22). Lần mất đã xác nhận mới tăng
+        `delivery_count`; trần nào được tính chỉ phụ thuộc trạng thái xác nhận, không phụ thuộc `reason`.
+        Idempotent: gọi lại khi bài đã được xử lý thì không làm gì."""
         finished = False
         with self.db.write() as c:
             row = c.execute("SELECT * FROM submissions WHERE id = ?", (job.submission_id,)).fetchone()
             if row is None or row["state"] != "judging" or row["attempt_id"] != job.attempt_id:
                 return
-            if row["delivery_count"] >= self.cfg.max_deliveries:
+            confirmed_losses = row["delivery_count"] + (1 if job.confirmed else 0)
+            if self._deliveries_exhausted(confirmed_losses, row["total_deliveries"]):
+                c.execute("UPDATE submissions SET delivery_count = ? WHERE id = ?", (confirmed_losses, job.submission_id))
                 level = self._finish_submission(c, row, _SE_BODY)
                 finished = True
             else:
-                c.execute("UPDATE submissions SET state = 'queued' WHERE id = ?", (job.submission_id,))
+                c.execute("UPDATE submissions SET state = 'queued', delivery_count = ? WHERE id = ?",
+                          (confirmed_losses, job.submission_id))
                 level = LEVEL_REJUDGE if row["is_rejudge"] else LEVEL_REDELIVERY
         log.info("bài %s (attempt %s) mất worker: %s", job.submission_id, job.attempt_id, reason)
         if finished:
@@ -229,6 +235,9 @@ class Dispatcher:
         self.enqueue(job.submission_id, level)
         if level == LEVEL_REDELIVERY:  # bài rejudge giao lại không đẩy STATUS queued (D6)
             self._hook_status(job.submission_id, row["user_id"], "queued", reason="redelivery")
+
+    def _deliveries_exhausted(self, confirmed_losses, total_deliveries):
+        return confirmed_losses >= self.cfg.max_deliveries or total_deliveries >= self.cfg.max_total_deliveries
 
     def _finish_submission(self, c, row, body):
         """Trong transaction: ghi verdict (SE của lần rejudge thì chỉ đặt `rejudge_failed`, giữ verdict cũ, D6), rồi
@@ -248,9 +257,9 @@ class Dispatcher:
                        None if sample is None else int(sample), body["re_kind"], body["ce_message"],
                        body["sample_stdout"], now, now, row["id"]))
         if row["rejudge_requested"]:
-            # mỗi lần rejudge đếm lại từ đầu số lần giao tối đa (README 2.6, D1, D6)
+            # mỗi lần rejudge đếm lại từ đầu cả hai giới hạn số lần giao (README 2.6, D1, D6, D22)
             c.execute("UPDATE submissions SET state = 'queued', is_rejudge = 1, rejudge_requested = 0, "
-                      "delivery_count = 0 WHERE id = ?", (row["id"],))
+                      "delivery_count = 0, total_deliveries = 0 WHERE id = ?", (row["id"],))
             return LEVEL_REJUDGE
         return None
 

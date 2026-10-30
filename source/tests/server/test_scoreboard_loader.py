@@ -141,11 +141,11 @@ def test_migration_3_on_a_database_at_version_2_with_data(tmp_path):
 
     database = Database(path)
     database.migrate()
-    assert database.conn().execute("PRAGMA user_version").fetchone()[0] == len(db_module.MIGRATIONS) == 3
+    assert database.conn().execute("PRAGMA user_version").fetchone()[0] == len(db_module.MIGRATIONS)
     assert "idx_submissions_board" in index_names(database.conn())
     assert [(r.username, r.solved) for r in compute_board(database)] == [("alice", 1)]
     database.migrate()  # chạy lại vô hại
-    assert database.conn().execute("PRAGMA user_version").fetchone()[0] == 3
+    assert database.conn().execute("PRAGMA user_version").fetchone()[0] == len(db_module.MIGRATIONS)
 
 
 def test_the_partial_index_only_holds_rows_with_a_verdict(db):

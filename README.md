@@ -301,7 +301,7 @@ Mỗi phần tử của `tests`:
 | `tests_done` | integer | có | Số test đã chạy xong |
 | `tests_total` | integer | có | Số phần tử của `tests` |
 
-- Bắt buộc gửi `PROGRESS` với `tests_done = 0` ngay khi biên dịch xong. Ngôn ngữ không biên dịch vẫn gửi ngay khi bắt đầu chấm, không có ngoại lệ. Biên dịch lỗi thì không gửi `tests_done = 0`, gửi thẳng `RESULT` với `CE` trong cửa sổ biên dịch (xem bảng dưới).
+- Bắt buộc gửi `PROGRESS` với `tests_done = 0` ngay khi biên dịch xong. Ngôn ngữ không biên dịch vẫn gửi ngay khi bắt đầu chấm, không có ngoại lệ. Biên dịch lỗi thì không gửi `tests_done = 0`, gửi thẳng `RESULT` với `CE` trong cửa sổ biên dịch (xem bảng dưới). `PROGRESS` với `tests_done = 0` còn là tín hiệu xác nhận lần giao (mục 2.6).
 - Sau đó gửi một `PROGRESS` sau mỗi test, không giới hạn tần suất.
 
 Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhất trong hai mốc: lúc server gửi xong `JOB` (thời gian gửi không tính), hoặc lúc nhận `PROGRESS` khớp `JOB` gần nhất.
@@ -312,7 +312,7 @@ Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhấ
 | Test thứ i | `PROGRESS` với `tests_done = i−1` | `PROGRESS` với `tests_done = i`, hoặc `RESULT` | `time_limit_ms × MAX_TIME_FACTOR + PER_TEST_OVERHEAD` |
 | Chờ `RESULT` | `PROGRESS` với `tests_done = tests_total` | `RESULT` | Như cửa sổ test thứ i: `time_limit_ms × MAX_TIME_FACTOR + PER_TEST_OVERHEAD` |
 
-- Quá hạn, kể cả khi chưa nhận được `PROGRESS` với `tests_done = 0` trong cửa sổ biên dịch, thì server coi worker đã mất, đóng kết nối và giao lại bài (mục 2.6); lần giao đó vẫn tính vào số lần giao tối đa. Trước khi đóng, server cố gửi `ERROR` `DEADLINE_EXCEEDED` (best-effort: gửi không được thì vẫn đóng).
+- Quá hạn, kể cả khi chưa nhận được `PROGRESS` với `tests_done = 0` trong cửa sổ biên dịch, thì server coi worker đã mất, đóng kết nối và giao lại bài (mục 2.6); lần giao đó chưa được xác nhận nên chỉ tính vào giới hạn tổng số lần giao, không tính vào giới hạn lần giao đã xác nhận (mục 2.6). Trước khi đóng, server cố gửi `ERROR` `DEADLINE_EXCEEDED` (best-effort: gửi không được thì vẫn đóng).
 - Chỉ `PROGRESS` khớp `JOB` mà `tests_done` bằng giá trị của `PROGRESS` khớp trước đó cộng 1 (bắt đầu từ 0, và `0 ≤ tests_done ≤ tests_total`) mới làm mới hạn.
 - `PROGRESS` không khớp `JOB` thì bị bỏ, không làm mới hạn. `PROGRESS` khớp `JOB` nhưng `tests_done` sai thứ tự (lặp lại, nhảy cóc, vượt `tests_total`), hoặc `tests_total` khác số phần tử của `tests`, bị coi là sai định dạng: server gửi `ERROR` `BAD_MESSAGE`, bỏ message, không làm mới hạn, giữ kết nối.
 - Giá trị chốt tạm, đo lại trên máy demo (đã đo ở spike): `COMPILE_TIMEOUT_MAX` = 20 giây (xem lại sau khi đo trên máy khác), `SLACK` = 5 giây, `MAX_TIME_FACTOR` = 5, `PER_TEST_OVERHEAD` = 3 giây (trùm thời gian khởi động JVM, đọc và so output). Hệ số thời gian theo ngôn ngữ: xem mục "Lưu ý cho client" ở `RESULT`.
@@ -363,7 +363,7 @@ Worker không bao giờ gửi stdout/stderr của test ẩn, và không gửi gi
 
 Chương trình in ra stdout vượt 16 MB bị dừng và nhận `WA`.
 
-`SE` do worker báo trong `RESULT` là verdict cuối ngay: server không giao lại bài (trừ khi đang rejudge: verdict cũ giữ nguyên, bài chỉ được đánh dấu chấm lại lỗi). Chỉ `SE` do mất kết nối hoặc quá hạn (mục 2.6) đi qua luồng giao lại và đếm tối đa 3 lần giao.
+`SE` do worker báo trong `RESULT` là verdict cuối ngay: server không giao lại bài (trừ khi đang rejudge: verdict cũ giữ nguyên, bài chỉ được đánh dấu chấm lại lỗi). Chỉ `SE` do mất kết nối hoặc quá hạn (mục 2.6) đi qua luồng giao lại và bị giới hạn số lần giao như mục 2.6 (tối đa 3 lần giao đã xác nhận, tối đa 6 lần giao).
 
 Lưu ý cho client:
 
@@ -444,16 +444,19 @@ Server coi worker đã mất và đóng kết nối của nó khi:
 Khi đó:
 
 - Bài worker đang giữ được đưa lại hàng đợi và giao cho worker rảnh tiếp theo (có thể chính worker đó sau khi kết nối lại), với `attempt_id` mới lớn hơn.
-- Mỗi bài được giao tối đa 3 lần cho một lần chấm (mỗi lần rejudge đếm lại từ đầu). Mọi lần giao bị cắt ngang đều tính vào 3 lần, bất kể lý do: mất kết nối, quá hạn chót, `RESULT` sai định dạng, ngoài khoảng, không khớp `JOB` hay vi phạm kiểm tra ngữ nghĩa. Lần giao thứ 3 bị cắt ngang thì bài nhận verdict `SE`, không giao lần thứ 4; riêng bài đang được chấm lại (rejudge) thì verdict cũ không bị ghi đè, bài chỉ được đánh dấu chấm lại lỗi (`rejudge_failed`). Cơ chế rejudge được mô tả ở phần admin (PR sau). Vì vậy một worker lỗi tất định không làm một bài bị giao lại vô hạn.
-- Một lần giao được tính khi server ghi nhận việc giao vào cơ sở dữ liệu, trước khi gửi `JOB`. Worker mất kết nối đúng giữa lúc ghi nhận và lúc gửi `JOB` vẫn bị tính một lần. Hệ quả: trường hợp xấu nhất, một bài nhận `SE` sau khi server thực sự gửi `JOB` ít hơn 3 lần, và chỉ khi worker mất kết nối đúng khoảng đó.
-- Riêng khi server nhận một `RESULT` hợp lệ nhưng không ghi được kết quả vào cơ sở dữ liệu: kết nối được giữ, nhưng bài vẫn được giao lại và lần giao đó tính vào 3 lần.
+- Mỗi bài có hai giới hạn cho một lần chấm (mỗi lần rejudge đếm lại từ đầu): tối đa 3 lần giao đã xác nhận bị cắt ngang, và tối đa 6 lần giao tính cả lần chưa xác nhận. Lần giao bị cắt ngang mà làm đủ một trong hai giới hạn thì bài nhận verdict `SE`, không giao thêm; riêng bài đang được chấm lại (rejudge) thì verdict cũ không bị ghi đè, bài chỉ được đánh dấu chấm lại lỗi (`rejudge_failed`). Cơ chế rejudge được mô tả ở phần admin (PR sau). Vì vậy một worker lỗi tất định không làm một bài bị giao lại vô hạn.
+- Một lần giao được xác nhận khi server nhận, trên kết nối đang giữ lần giao đó, một trong hai message: (1) `PROGRESS` với `tests_done = 0` mang đúng `submission_id` và `attempt_id`, đúng thứ tự, và `tests_total` bằng số phần tử của `tests`; (2) `RESULT` đã qua kiểm tra kiểu và khoảng (mục `RESULT`) và khớp `submission_id`, `attempt_id` của `JOB`. `RESULT` khớp vẫn xác nhận lần giao kể cả khi sau đó vi phạm kiểm tra ngữ nghĩa. `RESULT` sai định dạng, ngoài khoảng hoặc không khớp `JOB` thì không xác nhận.
+- Giới hạn nào được tính phụ thuộc vào trạng thái xác nhận của lần giao tại lúc nó bị cắt ngang, không phụ thuộc lý do cắt ngang (mất kết nối, quá hạn chót, `RESULT` không hợp lệ, `REGISTER` lần hai, dòng quá dài...): đã xác nhận thì tính vào giới hạn 3, chưa xác nhận thì chỉ tính vào giới hạn 6. Ví dụ `REGISTER` lần hai sau `PROGRESS` với `tests_done = 0` tính vào giới hạn 3; trước đó thì chỉ tính vào giới hạn 6. Mọi lần giao tính vào giới hạn 6 từ lúc server ghi nhận việc giao vào cơ sở dữ liệu, trước khi gửi `JOB`.
+- Riêng khi server nhận một `RESULT` hợp lệ nhưng không ghi được kết quả vào cơ sở dữ liệu: kết nối được giữ, nhưng bài vẫn được giao lại và lần giao đó tính vào giới hạn 3 (`RESULT` hợp lệ đã xác nhận lần giao).
 - Worker mất kết nối khi đang chấm thì hủy bài đó ngay (kill cả nhóm tiến trình), dọn thư mục tạm, và không gửi lại `RESULT` của bài đó qua kết nối mới.
 - `PROGRESS`/`RESULT` mang `attempt_id` cũ chỉ là trường hợp phòng thủ: kết nối cũ đã đóng nên bình thường chúng không thể tới server. Nếu vẫn tới, server xử lý theo bảng ở mục 2.3.
-- Server khởi động lại: worker tự kết nối lại; các bài đang chờ được giao lại. Bài đang chấm lúc server tắt cũng được giao lại, và lần giao bị ngắt đó không tính vào 3 lần giao.
+- Server khởi động lại: worker tự kết nối lại; các bài đang chờ được giao lại. Bài đang chấm lúc server tắt cũng được giao lại, và lần giao bị ngắt đó không tính vào cả hai giới hạn.
 
 ##### Hạn chế đã biết của cổng worker
 
-- Race khi khởi động lại: mỗi bài đang chấm dở được hoàn lại một lần giao. Nếu một worker vừa mất kết nối mà server chưa kịp ghi lại việc mất đó thì server tắt, lần giao bị cắt thật cũng được hoàn lại. Hệ quả: một bài có thể được giao thêm tối đa 1 lần mỗi lần khởi động lại, ngoài giới hạn 3 lần. Cửa sổ này rất hẹp; chưa kiểm chứng ở runtime.
+- Race khi khởi động lại: nếu một lần giao đã xác nhận bị cắt ngang mà server chưa kịp ghi lần mất đó vào cơ sở dữ liệu thì server tắt, lần mất đó không được đếm. Hệ quả: một bài có thể được giao thêm tối đa 1 lần mỗi lần khởi động lại, ngoài các giới hạn trên. Cửa sổ này rất hẹp; chưa kiểm chứng ở runtime.
+- Nâng cấp từ bản chưa có xác nhận lần giao: migration coi mọi lần mất cũ là đã xác nhận (dữ liệu cũ không phân biệt được), nên bài còn dở lúc nâng cấp có thể nhận `SE` sớm hơn luật mới.
+- Bài làm sập container worker lúc biên dịch có thể làm worker khởi động lại tới 6 lần trước khi bài nhận `SE`. Thời gian chậm nhất khoảng 150 s (6 lần × `COMPILE_TIMEOUT_MAX + SLACK`); ước tính từ hằng số, chưa đo.
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
@@ -830,7 +833,7 @@ Mọi mã dưới đây do server gửi cho worker trong message `ERROR` (mục 
 
 - `ERROR` do worker gửi lên (mọi `code` đều được): nếu gửi trước khi đăng ký xong thì thuộc `REGISTER_REJECTED` (server từ chối và đóng, vì message đầu tiên không phải `REGISTER`); nếu gửi sau khi đăng ký xong thì server chỉ ghi log, giữ kết nối và không đổi trạng thái. Các mã trong bảng trên chỉ do server gửi.
 - Server không gửi `ERROR` khi đóng kết nối vì đã có 16 kết nối chưa đăng ký (mục 2.6) hay vì mất kết nối.
-- "Bài đang giữ được giao lại" nghĩa là lần giao đó bị cắt ngang và vẫn tính vào 3 lần giao (mục 2.6); lần thứ 3 bị cắt thì bài nhận `SE`. Riêng server khởi động lại thì lần giao dở dang không tính.
+- "Bài đang giữ được giao lại" nghĩa là lần giao đó bị cắt ngang và được tính theo mục 2.6 (giới hạn 3 lần giao đã xác nhận, 6 lần giao); đủ một trong hai thì bài nhận `SE`. Riêng server khởi động lại thì lần giao dở dang không tính.
 
 #### 5.2. REST
 

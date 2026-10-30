@@ -181,6 +181,7 @@ def test_the_third_lost_delivery_ends_in_se_and_there_is_no_fourth_job(stack):
         w = stack.worker(f"w{number}")
         job = w.take_job()
         assert job["attempt_id"] == number
+        w.progress(job, 0)
         w.close()
         assert wait_until(lambda: stack.registered() == 0)
     view = stack.wait_view(sid, lambda v: v["state"] == "done")
@@ -291,7 +292,9 @@ def test_a_server_restart_in_the_middle_of_a_job_does_not_use_up_one_of_the_thre
     try:
         for attempt in (2, 3, 4):
             worker = after.worker(f"w{attempt}")
-            assert worker.take_job()["attempt_id"] == attempt
+            job = worker.take_job()
+            assert job["attempt_id"] == attempt
+            worker.progress(job, 0)
             worker.close()
             assert wait_until(lambda: after.registered() == 0)
         view = after.wait_view(sid, lambda v: v["state"] == "done")

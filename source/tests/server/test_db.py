@@ -180,3 +180,29 @@ def test_create_submission_queues_a_row_and_get_submission_returns_the_documente
 
 def test_get_submission_of_unknown_id_is_none(db):
     assert db.get_submission(12345) is None
+
+
+def test_migration_backfills_total_deliveries_and_returns_the_in_flight_delivery(tmp_path):
+    """D22: DB cũ coi mọi lần mất là đã xác nhận; bài `judging` có một lần giao dở nên bớt 1 ở delivery_count."""
+    import sqlite3
+
+    from server import db as db_module
+    path = str(tmp_path / "old.db")
+    conn = sqlite3.connect(path, isolation_level=None)
+    for script in MIGRATIONS[:-1]:
+        for statement in db_module._split_statements(script):
+            conn.execute(statement)
+    conn.execute(f"PRAGMA user_version={len(MIGRATIONS) - 1}")
+    conn.execute("INSERT INTO users (id, username, password_hash, role, created_at) VALUES (1, 'u', 'x', 'user', 1)")
+    conn.execute("INSERT INTO problems (id, title, statement, time_limit_ms, memory_limit_kib, hidden, tests_hash, "
+                 "created_at, updated_at) VALUES ('p', 'P', 's', 1000, 1024, 0, 'h', 1, 1)")
+    for state, count in (("queued", 2), ("done", 3), ("judging", 2), ("judging", 0)):
+        conn.execute("INSERT INTO submissions (user_id, problem_id, language, code, submitted_at, state, "
+                     "delivery_count) VALUES (1, 'p', 'python', 'c', 1, ?, ?)", (state, count))
+    conn.close()
+
+    db = Database(path)
+    db.migrate()
+    rows = [tuple(r) for r in db.conn().execute(
+        "SELECT state, delivery_count, total_deliveries FROM submissions ORDER BY id")]
+    assert rows == [("queued", 2, 2), ("done", 3, 3), ("judging", 1, 2), ("judging", 0, 0)]

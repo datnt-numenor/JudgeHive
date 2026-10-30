@@ -20,8 +20,8 @@ from server.db import Database
 
 USERNAME = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")  # [ĐỀ XUẤT]
 SHOW_FIELDS = ("id", "user_id", "problem_id", "language", "state", "is_rejudge", "attempt_id", "delivery_count",
-               "verdict", "time_ms", "memory_kib", "failed_test", "failed_is_sample", "re_kind", "rejudge_failed",
-               "delivered_test_hash", "verdict_test_hash")
+               "total_deliveries", "verdict", "time_ms", "memory_kib", "failed_test", "failed_is_sample", "re_kind",
+               "rejudge_failed", "delivered_test_hash", "verdict_test_hash")
 
 
 class CommandError(Exception):

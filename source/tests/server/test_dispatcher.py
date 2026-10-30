@@ -46,7 +46,7 @@ def test_attempt_and_hash_are_in_the_db_before_the_job_reaches_the_worker(stack)
     job = w.take_job()
     row = stack.row(sid)  # đọc ngay khi worker nhận được JOB
     assert row["attempt_id"] == job["attempt_id"] == 1
-    assert row["delivery_count"] == 1 and row["state"] == "judging"
+    assert row["total_deliveries"] == 1 and row["delivery_count"] == 0 and row["state"] == "judging"
     assert row["delivered_test_hash"] == problems.compute_tests_hash(SUM_TESTS)
 
 
@@ -143,7 +143,7 @@ def test_reserved_worker_that_dies_while_the_queue_is_empty_costs_nothing(stack)
     sid = stack.submit()
     job = alive.take_job()
     assert job["attempt_id"] == 1
-    assert stack.row(sid)["delivery_count"] == 1
+    assert stack.row(sid)["total_deliveries"] == 1
 
 
 def test_job_is_redelivered_with_a_new_attempt_when_the_worker_dies(stack):
@@ -155,7 +155,7 @@ def test_job_is_redelivered_with_a_new_attempt_when_the_worker_dies(stack):
     job2 = second.take_job()
     assert job2["submission_id"] == sid and job2["attempt_id"] == job1["attempt_id"] + 1
     row = stack.row(sid)
-    assert row["attempt_id"] == 2 and row["delivery_count"] == 2
+    assert row["attempt_id"] == 2 and row["total_deliveries"] == 2 and row["delivery_count"] == 0  # chưa xác nhận
     assert "queued" in stack.hooks.names(sid)  # D1: STATUS queued khi giao lại
     second.finish_ac(job2)
     assert stack.wait_row(sid, lambda r: r["state"] == "done")["verdict"] == "AC"
@@ -198,10 +198,11 @@ def test_third_lost_delivery_ends_in_se_and_there_is_no_fourth_job(stack):
         w = stack.worker(f"w{number}")
         job = w.take_job()
         assert job["attempt_id"] == number
+        w.progress(job, 0)  # xác nhận nhận việc, nên lần mất này tính vào trần 3
         w.close()
         assert wait_until(lambda: not stack.server.snapshot())
     row = stack.wait_row(sid, lambda r: r["state"] == "done")
-    assert row["verdict"] == "SE" and row["delivery_count"] == 3
+    assert row["verdict"] == "SE" and row["delivery_count"] == 3 and row["total_deliveries"] == 3
     assert row["verdict_test_hash"] == row["delivered_test_hash"]
     spare = stack.worker("spare")
     with pytest.raises(TimeoutError):
@@ -215,7 +216,7 @@ def test_se_reported_by_the_worker_is_final_and_not_redelivered(stack):
     sid = stack.submit()
     job = w.take_job()
     row = finish(stack, w, job, "SE", se_detail="boom")
-    assert row["verdict"] == "SE" and row["delivery_count"] == 1
+    assert row["verdict"] == "SE" and row["total_deliveries"] == 1
     with pytest.raises(TimeoutError):
         other.recv(0.5)
 
@@ -271,8 +272,9 @@ def test_rejudge_lost_three_times_keeps_the_old_verdict(stack):
     stack.dispatcher.enqueue(sid, LEVEL_REJUDGE)
     for number in (1, 2, 3):
         w = stack.worker(f"w{number}")
-        w.take_job()
+        job = w.take_job()
         assert "queued" not in stack.hooks.names(sid)
+        w.progress(job, 0)  # xác nhận nhận việc, nên lần mất này tính vào trần 3
         w.close()
         assert wait_until(lambda: not stack.server.snapshot())
     row = stack.wait_row(sid, lambda r: r["state"] == "done")
@@ -301,7 +303,8 @@ def test_job_line_over_the_limit_becomes_se_and_is_never_sent(stack):
     w = stack.worker()
     sid = stack.submit(problem_id="huge")
     row = stack.wait_row(sid, lambda r: r["state"] == "done")
-    assert row["verdict"] == "SE" and row["attempt_id"] == 0 and row["delivery_count"] == 0
+    assert row["verdict"] == "SE" and row["attempt_id"] == 0 and row["delivery_count"] == 0 \
+        and row["total_deliveries"] == 0
     with pytest.raises(TimeoutError):
         w.recv(0.5)
     stack.submit()  # worker vẫn rảnh và nhận bài kế tiếp
@@ -348,7 +351,7 @@ def test_queue_survives_worker_churn(stack):
     for t in threads:
         t.join(15)
     assert sorted(done) == sorted(sids)
-    assert all(stack.row(s)["verdict"] == "AC" and stack.row(s)["delivery_count"] == 1 for s in sids)
+    assert all(stack.row(s)["verdict"] == "AC" and stack.row(s)["total_deliveries"] == 1 for s in sids)
 
 
 def test_a_rejudge_that_starts_after_three_deliveries_gets_three_new_ones(stack):
@@ -362,7 +365,7 @@ def test_a_rejudge_that_starts_after_three_deliveries_gets_three_new_ones(stack)
         assert wait_until(lambda: not stack.server.snapshot())
     w = stack.worker("third")
     job = w.take_job()
-    assert job["attempt_id"] == 3 and stack.row(sid)["delivery_count"] == 3
+    assert job["attempt_id"] == 3 and stack.row(sid)["total_deliveries"] == 3
     with stack.db.write() as c:
         c.execute("UPDATE submissions SET rejudge_requested = 1 WHERE id = ?", (sid,))
     w.finish_ac(job)
@@ -371,3 +374,22 @@ def test_a_rejudge_that_starts_after_three_deliveries_gets_three_new_ones(stack)
     w.finish_ac(job2)
     row = stack.wait_row(sid, lambda r: r["state"] == "done")
     assert row["verdict"] == "AC" and row["rejudge_failed"] == 0 and row["rejudged_at"] is not None
+
+
+def test_rejudge_resets_both_delivery_counters(stack):
+    """D22: mỗi lần rejudge đếm lại cả hai giới hạn: lần giao đầu của rejudge ra total_deliveries = 1, delivery_count = 0."""
+    sid = stack.submit()
+    w = stack.worker("lost")
+    job = w.take_job()
+    w.progress(job, 0)
+    w.close()  # lần mất đã xác nhận: delivery_count = 1
+    assert wait_until(lambda: stack.row(sid)["delivery_count"] == 1)
+    w = stack.worker("second")
+    job = w.take_job()
+    assert stack.row(sid)["total_deliveries"] == 2
+    with stack.db.write() as c:
+        c.execute("UPDATE submissions SET rejudge_requested = 1 WHERE id = ?", (sid,))
+    w.finish_ac(job)
+    job2 = w.take_job()
+    row = stack.row(sid)
+    assert job2["submission_id"] == sid and row["delivery_count"] == 0 and row["total_deliveries"] == 1

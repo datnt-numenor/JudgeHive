@@ -69,7 +69,7 @@ def manage(*args, input_text=None, check=True):
 
 
 def show(submission_id):
-    """Cờ nội bộ (attempt_id, delivery_count) mà REST không trả; chỉ để kiểm tra giao lại."""
+    """Cờ nội bộ (attempt_id, delivery_count, total_deliveries) mà REST không trả; chỉ để kiểm tra giao lại."""
     out = manage("submissions", "show", str(submission_id)).stdout
     return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
 
@@ -365,9 +365,11 @@ def main():
         slow = wait_judged(cookie, slow_id, "bài chậm chấm xong sau khi worker chết")
         check("bài giao lại vẫn ra AC", slow["verdict"] == "AC", slow["verdict"])
         internal = show(slow_id)
-        check(f"chấm xong ở attempt_id={KILLS + 1}, delivery_count={KILLS + 1}",
-              internal["attempt_id"] == str(KILLS + 1) and internal["delivery_count"] == str(KILLS + 1),
-              f"attempt={internal['attempt_id']} deliveries={internal['delivery_count']}")
+        # delivery_count chỉ đếm lần mất đã xác nhận (PROGRESS 0), nên phụ thuộc lúc kill; total_deliveries đếm mọi lần giao
+        check(f"chấm xong ở attempt_id={KILLS + 1}, total_deliveries={KILLS + 1}",
+              internal["attempt_id"] == str(KILLS + 1) and internal["total_deliveries"] == str(KILLS + 1),
+              f"attempt={internal['attempt_id']} total={internal['total_deliveries']} "
+              f"confirmed={internal['delivery_count']}")
 
         # DB nằm trong volume: restart server không mất verdict lẫn phiên đăng nhập
         restart_server()

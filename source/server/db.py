@@ -97,6 +97,14 @@ MIGRATIONS = [
     CREATE INDEX idx_submissions_board ON submissions(problem_id, user_id, submitted_at, id, verdict)
         WHERE verdict IS NOT NULL;
     """,
+    # D22: `delivery_count` đổi nghĩa thành số lần giao ĐÃ XÁC NHẬN bị cắt ngang; `total_deliveries` đếm mọi lần giao.
+    # Mọi lần mất trước đây coi là đã xác nhận, nên backfill `total_deliveries` = `delivery_count` cũ; bài đang `judging`
+    # có lần giao dở chưa mất nên bớt 1 ở cả hai cột (khớp việc `load_pending` hoàn lần giao dở).
+    """
+    ALTER TABLE submissions ADD COLUMN total_deliveries INTEGER NOT NULL DEFAULT 0;
+    UPDATE submissions SET total_deliveries = delivery_count;
+    UPDATE submissions SET delivery_count = MAX(delivery_count - 1, 0) WHERE state = 'judging';
+    """,
 ]
 
 
