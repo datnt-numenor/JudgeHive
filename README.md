@@ -526,7 +526,16 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 - Các endpoint khác trong phần này không có rate limit.
 - `POST /api/login`: tối đa 10 lần thử trong bất kỳ khoảng 60 giây nào cho mỗi `username` (cửa sổ trượt). Vượt thì 429 `RATE_LIMITED` kèm `Retry-After`, kể cả khi mật khẩu đúng. Mọi lần thử hợp lệ về định dạng đều tính (đúng, sai, hay username không tồn tại, để không lộ username nào có thật); request 400 hoặc 413 không tính. Server kiểm tra giới hạn trước khi kiểm tra mật khẩu. Ngoài ra tối đa 8 đăng nhập được xử lý cùng lúc trên toàn server (băm mật khẩu tốn bộ nhớ và thread); lượt thứ 9 trở đi trả ngay 429 `RATE_LIMITED` kèm `Retry-After: 1`, không chờ, và không tính vào giới hạn theo `username`. Hạn chế: người khác có thể cố ý khóa tạm một username bằng cách thử liên tục, nhưng chỉ tối đa mỗi lần 60 giây và không ảnh hưởng username khác.
 
-**Thứ tự kiểm tra của `POST /api/submissions`** (lỗi đầu tiên gặp được trả về): phiên (401) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → kích thước mã (413 `CODE_TOO_LARGE`) → trùng `client_token` (200) → đề tồn tại và hiện với người gọi (404) → rate limit (429) → chấp nhận (201).
+**Trần số bài đang chờ chấm (429, 503).** Ngoài rate limit theo thời gian, `POST /api/submissions` còn bị chặn khi hàng đợi chấm đã dài:
+
+- Mỗi người có tối đa 5 bài đang chờ: bài của chính họ ở `state` `queued` hoặc `judging` (mục 3.3). Đủ 5 bài thì bài thứ 6 trả 429 `TOO_MANY_PENDING` kèm `Retry-After: 5`. Khi một bài có kết quả (`judged`) thì người đó nộp thêm được.
+- Toàn hệ thống có tối đa 200 bài `queued` (bài đang `judging` không tính). Đủ 200 thì mọi lượt nộp mới trả 503 `QUEUE_FULL` kèm `Retry-After: 10`, thân là JSON như mọi lỗi khác.
+- Bài đang chờ chấm lại do admin (rejudge) không tính vào hai trần này và không bị chặn bởi chúng. Admin nộp bài mới vẫn bị cả hai trần, như mọi người.
+- Hai mã này khác `RATE_LIMITED`: `RATE_LIMITED` là nộp quá nhanh theo thời gian (10 bài mỗi 60 giây), còn `TOO_MANY_PENDING` và `QUEUE_FULL` là quá nhiều bài chưa chấm xong. `Retry-After` của hai mã mới chỉ là gợi ý thời gian thử lại, không bảo đảm đến lúc đó nộp được.
+- Request bị từ chối vì hai trần này không lưu bài, nên không tính vào rate limit. Cách client dùng `client_token` khi thử lại nằm ở mục 3.3.
+- Trùng `client_token` vẫn trả 200 trước cả hai trần (mục 3.3).
+
+**Thứ tự kiểm tra của `POST /api/submissions`** (lỗi đầu tiên gặp được trả về): phiên (401) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → kích thước mã (413 `CODE_TOO_LARGE`) → trùng `client_token` (200) → đề tồn tại và hiện với người gọi (404) → rate limit (429 `RATE_LIMITED`) → số bài đang chờ của người nộp (429 `TOO_MANY_PENDING`) → số bài đang chờ toàn hệ thống (503 `QUEUE_FULL`) → chấp nhận (201).
 
 #### 3.3. Chi tiết từng endpoint
 
@@ -603,7 +612,8 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 - Trùng `client_token` của chính người gọi (mỗi người một không gian token riêng): **200**, cùng dạng body, với `submission_id` và `received_at` của bài cũ và `state` hiện tại của nó; không tạo bài mới, không đưa vào hàng đợi, không tính rate limit. Nội dung mới của request lần sau (đề, ngôn ngữ, mã nguồn) bị bỏ qua hoàn toàn: server trả bài gốc, không so sánh. Client phân biệt "mới" và "trùng" bằng status 201/200.
 - Thiếu field, sai kiểu, `problem_id` không đúng định dạng mục 3.2 (khác với đường dẫn, nơi id sai định dạng là 404), `language` lạ, `code` rỗng hoặc chứa surrogate lẻ, `client_token` thiếu hoặc không phải UUID: 400 `INVALID_REQUEST`.
 - Đề không tồn tại, hoặc đề ẩn mà người gọi không phải admin: 404 `PROBLEM_NOT_FOUND` (giống `GET /api/problems/{id}`). Admin nộp được vào đề ẩn; bài của admin không vào bảng xếp hạng.
-- Quy tắc client: giữ nguyên `client_token` khi request lỗi mạng hoặc hết thời gian chờ mà chưa nhận phản hồi; sinh token mới sau khi đã nhận `submission_id`; vô hiệu hóa nút nộp trong lúc chờ phản hồi.
+- Người nộp đã có 5 bài `queued` hoặc `judging`: 429 `TOO_MANY_PENDING` kèm `Retry-After: 5`. Toàn hệ thống đã có 200 bài `queued`: 503 `QUEUE_FULL` kèm `Retry-After: 10`. Cả hai không lưu bài (mục 3.2). Cả hai kiểm sau rate limit, và `TOO_MANY_PENDING` kiểm trước `QUEUE_FULL`.
+- Quy tắc client: giữ nguyên `client_token` khi request lỗi mạng, hết thời gian chờ mà chưa nhận phản hồi, hoặc nhận 503 (kể cả `QUEUE_FULL`), với điều kiện nội dung (đề, ngôn ngữ, mã nguồn) không đổi; nội dung đổi thì sinh token mới. Sinh token mới sau khi đã nhận `submission_id` hoặc lỗi 4xx (kể cả 429 `TOO_MANY_PENDING`, vì chưa có bài nào được lưu); vô hiệu hóa nút nộp trong lúc chờ phản hồi.
 
 ```json
 {"problem_id": "sum-two", "language": "python", "code": "print(sum(map(int, input().split())))\n", "client_token": "6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f"}
@@ -705,6 +715,7 @@ Mỗi phần tử của `rows`:
 - Không có HTTPS: mật khẩu đi dạng rõ trong mạng nội bộ.
 - Cookie `SameSite=Lax` không chặn request từ origin khác cùng site (ví dụ khác cổng trên cùng máy). Lớp bảo vệ còn lại là: `POST` chỉ nhận `application/json` và không mở CORS, nên trình duyệt không cho trang khác gửi được request như vậy.
 - Số test sai, thời gian và bộ nhớ trong kết quả là kênh rò thông tin rất hẹp về test ẩn; rate limit nộp bài là chặn trên của kênh này.
+- Request bị 429 hoặc 503 vì rate limit hoặc trần số bài đang chờ không được tính vào rate limit nhưng vẫn chiếm một transaction ghi của cơ sở dữ liệu trong lúc kiểm tra. Chặn trên của số request như vậy là giới hạn kết nối đồng thời của hạ tầng (`--limit-concurrency`, mục 3.5), giống `RATE_LIMITED` hiện nay.
 - Giới hạn đăng nhập (theo `username` và số lượt đồng thời) nằm trong bộ nhớ của process: khởi động lại server thì mất. Giới hạn nộp bài đếm bằng cơ sở dữ liệu nên không mất.
 
 #### 3.5. Mã lỗi REST
@@ -723,9 +734,11 @@ Mỗi phần tử của `rows`:
 | `CODE_TOO_LARGE` | 413 | `code` vượt 64 KB (byte UTF-8) |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | `POST` không có `Content-Type: application/json` |
 | `RATE_LIMITED` | 429 | Vượt 10 bài nộp mỗi 60 giây (mỗi người), 10 lần đăng nhập mỗi 60 giây (mỗi `username`), hoặc quá 8 đăng nhập đang xử lý cùng lúc; kèm `Retry-After` |
+| `TOO_MANY_PENDING` | 429 | Người nộp đã có 5 bài `queued` hoặc `judging`; kèm `Retry-After` |
 | `INTERNAL_ERROR` | 500 | Lỗi server; `message` chung, chi tiết chỉ ở log |
+| `QUEUE_FULL` | 503 | Toàn hệ thống đã có 200 bài `queued`; kèm `Retry-After` |
 
-**Ngoại lệ: 503 do hạ tầng.** Khi có quá nhiều kết nối đồng thời (giới hạn `--limit-concurrency` của uvicorn, xem `server/README.md`), uvicorn trả 503 ngay ở tầng hạ tầng, trước khi request tới ứng dụng. Response này **không** theo định dạng `{"error": {...}}` (thân là văn bản thường) và không có `Cache-Control: no-store`. Client coi mọi 503 là lỗi tạm thời: thử lại sau, không phân tích thân response, và với `POST /api/submissions` giữ nguyên `client_token` khi thử lại (mục 3.3).
+**Hai loại 503.** (1) `QUEUE_FULL` do ứng dụng trả (mục 3.2): theo định dạng `{"error": {...}}`, có `Retry-After` và `Cache-Control: no-store`. (2) 503 do hạ tầng: khi có quá nhiều kết nối đồng thời (giới hạn `--limit-concurrency` của uvicorn, xem `server/README.md`), uvicorn trả 503 ngay ở tầng hạ tầng, trước khi request tới ứng dụng. Response này **không** theo định dạng `{"error": {...}}` (thân là văn bản thường) và không có `Cache-Control: no-store`. Client phân biệt hai loại bằng việc thân có phải JSON dạng lỗi hay không. Với cả hai, client coi đó là lỗi tạm thời: thử lại sau, và với `POST /api/submissions` giữ nguyên `client_token` khi thử lại nếu nội dung không đổi (mục 3.3).
 
 
 ### 4. WebSocket (server đẩy)
