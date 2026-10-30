@@ -30,7 +30,21 @@ def test_no_progress_zero_in_the_compile_window_means_deadline_exceeded_and_rede
     assert 0.3 < time.monotonic() - started < 2.5
     again = second.take_job()
     assert again["submission_id"] == sid and again["attempt_id"] == job["attempt_id"] + 1
-    assert fast.row(sid)["delivery_count"] == 2  # lần giao bị quá hạn vẫn tính
+    row = fast.row(sid)
+    assert row["total_deliveries"] == 2 and row["delivery_count"] == 0  # chưa PROGRESS(0): chỉ tính vào trần tổng
+
+
+def test_deadline_after_progress_zero_counts_as_a_confirmed_loss(fast):
+    first = fast.worker("a")
+    sid = fast.submit(problem_id="quick")
+    job = first.take_job()
+    first.progress(job, 0)
+    first.expect_error("DEADLINE_EXCEEDED", timeout=3)  # cửa sổ test 0,7 s sau PROGRESS(0)
+    second = fast.worker("b")
+    again = second.take_job()
+    assert again["submission_id"] == sid and again["attempt_id"] == job["attempt_id"] + 1
+    row = fast.row(sid)
+    assert row["total_deliveries"] == 2 and row["delivery_count"] == 1
 
 
 def test_window_starts_when_the_send_has_finished_not_when_it_began(make_stack):

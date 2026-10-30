@@ -99,7 +99,8 @@ def test_send_that_does_not_complete_in_send_timeout_marks_worker_dead_and_redel
     job = other.take_job(timeout=10)
     assert job["submission_id"] == sid and job["attempt_id"] == 2
     assert 0.8 < time.monotonic() - started < 6
-    assert stack.row(sid)["delivery_count"] == 2
+    row = stack.row(sid)
+    assert row["total_deliveries"] == 2 and row["delivery_count"] == 0  # worker kẹt chưa xác nhận
     assert stuck.sock
 
 

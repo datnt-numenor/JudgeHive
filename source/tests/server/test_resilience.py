@@ -83,7 +83,8 @@ def test_result_commit_failure_sends_the_job_back_to_the_queue(stack):
     assert again["submission_id"] == sid and again["attempt_id"] == 2
     w.finish_ac(again)
     row = stack.wait_row(sid, lambda r: r["state"] == "done")
-    assert row["verdict"] == "AC" and row["delivery_count"] == 2
+    assert row["verdict"] == "AC" and row["total_deliveries"] == 2
+    assert row["delivery_count"] == 1  # RESULT khớp đã xác nhận, nên lần mất này tính vào trần 3 (README 2.6)
 
 
 def test_failure_after_the_delivery_transaction_requeues_the_job(stack):
@@ -103,7 +104,7 @@ def test_failure_after_the_delivery_transaction_requeues_the_job(stack):
     job = second.take_job(timeout=10)
     assert job["submission_id"] == sid and job["attempt_id"] == 2  # lần 1 đã tính, rồi giao lại
     assert first.closed()  # worker bị giữ chỗ nhưng chưa nhận được JOB bị đóng, không treo ở busy
-    assert stack.row(sid)["delivery_count"] == 2
+    assert stack.row(sid)["total_deliveries"] == 2
 
 
 def test_slow_db_write_for_a_lost_job_does_not_stall_pings_to_other_workers(make_stack):

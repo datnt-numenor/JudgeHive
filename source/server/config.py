@@ -32,7 +32,8 @@ class ServerConfig:
     max_time_factor: float = protocol.MAX_TIME_FACTOR
     per_test_overhead_s: float = protocol.PER_TEST_OVERHEAD_S
     monitor_tick_s: float = 0.5  # [ĐỀ XUẤT] độ phân giải của quét last_seen, watchdog và lịch PING
-    max_deliveries: int = 3  # D1
+    max_deliveries: int = 3  # D1, D22: số lần giao đã xác nhận bị cắt ngang
+    max_total_deliveries: int = 6  # D22 [ĐỀ XUẤT]: số lần giao tính cả chưa xác nhận
     # REST (README mục 3.2); test thu nhỏ để chạy nhanh
     session_ttl_s: int = 7 * 24 * 3600
     submit_rate_limit: int = 10

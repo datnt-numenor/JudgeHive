@@ -180,9 +180,9 @@ def test_teardown_with_a_busy_worker_is_quick_and_does_not_requeue(cfg):
     w = run(scenario())
     assert time.monotonic() - started[0] < 5
     w.close()
-    row = Database(cfg.db_path).conn().execute("SELECT state, delivery_count FROM submissions WHERE id = ?",
+    row = Database(cfg.db_path).conn().execute("SELECT state, total_deliveries FROM submissions WHERE id = ?",
                                                 (sid,)).fetchone()
-    assert (row["state"], row["delivery_count"]) == ("judging", 1)  # restart sau sẽ hoàn lại lần giao này
+    assert (row["state"], row["total_deliveries"]) == ("judging", 1)  # restart sau sẽ hoàn lại lần giao này
 
 
 def test_load_config_reads_secret_from_file_first(tmp_path):
