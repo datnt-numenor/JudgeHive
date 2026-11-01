@@ -114,14 +114,15 @@ def judge_run(language, res, expected, memory_limit_kib, scaled_limit_ms):
 
 class _Workdir:
     """Thư mục tạm của một bài: root sở hữu, sticky 1777 (uid thí sinh tạo được file của nó, root xóa được mục
-    cấp một mà không cần cap đặc biệt); input test nằm ngoài thư mục này, root-only, truyền vào bằng fd."""
+    cấp một mà không cần cap đặc biệt); input test không nằm trên filesystem nào: worker giữ nó trong một `memfd`
+    (CLOEXEC, không có tên) và `sandbox.run` mở lại qua `/proc/self/fd/N` để làm stdin của con (D27)."""
 
     def __init__(self, work_root, uid):
         os.makedirs(work_root, mode=0o755, exist_ok=True)
         self.root, self.uid = work_root, uid
         self.path = tempfile.mkdtemp(prefix="job-", dir=work_root)
         os.chmod(self.path, 0o1777)
-        self._input = None
+        self._input_fd = None
 
     def write_source(self, name, text):
         path = os.path.join(self.path, name)
@@ -130,19 +131,28 @@ class _Workdir:
         os.chmod(path, 0o444)
 
     def write_input(self, text):
+        """Ghi input vào memfd mới, trả `/proc/self/fd/N` (mở lại ra open file description mới, offset 0). Không
+        đụng tới /work, nên /work đầy không làm hỏng bước này."""
         self.drop_input()
-        fd, self._input = tempfile.mkstemp(prefix=".input-", dir=self.root)
-        with os.fdopen(fd, "wb") as f:
-            f.write(text.encode("utf-8", errors="surrogatepass"))
-        return self._input
+        fd = os.memfd_create("jh-input", os.MFD_CLOEXEC)
+        try:
+            view = memoryview(text.encode("utf-8", errors="surrogatepass"))
+            while view:
+                view = view[os.write(fd, view):]
+            os.fchmod(fd, 0o400)  # root-only: uid thí sinh không mở lại /proc/self/fd/0 để ghi đè hay đọc lại được
+        except BaseException:
+            os.close(fd)
+            raise
+        self._input_fd = fd
+        return f"/proc/self/fd/{fd}"
 
     def drop_input(self):
-        if self._input:
+        if self._input_fd is not None:
             try:
-                os.unlink(self._input)
+                os.close(self._input_fd)
             except OSError:
                 pass
-            self._input = None
+            self._input_fd = None
 
     def reset_candidate(self, roots=sandbox.TMP_ROOTS, budget_s=1.5):
         """Kill mọi tiến trình của uid thí sinh rồi xóa file của nó ở /tmp, /var/tmp, /dev/shm, trong `budget_s` giây.
