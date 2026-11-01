@@ -119,7 +119,10 @@ Endpoint và dependency của REST khai báo bằng `def`, nên FastAPI chạy c
 SQLite (chỉ `rest/body.py` là `async`, và nó chỉ đọc stream). Mỗi thread của pool tự mở kết nối riêng qua
 `Database.conn()` (thread-local, không chia sẻ giữa thread, cùng mô hình với cổng worker) và giữ nó suốt đời thread,
 tối đa khoảng 40 kết nối. Đọc dùng autocommit; ghi dùng `Database.write()` (`BEGIN IMMEDIATE`). Nộp bài kiểm token
-trùng, kiểm đề, đếm rate limit và ghi bài trong một transaction như vậy, rồi mới `Dispatcher.enqueue` sau commit.
+trùng, kiểm đề, đếm rate limit, đếm bài đang chờ (trần theo người rồi trần toàn hệ thống, qua chỉ mục phủ
+`idx_submissions_pending`, migration 5, D25) và ghi bài trong một transaction như vậy, rồi mới `Dispatcher.enqueue` sau commit.
+Trần là `pending_per_user` (5) và `pending_global` (200) trong `ServerConfig`; các test của `tests/server` đặt cả hai rất cao
+ở `make_config`, chỉ `test_rest_pending_cap.py` đặt thấp.
 Hết 5 giây `busy_timeout` thì endpoint trả 500; client gửi lại cùng `client_token` là an toàn.
 
 ### Bảng xếp hạng và event loop

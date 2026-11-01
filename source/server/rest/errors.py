@@ -56,6 +56,15 @@ def rate_limited(retry_after_s):
     return ApiError(429, "RATE_LIMITED", "too many requests", {"Retry-After": str(max(1, int(retry_after_s)))})
 
 
+def too_many_pending(retry_after_s):
+    return ApiError(429, "TOO_MANY_PENDING", "too many submissions are waiting to be judged",
+                    {"Retry-After": str(max(1, int(retry_after_s)))})
+
+
+def queue_full(retry_after_s):
+    return ApiError(503, "QUEUE_FULL", "the judging queue is full", {"Retry-After": str(max(1, int(retry_after_s)))})
+
+
 def error_response(status, code, message, headers=None):
     return ApiJSONResponse({"error": {"code": code, "message": message}}, status_code=status, headers=headers)
 

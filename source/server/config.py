@@ -38,6 +38,10 @@ class ServerConfig:
     session_ttl_s: int = 7 * 24 * 3600
     submit_rate_limit: int = 10
     submit_rate_window_s: float = 60.0
+    pending_per_user: int = 5  # D25 [ĐỀ XUẤT]: bài queued hoặc judging của một người (is_rejudge = 0); vượt thì 429 TOO_MANY_PENDING
+    pending_global: int = 200  # D25 [ĐỀ XUẤT]: bài queued toàn hệ thống (is_rejudge = 0); vượt thì 503 QUEUE_FULL
+    pending_retry_after_s: int = 5  # D25 [ĐỀ XUẤT]: Retry-After của TOO_MANY_PENDING
+    queue_full_retry_after_s: int = 10  # D25 [ĐỀ XUẤT]: Retry-After của QUEUE_FULL
     login_rate_limit: int = 10
     login_rate_window_s: float = 60.0
     login_max_concurrent: int = 8

@@ -105,6 +105,10 @@ MIGRATIONS = [
     UPDATE submissions SET total_deliveries = delivery_count;
     UPDATE submissions SET delivery_count = MAX(delivery_count - 1, 0) WHERE state = 'judging';
     """,
+    # D25: đếm bài đang chờ (trần theo người và toàn hệ thống) chỉ đọc chỉ mục này, không đọc dòng bảng (cột `code` tới 64 KB).
+    """
+    CREATE INDEX idx_submissions_pending ON submissions(state, is_rejudge, user_id);
+    """,
 ]
 
 
