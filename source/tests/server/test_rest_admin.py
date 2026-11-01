@@ -118,6 +118,23 @@ def test_a_client_cannot_claim_a_role_or_a_user_id(admin_web):
     assert r.status == 403 and hidden_in_db(admin_web, "sum") == 0
 
 
+def test_a_client_cannot_claim_a_role_through_the_query_string(admin_web):
+    cookie = admin_web.login("alice")
+    r = admin_web.request("PATCH", PATH.format("sum") + "?role=admin&user_id=3&admin=1", obj={"hidden": True},
+                          cookie=cookie)
+    assert r.status == 403 and hidden_in_db(admin_web, "sum") == 0
+
+
+def test_routing_errors_come_before_the_session_check(admin_web):
+    """README 3.6: sai method (405 + Allow) và đường dẫn admin không có route (404 NOT_FOUND) do định tuyến trả, trước kiểm
+    tra phiên, nên người chưa đăng nhập và người dùng thường nhận cùng kết quả. Test này khóa hành vi đó."""
+    for cookie in (None, admin_web.login("alice")):
+        r = admin_web.request("GET", PATH.format("sum"), cookie=cookie)
+        assert r.status == 405 and r.error_code == "METHOD_NOT_ALLOWED" and "PATCH" in r.headers["allow"], cookie
+        r = admin_web.request("GET", "/api/admin/no-such-route", cookie=cookie)
+        assert (r.status, r.error_code) == (404, "NOT_FOUND"), cookie
+
+
 def test_only_patch_is_allowed_on_the_problem_route(admin_web):
     cookie = admin_web.login("root")
     for method in ("GET", "POST", "PUT", "DELETE"):
