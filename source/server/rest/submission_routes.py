@@ -28,8 +28,10 @@ QUEUED_GLOBAL_SQL = "SELECT COUNT(*) FROM submissions WHERE state = 'queued' AND
 def accept_submission(state, user, problem_id, language, code, token):
     """Một transaction `BEGIN IMMEDIATE` theo đúng thứ tự README 3.2: trùng token, rồi đề, rồi rate limit, rồi trần bài
     đang chờ của người nộp, rồi trần toàn hệ thống, rồi ghi (D25). Đếm bằng DB nên đúng sau restart và nguyên tử với
-    việc ghi bài (không cần lock riêng). Dispatcher ghi DB từ thread khác nhưng chỉ làm số bài đang chờ giảm
-    (queued, judging, done) hoặc giao lại bài đã được đếm, nên không thể nhận vượt trần vì bị chen ngang.
+    việc ghi bài (không cần lock riêng). Dispatcher cũng ghi qua `write()` nên bị tuần tự hóa với hàm này: không có chen
+    ngang giữa đếm và ghi. Trần chỉ kiểm lúc chấp nhận: giao lại hoặc nạp lại lúc restart đưa `judging` về `queued`
+    có thể đẩy số `queued` tạm vượt `pending_global` (nhiều nhất bằng số bài đang `judging`), không đẩy được vượt
+    `pending_per_user` vì bài `judging` đã được đếm.
     Trả `(id, state, received_ms, created)`."""
     now = state.clock()
     cfg = state.cfg
