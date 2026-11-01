@@ -82,6 +82,10 @@ def _text(value):
     return repr(str(value)[:LOG_TEXT_MAX])
 
 
+def _format_addr(addr):
+    return f"{addr[0]}:{addr[1]}" if isinstance(addr, tuple) and len(addr) >= 2 else str(addr)
+
+
 def _is_int(value):
     return type(value) is int
 
@@ -257,6 +261,24 @@ class WorkerServer:
                      "submission_id": c.job.submission_id if c.job else None,
                      "attempt_id": c.job.attempt_id if c.job else None}
                     for c in self._workers.values()]
+
+    def admin_view(self):
+        """Ảnh chụp cho `GET /api/admin/workers` (README 3.6), sắp theo `worker_id`. Khác `snapshot()`, vốn giữ nguyên kiểu
+        trả về vì test đã khóa dùng `len(snapshot())`. Chỉ copy field dưới lock (không I/O); thời gian đổi từ
+        `time.monotonic()` sang số giây tương đối nên không lộ mốc monotonic thô; không trả `user_id` của người nộp."""
+        now = time.monotonic()
+        with self._lock:
+            # `reserved` là chi tiết nội bộ: dispatcher giữ chỗ một worker rảnh trong lúc chờ bài kế tiếp, và `assign_job` đặt
+            # `busy` cùng lúc với `job`, nên `reserved` không bao giờ có job. Với admin chỉ có hai trạng thái: idle, busy.
+            return [{"worker_id": c.worker_id, "name": c.name, "addr": _format_addr(c.addr),
+                     "state": "idle" if c.job is None else "busy",
+                     "connected_s": max(0, int(now - c.connected_at)), "last_seen_s": max(0, int(now - c.last_seen)),
+                     "jobs_done": c.jobs_done,
+                     "job": None if c.job is None else {
+                         "submission_id": c.job.submission_id, "attempt_id": c.job.attempt_id,
+                         "confirmed": c.job.confirmed, "tests_done": c.job.last_done if c.job.last_done >= 0 else None,
+                         "tests_total": c.job.tests_total, "is_rejudge": c.job.is_rejudge}}
+                    for c in sorted(self._workers.values(), key=lambda c: c.worker_id)]
 
     # ------------------------------------------------------------------ accept và kết nối
 
