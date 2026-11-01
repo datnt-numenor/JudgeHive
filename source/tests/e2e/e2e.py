@@ -25,6 +25,7 @@ PROJECT = "judgehive-e2e"
 PASSWORD = "e2e-password"
 WORKERS = 3
 KILLS = 2  # số lần kill worker giữ bài: bằng số lần giao tối đa (3, D1) trừ một, để lần giao cuối còn chấm xong
+PENDING_PER_USER = 5  # trần bài đang chờ của một người (D25, mặc định production); nộp theo lô không quá số này
 HTTP_PORT = 8000
 
 SOLUTIONS = {
@@ -290,8 +291,14 @@ def main():
 
         ids = {}
         tokens = {}
+        batch = []
         for name, (lang, code, _) in SOLUTIONS.items():
+            if len(batch) == PENDING_PER_USER:  # đủ lô thì chờ chấm xong rồi nộp tiếp, để không chạm trần bài đang chờ
+                for waited in batch:
+                    wait_judged(cookie, ids[waited], f"bài {waited} chấm xong")
+                batch = []
             ids[name], tokens[name] = submit(cookie, lang, code)
+            batch.append(name)
         again_id, _ = submit(cookie, SOLUTIONS["py-ac"][0], "print('khác')\n", token=tokens["py-ac"])
         check("nộp trùng client_token trả bài gốc", again_id == ids["py-ac"])
         check("nộp trùng trả 200", http_call("POST", "/api/submissions", {"problem_id": "aplusb", "language": "python",
