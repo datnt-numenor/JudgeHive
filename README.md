@@ -787,7 +787,7 @@ Tình trạng các worker đang kết nối và độ dài hàng đợi, chỉ �
 | `worker_id` | integer | Server cấp cho mỗi kết nối (một worker nối lại là `worker_id` mới); các phần tử sắp theo `worker_id` tăng dần |
 | `name` | string | Tên worker tự khai khi đăng ký, chỉ để hiển thị; có thể trùng giữa các worker, không dùng để nhận dạng |
 | `addr` | string | Địa chỉ `host:port` phía worker của kết nối TCP |
-| `state` | string | `idle` (rảnh), `reserved` (đã giữ chỗ để giao bài, chưa gửi xong) hoặc `busy` (đang chấm) |
+| `state` | string | `idle` (không có bài) hoặc `busy` (đang được giao một bài, kể cả lúc dòng `JOB` còn đang gửi). Server giữ chỗ một worker rảnh để chờ bài kế tiếp; worker đó vẫn báo `idle` |
 | `connected_s` | integer | Số giây từ lúc kết nối, làm tròn xuống |
 | `last_seen_s` | integer | Số giây từ lần cuối nhận được message từ worker, làm tròn xuống |
 | `jobs_done` | integer | Số bài worker này đã báo `RESULT` kể từ lúc kết nối |
