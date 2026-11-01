@@ -127,7 +127,8 @@ def test_python_and_cpp_use_address_space_limit_and_rss_rule():
 
 def test_candidate_runs_dropped_privileges_with_idle_scheduling_and_no_nproc():
     argv = sandbox._wrap(["./main"], {"as": 1024, "nofile": 32, "core": 1}, 61000)
-    assert argv[:4] == ["setpriv", "--reuid=61000", "--regid=61000", "--clear-groups"]
+    i = argv.index("setpriv")  # trước setpriv là bước root đặt oom_score_adj (D28)
+    assert argv[i:i + 4] == ["setpriv", "--reuid=61000", "--regid=61000", "--clear-groups"]
     assert "--core=1" in argv and "--as=1024" in argv and not any("nproc" in a for a in argv)
     assert argv[-4:] == ["chrt", "--idle", "0", "./main"]
 

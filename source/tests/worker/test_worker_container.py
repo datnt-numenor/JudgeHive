@@ -15,8 +15,8 @@ from worker import sandbox
 from worker.languages import LANGUAGES
 
 UID = sandbox.JUDGE_UID
-CAP_BITS = {"CHOWN": 0, "DAC_OVERRIDE": 1, "DAC_READ_SEARCH": 2, "FOWNER": 3, "KILL": 5, "SETGID": 6, "SETUID": 7}
-ALLOWED_CAPS = ("KILL", "SETGID", "SETUID")  # cap tối thiểu worker cần (kết quả đo ở PR 3, xem worker/README.md)
+CAP_BITS = {"CHOWN": 0, "DAC_OVERRIDE": 1, "DAC_READ_SEARCH": 2, "FOWNER": 3, "KILL": 5, "SETGID": 6, "SETUID": 7, "SYS_RESOURCE": 24}
+ALLOWED_CAPS = ("KILL", "SETGID", "SETUID", "SYS_RESOURCE")  # cap tối thiểu (đo ở PR 3); SYS_RESOURCE thêm ở D28
 
 
 def status_field(name):
@@ -49,6 +49,8 @@ def test_container_has_only_the_expected_capabilities():
     extra = [name for name, bit in CAP_BITS.items() if eff & (1 << bit) and name not in ALLOWED_CAPS]
     assert extra == [], f"container test có thừa cap: {extra}"
     assert eff & ~sum(1 << b for b in CAP_BITS.values()) == 0, f"có cap lạ trong CapEff={eff:#x}"
+    missing = [name for name in ALLOWED_CAPS if not eff & (1 << CAP_BITS[name])]
+    assert missing == [], f"container test thiếu cap của compose: {missing}"
 
 
 def test_worker_can_drop_privileges_read_output_and_clean_up_candidate_files_without_extra_caps(work_root):
