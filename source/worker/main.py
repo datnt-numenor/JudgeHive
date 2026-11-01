@@ -14,6 +14,7 @@ import select
 import shutil
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 
 from common import protocol
 
-from . import executor, languages, sandbox
+from . import executor, languages, sandbox, seccomp
 
 log = logging.getLogger("worker")
 
@@ -436,6 +437,11 @@ def main():
         cfg = load_config(os.environ, consume_secret=True)
     except (languages.ConfigError, ConfigError) as e:
         log.critical("cấu hình sai: %s", e)
+        return 2
+    try:
+        sandbox.verify_guard()
+    except (seccomp.GuardError, OSError, subprocess.SubprocessError) as e:
+        log.critical("không đủ điều kiện chạy code thí sinh an toàn (D28): %s", e)
         return 2
     startup_cleanup(cfg)
     worker = Worker(cfg)
