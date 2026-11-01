@@ -368,6 +368,7 @@ Chương trình in ra stdout vượt 16 MB bị dừng và nhận `WA`.
 Lưu ý cho client:
 
 - Thư mục tạm của container worker (`/tmp`, `/dev/shm`, thư mục làm việc của bài) có dung lượng và số inode bị chặn. Chương trình ghi đầy chỗ đó nhận lỗi ghi như mọi lỗi I/O khác, và test kế tiếp của cùng bài vẫn được chấm. Verdict phụ thuộc cách chương trình xử lý lỗi đó: thoát với mã khác 0 hoặc để ngoại lệ không bắt thoát ra ngoài thì ra `RE` (`EXIT_NONZERO`); bỏ qua lỗi ghi thì verdict theo output như thường (`AC` nếu output đúng). Ghi đầy các thư mục này không gây `MLE`.
+- Chương trình cố chiếm bộ nhớ của container bằng cách không nằm trong bộ nhớ riêng của nó (tạo bộ nhớ chia sẻ ẩn danh, nhiều tiến trình con mỗi con một phần, bộ đệm socket) bị hệ điều hành dừng và ra `RE` với `re_kind` `SIGKILL`, không phải `MLE`; worker và bài khác không bị ảnh hưởng. Gọi `memfd_create` hoặc `shmget` nhận lỗi `EPERM` (verdict theo cách chương trình xử lý lỗi, như khi ghi đầy thư mục tạm); gọi chúng qua ABI khác của hệ điều hành (ví dụ `int 0x80`, x32) làm chương trình bị dừng bằng `SIGSYS`, ra `RE` với `re_kind` `OTHER_SIGNAL`.
 - Với Python và C++, giới hạn bộ nhớ chặn theo không gian địa chỉ ảo, nên một lần cấp phát lớn có thể thất bại khi bộ nhớ thực còn thấp; Java bị giới hạn theo heap. Vì vậy UI hiển thị `MLE` là "vượt giới hạn bộ nhớ", không hiện con số `memory_kib`.
 - `time_ms` so với giới hạn **đã nhân hệ số ngôn ngữ**, không phải giới hạn gốc của đề. Hệ số thời gian theo ngôn ngữ (chốt tạm, đo lại trên máy demo):
 
