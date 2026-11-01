@@ -750,7 +750,7 @@ Quy ước chung của mọi endpoint dưới `/api/admin/`:
 
 - Chỉ tài khoản có role `admin` dùng được. Role đọc từ cơ sở dữ liệu ở mỗi request (đổi role có hiệu lực ngay ở request kế tiếp); server không tin field nào client gửi lên về role hay người dùng.
 - Thứ tự kiểm tra (lỗi đầu tiên gặp được trả về): phiên (401) → role (403 `FORBIDDEN`) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → đối tượng tồn tại (404) → thực hiện. Người không phải admin luôn nhận 403 trên mọi route admin có thật, kể cả khi body hỏng hoặc đối tượng không tồn tại, nên không dò được gì từ các lỗi sau. Hai ngoại lệ do định tuyến, xảy ra trước kiểm tra phiên và với cả người chưa đăng nhập: sai method trên một đường dẫn admin có thật trả 405 kèm `Allow`, và đường dẫn dưới `/api/admin/` không có route nào trả 404 `NOT_FOUND`; chúng chỉ cho biết route nào tồn tại, vốn đã công khai trong mục này.
-- Thao tác ghi chỉ dùng `PATCH`, `POST` hoặc `PUT` với JSON; không có `GET` nào đổi trạng thái. Các `GET` của nhóm admin chỉ đọc, nhận tham số qua query (không có body), và từ chối tham số query lạ hoặc trùng bằng 400 `INVALID_REQUEST` (chặt hơn `GET /api/submissions`, vốn bỏ qua tham số lạ). Giới hạn body như `POST` thường (mục 3.2).
+- Thao tác ghi chỉ dùng `PATCH`, `POST` hoặc `PUT` với JSON; không có `GET` nào đổi trạng thái. Các `GET` của nhóm admin chỉ đọc, nhận tham số qua query (không có body), và từ chối tham số query lạ hoặc trùng bằng 400 `INVALID_REQUEST`: nhóm admin từ chối tham số query lạ hoặc trùng, chặt hơn các endpoint thí sinh (`GET /api/submissions` bỏ qua tham số lạ). Giới hạn body như `POST` thường (mục 3.2).
 - Không có rate limit. Mỗi thao tác ghi để lại một dòng trong log của server (admin, hành động, đối tượng), không ghi body.
 - Body của nhóm admin từ chối field thừa (400 `INVALID_REQUEST`): chặt hơn các endpoint thí sinh, vốn bỏ qua field lạ.
 
@@ -777,7 +777,8 @@ Tình trạng các worker đang kết nối và độ dài hàng đợi, chỉ �
 ```json
 {"workers": [{"worker_id": 3, "name": "worker-1", "addr": "172.18.0.4:51234", "state": "busy", "connected_s": 812,
               "last_seen_s": 1, "jobs_done": 27,
-              "job": {"submission_id": 105, "attempt_id": 2, "tests_done": 4, "tests_total": 10, "is_rejudge": false}}],
+              "job": {"submission_id": 105, "attempt_id": 2, "confirmed": true, "tests_done": 4, "tests_total": 10,
+                      "is_rejudge": false}}],
  "queue": {"queued": 7, "rejudge_queued": 120, "judging": 1}}
 ```
 
@@ -792,7 +793,7 @@ Tình trạng các worker đang kết nối và độ dài hàng đợi, chỉ �
 | `jobs_done` | integer | Số bài worker này đã báo `RESULT` kể từ lúc kết nối |
 | `job` | object hoặc `null` | Bài đang giao cho worker; `null` khi không có |
 
-`job` gồm `submission_id`, `attempt_id`, `tests_total` (số test của đề, gồm cả test ẩn; chỉ là một con số, như ở mục 4.8), `is_rejudge` (boolean) và `tests_done`: số test đã chạy xong theo `PROGRESS` cuối cùng, hoặc `null` khi worker chưa báo `PROGRESS` nào cho lần giao này.
+`job` gồm `submission_id`, `attempt_id`, `confirmed` (boolean: worker đã xác nhận nhận việc, tức đã báo `PROGRESS` đầu tiên hoặc `RESULT`; lần giao chưa xác nhận bị mất không tính vào trần 3 lần, mục 2.6), `tests_total` (số test của đề, gồm cả test ẩn; chỉ là một con số, như ở mục 4.8), `is_rejudge` (boolean) và `tests_done`: số test đã chạy xong theo `PROGRESS` cuối cùng, hoặc `null` khi worker chưa báo `PROGRESS` nào cho lần giao này.
 
 `queue` đếm từ cơ sở dữ liệu: `queued` là bài mới đang chờ (không phải rejudge), `rejudge_queued` là bài đang chờ chấm lại, `judging` là bài đang chấm (kể cả rejudge).
 
