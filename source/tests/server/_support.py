@@ -149,7 +149,8 @@ class FakeWorker:
 
 def make_config(tmp_path, **overrides):
     cfg = ServerConfig(bind_host="127.0.0.1", worker_port=0, secret=SECRET, db_path=str(tmp_path / "test.db"),
-                       problems_dir=str(tmp_path / "problems"), monitor_tick_s=0.05)
+                       problems_dir=str(tmp_path / "problems"), monitor_tick_s=0.05,
+                       pending_per_user=10**9, pending_global=10**9)  # trần bài đang chờ (D25) bật riêng ở test_rest_pending_cap
     for key, value in overrides.items():
         setattr(cfg, key, value)
     return cfg

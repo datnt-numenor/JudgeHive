@@ -10,8 +10,8 @@ from server.dispatcher import LEVEL_NEW
 from server.rest import sessions, views
 from server.rest.body import body_submit, utf8_size
 from server.rest.parse import INT64_MAX, parse_uint
-from server.rest.errors import ApiError, ApiJSONResponse, invalid, log, problem_not_found, rate_limited, \
-    submission_not_found
+from server.rest.errors import ApiError, ApiJSONResponse, invalid, log, problem_not_found, queue_full, rate_limited, \
+    submission_not_found, too_many_pending
 from server.rest.problem_routes import PROBLEM_ID
 
 router = APIRouter()
@@ -19,11 +19,19 @@ router = APIRouter()
 LANGUAGES = ("python", "cpp", "java")
 CLIENT_TOKEN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT = 50, 200
+# Hai truy vấn đếm của D25; tests/server khẳng định plan của chúng dùng covering index `idx_submissions_pending`.
+PENDING_OF_USER_SQL = ("SELECT COUNT(*) FROM submissions WHERE state IN ('queued', 'judging') AND is_rejudge = 0 "
+                       "AND user_id = ?")
+QUEUED_GLOBAL_SQL = "SELECT COUNT(*) FROM submissions WHERE state = 'queued' AND is_rejudge = 0"
 
 
 def accept_submission(state, user, problem_id, language, code, token):
-    """Một transaction `BEGIN IMMEDIATE` theo đúng thứ tự README 3.2: trùng token, rồi đề, rồi rate limit, rồi ghi.
-    Đếm rate limit bằng DB nên đúng sau restart và nguyên tử với việc ghi bài (không cần lock riêng).
+    """Một transaction `BEGIN IMMEDIATE` theo đúng thứ tự README 3.2: trùng token, rồi đề, rồi rate limit, rồi trần bài
+    đang chờ của người nộp, rồi trần toàn hệ thống, rồi ghi (D25). Đếm bằng DB nên đúng sau restart và nguyên tử với
+    việc ghi bài (không cần lock riêng). Dispatcher cũng ghi qua `write()` nên bị tuần tự hóa với hàm này: không có chen
+    ngang giữa đếm và ghi. Trần chỉ kiểm lúc chấp nhận: giao lại hoặc nạp lại lúc restart đưa `judging` về `queued`
+    có thể đẩy số `queued` tạm vượt `pending_global` (nhiều nhất bằng số bài đang `judging`), không đẩy được vượt
+    `pending_per_user` vì bài `judging` đã được đếm.
     Trả `(id, state, received_ms, created)`."""
     now = state.clock()
     cfg = state.cfg
@@ -42,6 +50,14 @@ def accept_submission(state, user, problem_id, language, code, token):
                          (user.id, now - window_ms, cfg.submit_rate_limit - 1)).fetchone()
         if edge is not None:
             raise rate_limited(-(-(edge["submitted_at"] + window_ms - now) // 1000))
+        # Đếm qua `idx_submissions_pending` (state, is_rejudge, user_id): covering index, không đọc dòng bảng (có cột `code`).
+        # Rejudge (is_rejudge = 1) không tính và không bị chặn; admin không được miễn.
+        pending = c.execute(PENDING_OF_USER_SQL, (user.id,)).fetchone()[0]
+        if pending >= cfg.pending_per_user:
+            raise too_many_pending(cfg.pending_retry_after_s)
+        queued = c.execute(QUEUED_GLOBAL_SQL).fetchone()[0]
+        if queued >= cfg.pending_global:
+            raise queue_full(cfg.queue_full_retry_after_s)
         sid = c.execute("INSERT INTO submissions (user_id, problem_id, language, code, client_token, submitted_at, "
                         "state) VALUES (?, ?, ?, ?, ?, ?, 'queued')",
                         (user.id, problem_id, language, code, token, now)).lastrowid

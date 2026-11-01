@@ -189,10 +189,12 @@ def test_migration_backfills_total_deliveries_and_returns_the_in_flight_delivery
     from server import db as db_module
     path = str(tmp_path / "old.db")
     conn = sqlite3.connect(path, isolation_level=None)
-    for script in MIGRATIONS[:-1]:
+    d22 = [i for i, script in enumerate(MIGRATIONS) if "total_deliveries" in script]
+    assert len(d22) == 1, d22  # đúng một migration thêm cột; các migration thêm sau nó không làm lệch test này
+    for script in MIGRATIONS[:d22[0]]:
         for statement in db_module._split_statements(script):
             conn.execute(statement)
-    conn.execute(f"PRAGMA user_version={len(MIGRATIONS) - 1}")
+    conn.execute(f"PRAGMA user_version={d22[0]}")
     conn.execute("INSERT INTO users (id, username, password_hash, role, created_at) VALUES (1, 'u', 'x', 'user', 1)")
     conn.execute("INSERT INTO problems (id, title, statement, time_limit_ms, memory_limit_kib, hidden, tests_hash, "
                  "created_at, updated_at) VALUES ('p', 'P', 's', 1000, 1024, 0, 'h', 1, 1)")
