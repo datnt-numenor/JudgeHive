@@ -135,7 +135,9 @@ không bao giờ gọi thẳng `ScoreboardService.mark_dirty` (chỉ chạy trê
 `ADMIN ...` (id admin, đối tượng, giá trị cũ và mới), không ghi body. `tests/server/test_rest_errors.py` liệt kê tập đường
 dẫn `/api/*` cụ thể: thêm route thì thêm đường dẫn vào đó.
 
-Hai `GET` theo dõi (`/api/admin/workers`, `/api/admin/submissions`) chỉ đọc. `workers` lấy ảnh chụp từ
+Hai `GET` theo dõi (`/api/admin/workers`, `/api/admin/submissions`) chỉ đọc. `state` của worker chỉ có `idle` và `busy`:
+dispatcher giữ chỗ (`reserved`, nội bộ) một worker rảnh trong lúc chờ bài kế tiếp, và `assign_job` đặt `busy` cùng lúc với `job`,
+nên `admin_view` suy `state` từ `job is None`. `workers` lấy ảnh chụp từ
 `WorkerServer.admin_view()` (copy field dưới `_lock`, không I/O; `snapshot()` giữ nguyên vì test đã khóa dùng
 `len(snapshot())`) rồi mới đếm hàng đợi bằng một truy vấn trên chỉ mục phủ `idx_submissions_pending`, nên hai phần đọc ở hai
 thời điểm khác nhau. Tham số query do `_strict_query` tự parse (tên lạ hoặc trùng là 400), không khai báo query có kiểu.

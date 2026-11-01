@@ -750,7 +750,7 @@ Quy ước chung của mọi endpoint dưới `/api/admin/`:
 
 - Chỉ tài khoản có role `admin` dùng được. Role đọc từ cơ sở dữ liệu ở mỗi request (đổi role có hiệu lực ngay ở request kế tiếp); server không tin field nào client gửi lên về role hay người dùng.
 - Thứ tự kiểm tra (lỗi đầu tiên gặp được trả về): phiên (401) → role (403 `FORBIDDEN`) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → đối tượng tồn tại (404) → thực hiện. Người không phải admin luôn nhận 403 trên mọi route admin có thật, kể cả khi body hỏng hoặc đối tượng không tồn tại, nên không dò được gì từ các lỗi sau. Hai ngoại lệ do định tuyến, xảy ra trước kiểm tra phiên và với cả người chưa đăng nhập: sai method trên một đường dẫn admin có thật trả 405 kèm `Allow`, và đường dẫn dưới `/api/admin/` không có route nào trả 404 `NOT_FOUND`; chúng chỉ cho biết route nào tồn tại, vốn đã công khai trong mục này.
-- Thao tác ghi chỉ dùng `PATCH`, `POST` hoặc `PUT` với JSON; không có `GET` nào đổi trạng thái. Các `GET` của nhóm admin chỉ đọc, nhận tham số qua query (không có body), và từ chối tham số query lạ hoặc trùng bằng 400 `INVALID_REQUEST`: nhóm admin từ chối tham số query lạ hoặc trùng, chặt hơn các endpoint thí sinh (`GET /api/submissions` bỏ qua tham số lạ). Giới hạn body như `POST` thường (mục 3.2).
+- Thao tác ghi chỉ dùng `PATCH`, `POST` hoặc `PUT` với JSON; không có `GET` nào đổi trạng thái. Các `GET` của nhóm admin chỉ đọc và nhận tham số qua query (không có body). Nhóm admin từ chối tham số query lạ hoặc trùng bằng 400 `INVALID_REQUEST`, chặt hơn các endpoint thí sinh (`GET /api/submissions` bỏ qua tham số lạ). Giới hạn body như `POST` thường (mục 3.2).
 - Không có rate limit. Mỗi thao tác ghi để lại một dòng trong log của server (admin, hành động, đối tượng), không ghi body.
 - Body của nhóm admin từ chối field thừa (400 `INVALID_REQUEST`): chặt hơn các endpoint thí sinh, vốn bỏ qua field lạ.
 
@@ -787,9 +787,9 @@ Tình trạng các worker đang kết nối và độ dài hàng đợi, chỉ �
 | `worker_id` | integer | Server cấp cho mỗi kết nối (một worker nối lại là `worker_id` mới); các phần tử sắp theo `worker_id` tăng dần |
 | `name` | string | Tên worker tự khai khi đăng ký, chỉ để hiển thị; có thể trùng giữa các worker, không dùng để nhận dạng |
 | `addr` | string | Địa chỉ `host:port` phía worker của kết nối TCP |
-| `state` | string | `idle` (không có bài) hoặc `busy` (đang được giao một bài, kể cả lúc dòng `JOB` còn đang gửi). Server giữ chỗ một worker rảnh để chờ bài kế tiếp; worker đó vẫn báo `idle` |
+| `state` | string | `idle` (không có bài) hoặc `busy` (đang được giao một bài, kể cả lúc dòng `JOB` còn đang gửi) |
 | `connected_s` | integer | Số giây từ lúc kết nối, làm tròn xuống |
-| `last_seen_s` | integer | Số giây từ lần cuối nhận được message từ worker, làm tròn xuống |
+| `last_seen_s` | integer | Số giây từ lần cuối server thấy worker còn hoạt động (nhận message từ worker, hoặc vừa gửi xong một dòng `JOB`), làm tròn xuống |
 | `jobs_done` | integer | Số bài worker này đã báo `RESULT` kể từ lúc kết nối |
 | `job` | object hoặc `null` | Bài đang giao cho worker; `null` khi không có |
 
