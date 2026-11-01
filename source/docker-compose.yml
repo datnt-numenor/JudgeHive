@@ -50,12 +50,15 @@ services:
     security_opt: ["no-new-privileges:true"]
     pids_limit: 512  # chặn fork bomb duy nhất (không đặt RLIMIT_NPROC)
     mem_limit: 1g
+    memswap_limit: 1g  # bằng mem_limit: tmpfs không tràn sang swap
     cpus: 2
     read_only: true
+    # tmpfs tính vào bộ nhớ cgroup nên mỗi cái có trần dung lượng và inode (D27). [ĐỀ XUẤT] 16/16/64 và 2048: con số
+    # cuối là con số đã đo lại trước khi merge.
     tmpfs:
-      - /tmp
-      - /dev/shm
-      - /work:exec,mode=755  # /work cần exec để chạy file C++ đã biên dịch
+      - /tmp:size=16m,nr_inodes=2048
+      - /dev/shm:size=16m,nr_inodes=2048
+      - /work:exec,mode=755,size=64m,nr_inodes=2048  # /work cần exec để chạy file C++ đã biên dịch
     restart: unless-stopped
 
 volumes:
