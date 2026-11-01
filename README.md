@@ -460,7 +460,7 @@ Khi đó:
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
-Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng. WebSocket `/ws` ở mục 4. Chưa có trong phần này, sẽ thêm ở PR sau: endpoint admin.
+Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có một endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
 
 #### 3.1. Bảng tóm tắt
 
@@ -476,6 +476,7 @@ Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộ
 | `/api/submissions` | HTTP/1.1 | GET | query `limit`, `before_id` (tùy chọn) | 200 `{"submissions":[…],"next_before_id"}` |
 | `/api/submissions/{id}` | HTTP/1.1 | GET | — | 200 một bài nộp của chính người gọi, kèm chi tiết |
 | `/api/scoreboard` | HTTP/1.1 | GET | — | 200 `{"version","generated_at","rows":[{"rank","username","solved","wrong","last_ac_at"}]}` |
+| `/api/admin/problems/{id}` | HTTP/1.1 | PATCH | `{"hidden"}` | 200 đề dạng phần tử của `GET /api/problems`; chỉ admin (mục 3.6) |
 
 Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
@@ -497,7 +498,7 @@ Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 - Một người có thể có nhiều phiên cùng lúc (nhiều tab, nhiều máy). `POST /api/logout` chỉ hủy phiên đang dùng.
 - Đăng nhập khi request đã mang một phiên còn hiệu lực thì phiên cũ bị hủy và cấp phiên mới.
 - Chỉ `POST /api/login`, `GET /api/health` (và file tĩnh) không cần phiên. Mọi endpoint khác: chưa đăng nhập, cookie sai hoặc phiên hết hạn thì 401 `UNAUTHENTICATED`; kể cả `POST /api/logout`, client coi 401 ở đây là đã đăng xuất.
-- Đã đăng nhập mà không đủ quyền thì 403 `FORBIDDEN`. Endpoint trong phần này không trả 403 (chưa có endpoint admin).
+- Đã đăng nhập mà không đủ quyền thì 403 `FORBIDDEN`. Chỉ các endpoint dưới `/api/admin/` (mục 3.6) trả 403; các endpoint ở mục 3.1 còn lại không phân quyền theo role.
 
 **Định dạng lỗi.** Mọi response lỗi của `/api/*`, kể cả đường dẫn không tồn tại (404), sai method (405), body quá lớn (413) và lỗi server (500), có đúng dạng:
 
@@ -523,7 +524,7 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 
 - Mỗi người được nộp tối đa 10 bài trong bất kỳ khoảng 60 giây nào (cửa sổ trượt, tính cả admin). Vượt thì 429 `RATE_LIMITED` kèm header `Retry-After` là số giây nguyên ≥ 1 cần chờ.
 - Chỉ bài được chấp nhận mới tính vào giới hạn. Request lỗi (400, 404, 413, 415) không tính. Request trùng `client_token` (mục 3.3) không tính và không bị chặn.
-- Các endpoint khác trong phần này không có rate limit.
+- Các endpoint khác trong phần này, kể cả endpoint admin (mục 3.6), không có rate limit.
 - `POST /api/login`: tối đa 10 lần thử trong bất kỳ khoảng 60 giây nào cho mỗi `username` (cửa sổ trượt). Vượt thì 429 `RATE_LIMITED` kèm `Retry-After`, kể cả khi mật khẩu đúng. Mọi lần thử hợp lệ về định dạng đều tính (đúng, sai, hay username không tồn tại, để không lộ username nào có thật); request 400 hoặc 413 không tính. Server kiểm tra giới hạn trước khi kiểm tra mật khẩu. Ngoài ra tối đa 8 đăng nhập được xử lý cùng lúc trên toàn server (băm mật khẩu tốn bộ nhớ và thread); lượt thứ 9 trở đi trả ngay 429 `RATE_LIMITED` kèm `Retry-After: 1`, không chờ, và không tính vào giới hạn theo `username`. Hạn chế: người khác có thể cố ý khóa tạm một username bằng cách thử liên tục, nhưng chỉ tối đa mỗi lần 60 giây và không ảnh hưởng username khác.
 
 **Trần số bài đang chờ chấm (429, 503).** Ngoài rate limit theo thời gian, `POST /api/submissions` còn bị chặn khi hàng đợi chấm đã dài:
@@ -725,7 +726,7 @@ Mỗi phần tử của `rows`:
 | `INVALID_REQUEST` | 400 | JSON hỏng hoặc không phải object, thiếu field, sai kiểu hoặc sai giá trị (kể cả `language` lạ, `client_token` không phải UUID, tham số query sai hoặc trùng) |
 | `UNAUTHENTICATED` | 401 | Thiếu cookie, phiên sai hoặc hết hạn |
 | `INVALID_CREDENTIALS` | 401 | `POST /api/login` sai thông tin đăng nhập |
-| `FORBIDDEN` | 403 | Đã đăng nhập nhưng không đủ quyền (chưa endpoint nào ở phần này dùng) |
+| `FORBIDDEN` | 403 | Đã đăng nhập nhưng không đủ quyền: mọi endpoint dưới `/api/admin/` khi người gọi không phải admin |
 | `NOT_FOUND` | 404 | Đường dẫn `/api/*` không tồn tại |
 | `PROBLEM_NOT_FOUND` | 404 | Đề không tồn tại hoặc ẩn với người gọi |
 | `SUBMISSION_NOT_FOUND` | 404 | Bài nộp không tồn tại hoặc không phải của người gọi |
@@ -739,6 +740,32 @@ Mỗi phần tử của `rows`:
 | `QUEUE_FULL` | 503 | Toàn hệ thống đã có 200 bài `queued`; kèm `Retry-After` |
 
 **Hai loại 503.** (1) `QUEUE_FULL` do ứng dụng trả (mục 3.2): theo định dạng `{"error": {...}}`, có `Retry-After` và `Cache-Control: no-store`. (2) 503 do hạ tầng: khi có quá nhiều kết nối đồng thời (giới hạn `--limit-concurrency` của uvicorn, xem `server/README.md`), uvicorn trả 503 ngay ở tầng hạ tầng, trước khi request tới ứng dụng. Response này **không** theo định dạng `{"error": {...}}` (thân là văn bản thường) và không có `Cache-Control: no-store`. Client phân biệt hai loại bằng việc thân có phải JSON dạng lỗi hay không. Với cả hai, client coi đó là lỗi tạm thời: thử lại sau, và với `POST /api/submissions` giữ nguyên `client_token` khi thử lại nếu nội dung không đổi (mục 3.3).
+
+#### 3.6. Admin (`/api/admin/`)
+
+Quy ước chung của mọi endpoint dưới `/api/admin/`:
+
+- Chỉ tài khoản có role `admin` dùng được. Role đọc từ cơ sở dữ liệu ở mỗi request (đổi role có hiệu lực ngay ở request kế tiếp); server không tin field nào client gửi lên về role hay người dùng.
+- Thứ tự kiểm tra (lỗi đầu tiên gặp được trả về): phiên (401) → role (403 `FORBIDDEN`) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → đối tượng tồn tại (404) → thực hiện. Người không phải admin luôn nhận 403 trên mọi route admin có thật, kể cả khi body hỏng hoặc đối tượng không tồn tại, nên không dò được gì từ các lỗi sau. Hai ngoại lệ do định tuyến, xảy ra trước kiểm tra phiên và với cả người chưa đăng nhập: sai method trên một đường dẫn admin có thật trả 405 kèm `Allow`, và đường dẫn dưới `/api/admin/` không có route nào trả 404 `NOT_FOUND`; chúng chỉ cho biết route nào tồn tại, vốn đã công khai trong mục này.
+- Thao tác ghi chỉ dùng `PATCH`, `POST` hoặc `PUT` với JSON; không có `GET` nào đổi trạng thái. Giới hạn body như `POST` thường (mục 3.2).
+- Không có rate limit. Mỗi thao tác ghi để lại một dòng trong log của server (admin, hành động, đối tượng), không ghi body.
+- Body của nhóm admin từ chối field thừa (400 `INVALID_REQUEST`): chặt hơn các endpoint thí sinh, vốn bỏ qua field lạ.
+
+##### `PATCH /api/admin/problems/{id}`
+
+Ẩn hoặc hiện một đề (không có endpoint xóa đề; gỡ đề bằng cách ẩn).
+
+| Field | Kiểu | Bắt buộc | Ghi chú |
+| --- | --- | --- | --- |
+| `hidden` | boolean | có | `true` để ẩn, `false` để hiện. Phải là boolean JSON: `0`, `1`, chuỗi và `null` bị từ chối |
+
+- Body có field khác ngoài `hidden`, hoặc thiếu `hidden`, hoặc sai kiểu: 400 `INVALID_REQUEST`.
+- Thành công: 200, body là đối tượng đề dạng phần tử của `GET /api/problems` (`id`, `title`, `time_limit_ms`, `memory_limit_kib`, `hidden` với giá trị thật).
+- Id sai định dạng (mục 3.2) hoặc đề không tồn tại: 404 `PROBLEM_NOT_FOUND`.
+- Đặt đúng giá trị đang có thì vẫn 200, không ghi gì và không làm bảng xếp hạng tính lại.
+- Khi giá trị thật sự đổi, server tính lại bảng xếp hạng (mục 3.3, gộp tối đa một lần mỗi giây): ẩn một đề thì mọi bài trên đề đó thôi được tính, hiện lại thì được tính lại.
+- Đề ẩn không còn trong `GET /api/problems` và `GET /api/problems/{id}` (404) với người không phải admin; người không phải admin nộp bài mới vào đề ẩn thì 404 `PROBLEM_NOT_FOUND`. Admin vẫn xem và nộp bài vào đề ẩn được.
+- Ẩn đề không hủy bài đã nộp. Bài đang chờ hoặc đang chấm vẫn được chấm xong, `STATUS` vẫn gửi cho chủ bài, và bài vẫn nằm trong lịch sử của chủ bài (mục 3.3). Riêng `sample_input` và `sample_expected_output` của bài trên đề đang ẩn là `null` với người không phải admin.
 
 
 ### 4. WebSocket (server đẩy)

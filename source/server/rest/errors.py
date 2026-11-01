@@ -44,6 +44,10 @@ def unauthenticated():
     return ApiError(401, "UNAUTHENTICATED", "authentication required")
 
 
+def forbidden():
+    return ApiError(403, "FORBIDDEN", "forbidden")
+
+
 def problem_not_found():
     return ApiError(404, "PROBLEM_NOT_FOUND", "problem not found")
 

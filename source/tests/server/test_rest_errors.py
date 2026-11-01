@@ -203,13 +203,17 @@ def test_no_route_declares_validated_parameters():
     import pathlib
 
     app = create_app(make_config(pathlib.Path(tempfile.mkdtemp())))
-    seen = 0
+    seen = set()
     for route in app.routes:
         dependant = getattr(route, "dependant", None)
         if dependant is None or not route.path.startswith("/api"):
             continue
-        seen += 1
+        seen.add(route.path)
         assert not dependant.query_params and not dependant.body_params and not dependant.header_params, route.path
         assert not dependant.cookie_params, route.path
         assert all(p.field_info.annotation is str for p in dependant.path_params), route.path
-    assert seen == 10, seen  # login, logout, me, health, problems x2, scoreboard, submissions x3
+    # So với tập đường dẫn cụ thể (không đếm số): thêm hay bớt route phải sửa danh sách này, nên không route nào lọt qua
+    # kiểm tra mà không ai biết. Mỗi PR thêm endpoint admin thêm đường dẫn của nó vào đây.
+    assert seen == {"/api/login", "/api/logout", "/api/me", "/api/health", "/api/problems", "/api/problems/{problem_id}",
+                    "/api/scoreboard", "/api/submissions", "/api/submissions/{submission_id}",
+                    "/api/admin/problems/{problem_id}"}, sorted(seen)
