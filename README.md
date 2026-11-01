@@ -746,7 +746,7 @@ Mỗi phần tử của `rows`:
 Quy ước chung của mọi endpoint dưới `/api/admin/`:
 
 - Chỉ tài khoản có role `admin` dùng được. Role đọc từ cơ sở dữ liệu ở mỗi request (đổi role có hiệu lực ngay ở request kế tiếp); server không tin field nào client gửi lên về role hay người dùng.
-- Thứ tự kiểm tra (lỗi đầu tiên gặp được trả về): phiên (401) → role (403 `FORBIDDEN`) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → đối tượng tồn tại (404) → thực hiện. Người không phải admin luôn nhận 403, kể cả khi body hỏng hoặc đối tượng không tồn tại, nên không dò được gì từ các lỗi sau.
+- Thứ tự kiểm tra (lỗi đầu tiên gặp được trả về): phiên (401) → role (403 `FORBIDDEN`) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → đối tượng tồn tại (404) → thực hiện. Người không phải admin luôn nhận 403 trên mọi route admin có thật, kể cả khi body hỏng hoặc đối tượng không tồn tại, nên không dò được gì từ các lỗi sau. Hai ngoại lệ do định tuyến, xảy ra trước kiểm tra phiên và với cả người chưa đăng nhập: sai method trên một đường dẫn admin có thật trả 405 kèm `Allow`, và đường dẫn dưới `/api/admin/` không có route nào trả 404 `NOT_FOUND`; chúng chỉ cho biết route nào tồn tại, vốn đã công khai trong mục này.
 - Thao tác ghi chỉ dùng `PATCH`, `POST` hoặc `PUT` với JSON; không có `GET` nào đổi trạng thái. Giới hạn body như `POST` thường (mục 3.2).
 - Không có rate limit. Mỗi thao tác ghi để lại một dòng trong log của server (admin, hành động, đối tượng), không ghi body.
 - Body của nhóm admin từ chối field thừa (400 `INVALID_REQUEST`): chặt hơn các endpoint thí sinh, vốn bỏ qua field lạ.
