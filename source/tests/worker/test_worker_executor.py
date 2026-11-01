@@ -3,7 +3,9 @@
 import dataclasses
 import os
 import resource
+import shutil
 import subprocess
+import tempfile
 import time
 
 import pytest
@@ -162,8 +164,26 @@ def test_files_in_tmp_do_not_leak_between_submissions(work_root):
 
 
 def test_candidate_cannot_write_or_delete_outside_its_dir(work_root):
-    body, _ = grade(work_root, "python", SUB["fs_attack"]["python"], [case("", "x\n", True)])
-    assert body["sample_stdout"].splitlines() == ["denied"] * 4
+    """Tách uid phải thấy được cả khi root fs chỉ đọc (compose `read_only`): đường dẫn trên fs chỉ đọc có thể ra
+    EROFS, nhưng đích ghi được về filesystem mà root sở hữu (tmpfs) phải ra đúng PermissionError."""
+    root_dir = tempfile.mkdtemp(prefix="jh-rootdir-", dir="/tmp")  # ghi được về fs (tmpfs), root sở hữu, 0755
+    try:
+        victim = os.path.join(root_dir, "victim")
+        with open(victim, "w") as f:
+            f.write("root data")
+        os.chmod(root_dir, 0o755)
+        os.chmod(victim, 0o644)
+        assert os.stat(root_dir).st_uid == 0 and os.access(root_dir, os.W_OK)  # root ghi được: chỉ uid khác mới bị chặn
+        body, _ = grade(work_root, "python", SUB["fs_attack"]["python"], [case(root_dir + "\n", "x\n", True)])
+        lines = body["sample_stdout"].splitlines()
+        assert len(lines) == 8, body
+        assert all(l in ("denied", "erofs") for l in lines[:2] + lines[3:4]), lines  # /etc, /usr: có thể chỉ đọc
+        assert lines[2:3] + lines[4:] == ["denied"] * 5, lines  # fs ghi được, root sở hữu: đúng PermissionError
+        with open(victim) as f:
+            assert f.read() == "root data"
+        assert sorted(os.listdir(root_dir)) == ["victim"]
+    finally:
+        shutil.rmtree(root_dir, ignore_errors=True)
 
 
 def test_cancel_stops_running_program_quickly_and_cleans_up(work_root):

@@ -282,8 +282,9 @@ SUB["tmp_read"] = {
                '    print(p, "present" if os.path.exists(p) else "missing")\n'),
 }
 
-SUB["fs_attack"] = {  # ghi/xóa ngoài thư mục tạm của mình
-    "python": r'''import os
+SUB["fs_attack"] = {  # ghi/xóa ngoài thư mục tạm của mình; dòng 1 của stdin là thư mục root-owned ghi được về filesystem
+    "python": r'''import errno, os, sys
+rootdir = sys.stdin.readline().strip()
 def attempt(fn):
     try:
         fn()
@@ -291,11 +292,15 @@ def attempt(fn):
     except PermissionError:
         return "denied"
     except OSError as e:
-        return "oserror"
+        return "erofs" if e.errno == errno.EROFS else "oserror"
 print(attempt(lambda: open("/etc/jh-pwned", "w")))
 print(attempt(lambda: os.remove("/etc/hostname")))
 print(attempt(lambda: open(os.path.dirname(os.getcwd()) + "/jh-pwned", "w")))
 print(attempt(lambda: os.rename("/usr/bin/env", "/usr/bin/env.bak")))
+print(attempt(lambda: open(rootdir + "/new-file", "w")))
+print(attempt(lambda: os.remove(rootdir + "/victim")))
+print(attempt(lambda: open(rootdir + "/victim", "w")))
+print(attempt(lambda: os.rename(rootdir + "/victim", rootdir + "/moved")))
 ''',
 }
 
