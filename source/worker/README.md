@@ -48,7 +48,15 @@ bằng root. Cấu hình đã kiểm chứng ở PR 3 (lệnh test chuẩn dùng
   `tests/worker/test_worker_container.py` (bomb thật làm cạn `pids_limit`: thread và tiến trình đều bị từ chối).
 - `mem_limit`, `cpus`; `init: true` không cần vì image dùng `tini`.
 - Nếu dùng `read_only: true`: mount `tmpfs` cho `/tmp`, `/dev/shm` và `/work`. **`/work` cần `exec`** (tmpfs của
-  Docker mặc định là `noexec`, C++ sẽ không chạy được file đã biên dịch): ví dụ `tmpfs: ["/work:exec,mode=755"]`.
+  Docker mặc định là `noexec`, C++ sẽ không chạy được file đã biên dịch).
+- **Mỗi tmpfs phải có trần `size=` và `nr_inodes=`** (D27). Tmpfs tính vào bộ nhớ của cgroup; không có trần thì
+  chương trình thí sinh ghi file liên tục sẽ làm OOM killer giết cả worker (đã đo). Cấu hình compose:
+  `/tmp:size=16m,nr_inodes=2048`, `/dev/shm:size=16m,nr_inodes=2048`, `/work:exec,mode=755,size=64m,nr_inodes=2048`
+  [ĐỀ XUẤT, con số cuối ghi sau khi đo lại], cùng `memswap_limit` bằng `mem_limit` để tmpfs không tràn sang swap.
+  Nhu cầu thật của ba ngôn ngữ dưới 0,1 MiB.
+- Input của test không nằm trên filesystem: worker ghi vào `memfd` (bộ nhớ ẩn danh, không tính vào tmpfs) rồi cho
+  tiến trình thí sinh nhận làm stdin. Vì vậy `/work` đầy không làm hỏng việc ghi input của test kế tiếp. fd này
+  là `CLOEXEC` ở mọi nơi trừ stdin của con; thí sinh chạy uid khác nên không mở được `/proc/<pid>/fd/*` của worker.
 - Secret qua `JH_WORKER_SECRET_FILE`. `os.environ.pop` không xóa bản gốc trong `/proc/<pid>/environ`; bảo vệ thật là
   tiến trình thí sinh chạy uid khác nên không đọc được file đó (test đọc thử thật dưới uid thí sinh).
 
