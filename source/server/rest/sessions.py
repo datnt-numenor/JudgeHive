@@ -11,9 +11,9 @@ import re
 import secrets
 from dataclasses import dataclass
 
-from fastapi import Request
+from fastapi import Depends, Request
 
-from server.rest.errors import unauthenticated
+from server.rest.errors import forbidden, unauthenticated
 
 COOKIE_NAME = "jh_session"
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")  # token_urlsafe(32)
@@ -83,4 +83,13 @@ def current_user(request: Request):
     user = lookup(state.db, request.cookies.get(COOKIE_NAME), state.clock())
     if user is None:
         raise unauthenticated()
+    return user
+
+
+def require_admin(user: SessionUser = Depends(current_user)):
+    """Dependency của mọi route `/api/admin/*` (README 3.6, D23): 401 khi thiếu phiên, 403 `FORBIDDEN` khi không phải admin.
+    `lookup` đọc `role` từ DB ở mỗi request nên đổi role có hiệu lực ngay. Phải đứng TRƯỚC dependency đọc body trong chữ
+    ký của route, để người không phải admin luôn nhận 403 dù body hỏng (không dò được gì từ 400, 413, 415, 404)."""
+    if user.role != "admin":
+        raise forbidden()
     return user

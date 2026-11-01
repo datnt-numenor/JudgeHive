@@ -125,6 +125,16 @@ Trần là `pending_per_user` (5) và `pending_global` (200) trong `ServerConfig
 ở `make_config`, chỉ `test_rest_pending_cap.py` đặt thấp.
 Hết 5 giây `busy_timeout` thì endpoint trả 500; client gửi lại cùng `client_token` là an toàn.
 
+### Endpoint admin
+
+Route admin nằm trong `server/rest/admin_routes.py`, dưới `/api/admin/`. Mỗi route khai báo `Depends(sessions.require_admin)`
+trước `Depends(body_default)` trong chữ ký, để người không phải admin nhận 403 trước mọi lỗi của body (FastAPI giải
+dependency theo thứ tự khai báo). `require_admin` dựa trên `current_user`, nên role đọc từ DB ở mỗi request. Endpoint là
+`def` (threadpool): chỉ báo bảng xếp hạng qua `state.hooks.scoreboard_dirty()`, sau commit và chỉ khi dữ liệu thật sự đổi;
+không bao giờ gọi thẳng `ScoreboardService.mark_dirty` (chỉ chạy trên event loop). Mỗi thao tác ghi để lại một dòng log
+`ADMIN ...` (id admin, đối tượng, giá trị cũ và mới), không ghi body. `tests/server/test_rest_errors.py` liệt kê tập đường
+dẫn `/api/*` cụ thể: thêm route thì thêm đường dẫn vào đó.
+
 ### Bảng xếp hạng và event loop
 
 `ScoreboardService` giữ mọi trạng thái (bản gần nhất, phiên bản, cờ cần tính lại, danh sách subscriber) chỉ trên event loop. Truy vấn SQLite chạy trong một thread riêng của dịch vụ (`scoreboard-db`, một thread duy nhất, nên không có hai lần tính song song), vẫn qua `Database.conn()` nên cùng pragma với mọi chỗ khác. Thread khác (dispatcher, cổng worker) chỉ gọi `LoopHooks.scoreboard_dirty`, hàm này làm `loop.call_soon_threadsafe(service.mark_dirty)` rồi trả về và không bao giờ ném. Số phiên bản tăng trên event loop ngay trước khi giao việc cho thread, nên bản mang phiên bản v phản ánh mọi commit đã đánh dấu trước đó; bản đầu (phiên bản 1) tính xong trước khi mở cổng worker, lỗi thì server không khởi động. `GET /api/scoreboard` chỉ đọc bản đã tính, không bao giờ tự tính lại.

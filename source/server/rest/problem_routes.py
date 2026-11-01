@@ -13,7 +13,7 @@ PROBLEM_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 PROBLEM_COLUMNS = "id, title, time_limit_ms, memory_limit_kib, hidden"
 
 
-def _summary(row, is_admin):
+def summary(row, is_admin):
     return {"id": row["id"], "title": row["title"], "time_limit_ms": row["time_limit_ms"],
             "memory_limit_kib": row["memory_limit_kib"], "hidden": bool(row["hidden"]) if is_admin else False}
 
@@ -28,7 +28,7 @@ def list_problems(request: Request, user: sessions.SessionUser = Depends(session
     where = "" if is_admin else " WHERE hidden = 0"
     rows = request.app.state.rest.db.conn().execute(
         f"SELECT {PROBLEM_COLUMNS} FROM problems{where} ORDER BY id").fetchall()
-    return ApiJSONResponse({"problems": [_summary(r, is_admin) for r in rows]})
+    return ApiJSONResponse({"problems": [summary(r, is_admin) for r in rows]})
 
 
 @router.get("/api/problems/{problem_id}")
@@ -43,7 +43,7 @@ def get_problem(problem_id: str, request: Request, user: sessions.SessionUser = 
         raise problem_not_found()
     samples = conn.execute("SELECT input, output FROM tests WHERE problem_id = ? AND is_sample = 1 ORDER BY position",
                            (problem_id,)).fetchall()
-    view = _summary(row, is_admin)
+    view = summary(row, is_admin)
     view["statement"] = row["statement"]
     view["samples"] = [{"input": _text(s["input"]), "output": _text(s["output"])} for s in samples]
     return ApiJSONResponse(view)
