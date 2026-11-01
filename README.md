@@ -461,7 +461,7 @@ Khi đó:
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
-Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có một endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
+Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có ba endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
 
 #### 3.1. Bảng tóm tắt
 
@@ -478,6 +478,8 @@ Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộ
 | `/api/submissions/{id}` | HTTP/1.1 | GET | — | 200 một bài nộp của chính người gọi, kèm chi tiết |
 | `/api/scoreboard` | HTTP/1.1 | GET | — | 200 `{"version","generated_at","rows":[{"rank","username","solved","wrong","last_ac_at"}]}` |
 | `/api/admin/problems/{id}` | HTTP/1.1 | PATCH | `{"hidden"}` | 200 đề dạng phần tử của `GET /api/problems`; chỉ admin (mục 3.6) |
+| `/api/admin/workers` | HTTP/1.1 | GET | — | 200 `{"workers":[…],"queue":{…}}`; chỉ admin (mục 3.6) |
+| `/api/admin/submissions` | HTTP/1.1 | GET | query `state`, `problem_id`, `user_id`, `before_id`, `limit` (tùy chọn) | 200 `{"submissions":[…],"next_before_id"}` bài của mọi người, không có mã nguồn; chỉ admin (mục 3.6) |
 
 Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
@@ -748,7 +750,7 @@ Quy ước chung của mọi endpoint dưới `/api/admin/`:
 
 - Chỉ tài khoản có role `admin` dùng được. Role đọc từ cơ sở dữ liệu ở mỗi request (đổi role có hiệu lực ngay ở request kế tiếp); server không tin field nào client gửi lên về role hay người dùng.
 - Thứ tự kiểm tra (lỗi đầu tiên gặp được trả về): phiên (401) → role (403 `FORBIDDEN`) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → đối tượng tồn tại (404) → thực hiện. Người không phải admin luôn nhận 403 trên mọi route admin có thật, kể cả khi body hỏng hoặc đối tượng không tồn tại, nên không dò được gì từ các lỗi sau. Hai ngoại lệ do định tuyến, xảy ra trước kiểm tra phiên và với cả người chưa đăng nhập: sai method trên một đường dẫn admin có thật trả 405 kèm `Allow`, và đường dẫn dưới `/api/admin/` không có route nào trả 404 `NOT_FOUND`; chúng chỉ cho biết route nào tồn tại, vốn đã công khai trong mục này.
-- Thao tác ghi chỉ dùng `PATCH`, `POST` hoặc `PUT` với JSON; không có `GET` nào đổi trạng thái. Giới hạn body như `POST` thường (mục 3.2).
+- Thao tác ghi chỉ dùng `PATCH`, `POST` hoặc `PUT` với JSON; không có `GET` nào đổi trạng thái. Các `GET` của nhóm admin chỉ đọc, nhận tham số qua query (không có body), và từ chối tham số query lạ hoặc trùng bằng 400 `INVALID_REQUEST` (chặt hơn `GET /api/submissions`, vốn bỏ qua tham số lạ). Giới hạn body như `POST` thường (mục 3.2).
 - Không có rate limit. Mỗi thao tác ghi để lại một dòng trong log của server (admin, hành động, đối tượng), không ghi body.
 - Body của nhóm admin từ chối field thừa (400 `INVALID_REQUEST`): chặt hơn các endpoint thí sinh, vốn bỏ qua field lạ.
 
@@ -767,6 +769,65 @@ Quy ước chung của mọi endpoint dưới `/api/admin/`:
 - Khi giá trị thật sự đổi, server tính lại bảng xếp hạng (mục 3.3, gộp tối đa một lần mỗi giây): ẩn một đề thì mọi bài trên đề đó thôi được tính, hiện lại thì được tính lại.
 - Đề ẩn không còn trong `GET /api/problems` và `GET /api/problems/{id}` (404) với người không phải admin; người không phải admin nộp bài mới vào đề ẩn thì 404 `PROBLEM_NOT_FOUND`. Admin vẫn xem và nộp bài vào đề ẩn được.
 - Ẩn đề không hủy bài đã nộp. Bài đang chờ hoặc đang chấm vẫn được chấm xong, `STATUS` vẫn gửi cho chủ bài, và bài vẫn nằm trong lịch sử của chủ bài (mục 3.3). Riêng `sample_input` và `sample_expected_output` của bài trên đề đang ẩn là `null` với người không phải admin.
+
+##### `GET /api/admin/workers`
+
+Tình trạng các worker đang kết nối và độ dài hàng đợi, chỉ đọc. Không có body.
+
+```json
+{"workers": [{"worker_id": 3, "name": "worker-1", "addr": "172.18.0.4:51234", "state": "busy", "connected_s": 812,
+              "last_seen_s": 1, "jobs_done": 27,
+              "job": {"submission_id": 105, "attempt_id": 2, "tests_done": 4, "tests_total": 10, "is_rejudge": false}}],
+ "queue": {"queued": 7, "rejudge_queued": 120, "judging": 1}}
+```
+
+| Field của mỗi worker | Kiểu | Ghi chú |
+| --- | --- | --- |
+| `worker_id` | integer | Server cấp cho mỗi kết nối (một worker nối lại là `worker_id` mới); các phần tử sắp theo `worker_id` tăng dần |
+| `name` | string | Tên worker tự khai khi đăng ký, chỉ để hiển thị; có thể trùng giữa các worker, không dùng để nhận dạng |
+| `addr` | string | Địa chỉ `host:port` phía worker của kết nối TCP |
+| `state` | string | `idle` (rảnh), `reserved` (đã giữ chỗ để giao bài, chưa gửi xong) hoặc `busy` (đang chấm) |
+| `connected_s` | integer | Số giây từ lúc kết nối, làm tròn xuống |
+| `last_seen_s` | integer | Số giây từ lần cuối nhận được message từ worker, làm tròn xuống |
+| `jobs_done` | integer | Số bài worker này đã báo `RESULT` kể từ lúc kết nối |
+| `job` | object hoặc `null` | Bài đang giao cho worker; `null` khi không có |
+
+`job` gồm `submission_id`, `attempt_id`, `tests_total` (số test của đề, gồm cả test ẩn; chỉ là một con số, như ở mục 4.8), `is_rejudge` (boolean) và `tests_done`: số test đã chạy xong theo `PROGRESS` cuối cùng, hoặc `null` khi worker chưa báo `PROGRESS` nào cho lần giao này.
+
+`queue` đếm từ cơ sở dữ liệu: `queued` là bài mới đang chờ (không phải rejudge), `rejudge_queued` là bài đang chờ chấm lại, `judging` là bài đang chấm (kể cả rejudge).
+
+- Worker đã mất kết nối không còn trong danh sách ngay khi server nhận ra (không có "worker offline").
+- Phần `workers` đọc từ bộ nhớ và phần `queue` đọc từ cơ sở dữ liệu ở hai thời điểm khác nhau trong cùng request, nên có thể lệch nhau nhẹ (ví dụ một bài vừa được giao).
+- Không có mã nguồn, test, secret hay `user_id` của người nộp; không có địa chỉ nào ngoài `addr` của worker.
+
+##### `GET /api/admin/submissions`
+
+Bài nộp của mọi người, mới nhất trước, chỉ đọc. Không có `code`, `ce_message` và các field `sample_*` (chi tiết kèm mã nguồn là việc của một endpoint khác, PR sau).
+
+| Tham số query | Kiểu | Ghi chú |
+| --- | --- | --- |
+| `state` | string | Lọc theo `queued`, `judging` hoặc `judged` (tên như ở mục 3.3). Giá trị khác: 400 |
+| `problem_id` | string | Lọc theo đề; sai định dạng mục 3.2: 400. Đề không tồn tại: danh sách rỗng |
+| `user_id` | integer | Lọc theo người nộp; số nguyên dương ASCII, quá lớn hoặc sai định dạng: 400 |
+| `before_id` | integer | Như `GET /api/submissions`: chỉ trả bài có `submission_id` nhỏ hơn |
+| `limit` | integer | 1 đến 200, mặc định 50 |
+
+Mỗi phần tử là đối tượng bài nộp của mục 3.3 (cùng quy tắc ẩn field theo verdict, D11) và thêm:
+
+| Field thêm | Kiểu | Ghi chú |
+| --- | --- | --- |
+| `user_id` | integer | Người nộp |
+| `username` | string | Tên người nộp |
+| `attempt_id` | integer | Mã lần giao hiện tại (0 khi chưa từng giao) |
+| `delivery_count` | integer | Số lần giao đã xác nhận bị cắt ngang (mục 2.6) |
+| `total_deliveries` | integer | Tổng số lần giao, kể cả lần chưa xác nhận |
+| `is_rejudge` | boolean | Bài đang được chấm lại |
+| `rejudge_failed` | boolean | Lần chấm lại gần nhất lỗi (verdict cũ được giữ) |
+
+Phản hồi có dạng `{"submissions": […], "next_before_id": …}`, phân trang như `GET /api/submissions`.
+
+- Người không phải admin nhận 403 trước khi tham số query được kiểm tra, kể cả bài của chính họ.
+- Không bao giờ có input hay output của test ẩn, stdout/stderr của test ẩn, hay giá trị mã thoát cụ thể (D11).
 
 
 ### 4. WebSocket (server đẩy)
