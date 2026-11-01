@@ -53,8 +53,8 @@ services:
     memswap_limit: 1g  # bằng mem_limit: tmpfs không tràn sang swap
     cpus: 2
     read_only: true
-    # tmpfs tính vào bộ nhớ cgroup nên mỗi cái có trần dung lượng và inode (D27). [ĐỀ XUẤT] 16/16/64 và 2048: con số
-    # cuối là con số đã đo lại trước khi merge.
+    # tmpfs tính vào bộ nhớ cgroup nên mỗi cái có trần dung lượng và inode (D27). 16/16/64 MiB và 2048 inode là con số
+    # đã chạy (đo 1/11: ghi đầy, ngập inode, /work đầy rồi input 2 MiB; oom_kill = 0, AC ba ngôn ngữ).
     tmpfs:
       - /tmp:size=16m,nr_inodes=2048
       - /dev/shm:size=16m,nr_inodes=2048

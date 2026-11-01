@@ -367,7 +367,7 @@ Chương trình in ra stdout vượt 16 MB bị dừng và nhận `WA`.
 
 Lưu ý cho client:
 
-- Thư mục tạm của container worker (`/tmp`, `/dev/shm`, thư mục làm việc của bài) có dung lượng và số inode bị chặn. Chương trình ghi đầy chỗ đó nhận lỗi ghi (`ENOSPC`) như mọi lỗi I/O khác và không làm chết worker hay ảnh hưởng bài khác. Python ra `RE` (`EXIT_NONZERO`) (đã đo). C++ và Java: chưa đo, câu này sẽ được viết lại theo số đo.
+- Thư mục tạm của container worker (`/tmp`, `/dev/shm`, thư mục làm việc của bài) có dung lượng và số inode bị chặn. Chương trình ghi đầy chỗ đó nhận lỗi ghi (`ENOSPC`) như mọi lỗi I/O khác và không làm chết worker hay ảnh hưởng bài khác. Verdict phụ thuộc cách chương trình xử lý lỗi đó (đã đo với Python, C++, Java): thoát với mã khác 0 hoặc để ngoại lệ không bắt thoát ra ngoài thì ra `RE` (`EXIT_NONZERO`); bỏ qua lỗi ghi thì verdict theo output như thường (`AC` nếu output đúng). Không bao giờ ra `MLE`.
 - Với Python và C++, giới hạn bộ nhớ chặn theo không gian địa chỉ ảo, nên một lần cấp phát lớn có thể thất bại khi bộ nhớ thực còn thấp; Java bị giới hạn theo heap. Vì vậy UI hiển thị `MLE` là "vượt giới hạn bộ nhớ", không hiện con số `memory_kib`.
 - `time_ms` so với giới hạn **đã nhân hệ số ngôn ngữ**, không phải giới hạn gốc của đề. Hệ số thời gian theo ngôn ngữ (chốt tạm, đo lại trên máy demo):
 
