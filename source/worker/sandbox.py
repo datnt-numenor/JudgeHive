@@ -204,7 +204,29 @@ def verify_guard():
     out = subprocess.run(_OOM_WRAP + ["cat", "/proc/self/oom_score_adj"], capture_output=True, text=True, timeout=10)
     if out.returncode != 0 or out.stdout.strip() != str(OOM_SCORE_ADJ):
         raise seccomp.GuardError("không đặt được oom_score_adj cho tiến trình con")
+    for name, want in (("kernel/shmmax", "0"), ("kernel/shm_rmid_forced", "1")):
+        got = _read_sysctl(name)
+        if got != want:
+            raise seccomp.GuardError(f"sysctl {name.replace('/', '.')} = {got!r}, cần {want!r} (compose: sysctls)")
+    # Nạp thử bộ lọc thật bằng đúng chuỗi lệnh của thí sinh: util-linux/kernel không hỗ trợ seccomp thì lộ ngay lúc khởi động.
+    probe = subprocess.run(_wrap(["true"], {"nofile": 32}, JUDGE_UID), capture_output=True, timeout=10)
+    if probe.returncode != 0:
+        raise seccomp.GuardError("không chạy được lệnh mẫu dưới setpriv + seccomp-filter: "
+                                 + probe.stderr.decode(errors="replace")[:200])
+    # Hiệu lực thật, đo bằng hành vi dưới uid thí sinh: (a) không hạ lại được oom_score_adj, (b) memfd_create bị chặn.
+    # (close tường minh: lỗi ghi chỉ lộ ra khi flush, nếu không thì thoát mã 0 dù bị từ chối)
+    for what, code in (("hạ oom_score_adj", "f = open('/proc/self/oom_score_adj', 'w'); f.write('0'); f.close()"),
+                       ("memfd_create", "import os; os.memfd_create('x')")):
+        effective = subprocess.run(_wrap(["python3", "-I", "-S", "-c", code], {"nofile": 32}, JUDGE_UID),
+                                   capture_output=True, timeout=10)
+        if effective.returncode == 0:
+            raise seccomp.GuardError(f"thí sinh vẫn làm được: {what} (bảo vệ D28 không có hiệu lực)")
     return path
+
+
+def _read_sysctl(name):
+    with open("/proc/sys/" + name, encoding="utf-8") as f:
+        return f.read().strip()
 
 
 def _wrap(argv, limits, uid):
@@ -242,6 +264,7 @@ def run(argv, *, cwd, timeout_s, limits=None, uid=JUDGE_UID, stdin_path=None, st
     # ngăn kernel đẩy core dump qua pipe (đo ở PR 3: abort() với 200 MB RSS mất 4,5 giây), còn 1 thì kernel bỏ qua.
     limits = {"core": 1, **(limits or {})}
     res = RunResult()
+    guard_filter_path()  # lỗi tạo file BPF (đầy /tmp...) phải nổ TRƯỚC khi mở pipe, để không rò rfd/wfd
     rfd, wfd = os.pipe()
     full = [sys.executable, "-S", "-I", LAUNCHER, str(wfd), *_wrap(argv, limits, uid)]
     stdin = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL

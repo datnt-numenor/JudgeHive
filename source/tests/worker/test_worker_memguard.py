@@ -86,6 +86,29 @@ def test_verify_guard_passes_with_compose_settings_and_fails_closed_without_the_
         sandbox.verify_guard()
 
 
+def test_verify_guard_fails_closed_when_the_sysctls_are_not_applied(monkeypatch):
+    real = sandbox._read_sysctl
+    for name, bad in (("kernel/shmmax", "18446744073692774399"), ("kernel/shm_rmid_forced", "0")):
+        monkeypatch.setattr(sandbox, "_read_sysctl", lambda n, name=name, bad=bad: bad if n == name else real(n))
+        with pytest.raises(seccomp.GuardError, match="sysctl"):
+            sandbox.verify_guard()
+
+
+def test_verify_guard_fails_closed_when_the_seccomp_filter_cannot_be_loaded(monkeypatch):
+    monkeypatch.setattr(sandbox, "guard_filter_path", lambda: "/nonexistent/none.bpf")
+    with pytest.raises(seccomp.GuardError, match="setpriv"):
+        sandbox.verify_guard()
+
+
+def test_verify_guard_detects_a_guard_that_does_not_actually_protect(monkeypatch):
+    """Kiểm bằng hành vi: nếu bọc thiếu (không khóa oom_score_adj, không seccomp) thì khởi động phải bị từ chối."""
+    def unguarded(argv, limits, uid):
+        return ["setpriv", f"--reuid={uid}", f"--regid={uid}", "--clear-groups", *argv]
+    monkeypatch.setattr(sandbox, "_wrap", unguarded)
+    with pytest.raises(seccomp.GuardError, match="thí sinh vẫn làm được"):
+        sandbox.verify_guard()
+
+
 def test_filter_file_is_root_owned_readonly_and_candidate_cannot_replace_it(work_root):
     path = sandbox.guard_filter_path()
     st = os.stat(path)

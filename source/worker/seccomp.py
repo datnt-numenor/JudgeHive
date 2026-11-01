@@ -4,7 +4,7 @@ Worker (root) vẫn dùng `memfd_create` cho input test nên không thể chặn
 Luật:
 - kiến trúc khác kiến trúc máy chủ (x86_64 hoặc aarch64): KILL_PROCESS (chặn `int 0x80` ABI i386 và mọi ABI lạ);
 - x86_64: syscall có bit `__X32_SYSCALL_BIT` (0x40000000): KILL_PROCESS (ABI x32 gọi được `memfd_create` thật);
-- `memfd_create`, `shmget`: ERRNO(EPERM) (thí sinh nhận lỗi như mọi lỗi I/O khác);
+- `memfd_create`, `memfd_secret`, `shmget`: ERRNO(EPERM) (thí sinh nhận lỗi như mọi lỗi I/O khác);
 - còn lại: ALLOW.
 Chỉ dùng thư viện chuẩn, không cần libseccomp."""
 
@@ -13,7 +13,8 @@ import struct
 
 AUDIT_ARCH = {"x86_64": 0xC000003E, "aarch64": 0xC00000B7}
 # Số syscall theo kiến trúc (linux/arch/x86/entry/syscalls/syscall_64.tbl; asm-generic/unistd.h cho aarch64).
-BLOCKED = {"x86_64": (("memfd_create", 319), ("shmget", 29)), "aarch64": (("memfd_create", 279), ("shmget", 194))}
+BLOCKED = {"x86_64": (("memfd_create", 319), ("shmget", 29), ("memfd_secret", 447)),
+           "aarch64": (("memfd_create", 279), ("shmget", 194), ("memfd_secret", 447))}
 X32_BIT = 0x40000000
 
 RET_KILL_PROCESS = 0x80000000
