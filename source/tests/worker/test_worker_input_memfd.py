@@ -189,3 +189,22 @@ def test_candidate_cannot_reopen_its_stdin_to_overwrite_or_reread_the_input(work
             "print('done')\n")
     body, _ = grade(work_root, "python", code, [case("INPUT\n", "done\n", True)])
     assert body["verdict"] == "AC", body
+
+
+def test_write_input_failure_leaks_no_fd_and_leaves_workdir_usable(work_root, monkeypatch):
+    wd = executor._Workdir(work_root, UID)
+    try:
+        before = len(os.listdir("/proc/self/fd"))
+
+        def boom(*a, **k):
+            raise OSError(24, "Too many open files")
+
+        monkeypatch.setattr(os, "memfd_create", boom)
+        with pytest.raises(OSError):
+            wd.write_input("x")
+        monkeypatch.undo()
+        assert len(os.listdir("/proc/self/fd")) == before
+        with open(wd.write_input("ok"), "rb") as f:
+            assert f.read() == b"ok"
+    finally:
+        wd.remove()

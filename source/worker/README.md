@@ -57,6 +57,11 @@ bằng root. Cấu hình đã kiểm chứng ở PR 3 (lệnh test chuẩn dùng
 - Input của test không nằm trên filesystem: worker ghi vào `memfd` (bộ nhớ ẩn danh, không tính vào tmpfs) rồi cho
   tiến trình thí sinh nhận làm stdin. Vì vậy `/work` đầy không làm hỏng việc ghi input của test kế tiếp. fd này
   là `CLOEXEC` ở mọi nơi trừ stdin của con; thí sinh chạy uid khác nên không mở được `/proc/<pid>/fd/*` của worker.
+  `sandbox.run` mở `/proc/self/fd/N` trong worker (root), trước khi hạ uid; con chỉ nhận fd đã mở làm stdin. memfd
+  mode 0400 nên con không mở lại `/proc/self/fd/0` được.
+- **Giới hạn đã biết (D27 mục 5, chưa sửa):** trần tmpfs không chặn bộ nhớ ẩn danh do chính thí sinh tạo. Thí sinh gọi
+  `memfd_create` nhiều lần và ghi 64 MiB mỗi cái (`RLIMIT_FSIZE`) thì OOM killer giết worker (đã đo: container thoát
+  137). Xử lý ở PR riêng.
 - Secret qua `JH_WORKER_SECRET_FILE`. `os.environ.pop` không xóa bản gốc trong `/proc/<pid>/environ`; bảo vệ thật là
   tiến trình thí sinh chạy uid khác nên không đọc được file đó (test đọc thử thật dưới uid thí sinh).
 
