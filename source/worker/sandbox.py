@@ -402,6 +402,7 @@ def run(argv, *, cwd, timeout_s, limits=None, uid=JUDGE_UID, stdin_path=None, st
     res.stdout, res.stdout_bytes = bytes(out), out_n
     res.stderr_head, res.stderr_tail = bytes(head), tail
     proc.returncode = 0
+    sel.close()  # fd epoll: không đóng thì chỉ được thu khi GC chạy, mỗi lần chạy rò một fd (đo: +1 mỗi lần)
     proc.stdout.close()
     proc.stderr.close()
     os.close(rfd)
