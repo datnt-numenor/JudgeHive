@@ -465,7 +465,7 @@ Khi đó:
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
-Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có bốn endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
+Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có tám endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
 
 #### 3.1. Bảng tóm tắt
 
@@ -485,6 +485,10 @@ Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộ
 | `/api/admin/workers` | HTTP/1.1 | GET | — | 200 `{"workers":[…],"queue":{…}}`; chỉ admin (mục 3.6) |
 | `/api/admin/submissions` | HTTP/1.1 | GET | query `state`, `problem_id`, `user_id`, `before_id`, `limit` (tùy chọn) | 200 `{"submissions":[…],"next_before_id"}` bài của mọi người, không có mã nguồn; chỉ admin (mục 3.6) |
 | `/api/admin/submissions/{id}` | HTTP/1.1 | GET | — | 200 một bài nộp của bất kỳ ai, kèm `code` và chi tiết; chỉ admin (mục 3.6) |
+| `/api/admin/users` | HTTP/1.1 | GET | query `before_id`, `limit` (tùy chọn) | 200 `{"users":[…],"next_before_id"}`; chỉ admin (mục 3.6) |
+| `/api/admin/users` | HTTP/1.1 | POST | `{"username","password","role"?}` | 201 tài khoản vừa tạo; chỉ admin (mục 3.6) |
+| `/api/admin/users/{id}` | HTTP/1.1 | PATCH | `{"disabled"?,"role"?}` | 200 tài khoản sau khi đổi; chỉ admin (mục 3.6) |
+| `/api/admin/users/{id}/password` | HTTP/1.1 | POST | `{"password"}` | 204; chỉ admin (mục 3.6) |
 
 Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
@@ -740,7 +744,10 @@ Mỗi phần tử của `rows`:
 | `NOT_FOUND` | 404 | Đường dẫn `/api/*` không tồn tại |
 | `PROBLEM_NOT_FOUND` | 404 | Đề không tồn tại hoặc ẩn với người gọi |
 | `SUBMISSION_NOT_FOUND` | 404 | Bài nộp không tồn tại hoặc không phải của người gọi (route admin: không tồn tại) |
+| `USER_NOT_FOUND` | 404 | Tài khoản không tồn tại (route admin `/api/admin/users/{id}`) |
 | `METHOD_NOT_ALLOWED` | 405 | Sai method cho đường dẫn; kèm header `Allow` |
+| `USERNAME_TAKEN` | 409 | `POST /api/admin/users` với username đã có |
+| `LAST_ADMIN` | 409 | Thay đổi làm hệ thống không còn admin nào đang hoạt động (khóa hoặc hạ quyền admin hoạt động cuối cùng) |
 | `BODY_TOO_LARGE` | 413 | Body vượt giới hạn mục 3.2 |
 | `CODE_TOO_LARGE` | 413 | `code` vượt 64 KB (byte UTF-8) |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | `POST` không có `Content-Type: application/json` |
@@ -756,7 +763,7 @@ Mỗi phần tử của `rows`:
 Quy ước chung của mọi endpoint dưới `/api/admin/`:
 
 - Chỉ tài khoản có role `admin` dùng được. Role đọc từ cơ sở dữ liệu ở mỗi request (đổi role có hiệu lực ngay ở request kế tiếp); server không tin field nào client gửi lên về role hay người dùng.
-- Thứ tự kiểm tra (lỗi đầu tiên gặp được trả về): phiên (401) → role (403 `FORBIDDEN`) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → đối tượng tồn tại (404) → thực hiện. Người không phải admin luôn nhận 403 trên mọi route admin có thật, kể cả khi body hỏng hoặc đối tượng không tồn tại, nên không dò được gì từ các lỗi sau. Hai ngoại lệ do định tuyến, xảy ra trước kiểm tra phiên và với cả người chưa đăng nhập: sai method trên một đường dẫn admin có thật trả 405 kèm `Allow`, và đường dẫn dưới `/api/admin/` không có route nào trả 404 `NOT_FOUND`; chúng chỉ cho biết route nào tồn tại, vốn đã công khai trong mục này.
+- Thứ tự kiểm tra (lỗi đầu tiên gặp được trả về): phiên (401) → role (403 `FORBIDDEN`) → `Content-Type` (415) → kích thước body (413 `BODY_TOO_LARGE`) → JSON và field (400) → đối tượng tồn tại (404) → thực hiện (có thể gặp 409). Người không phải admin luôn nhận 403 trên mọi route admin có thật, kể cả khi body hỏng hoặc đối tượng không tồn tại, nên không dò được gì từ các lỗi sau. Hai ngoại lệ do định tuyến, xảy ra trước kiểm tra phiên và với cả người chưa đăng nhập: sai method trên một đường dẫn admin có thật trả 405 kèm `Allow`, và đường dẫn dưới `/api/admin/` không có route nào trả 404 `NOT_FOUND`; chúng chỉ cho biết route nào tồn tại, vốn đã công khai trong mục này.
 - Thao tác ghi chỉ dùng `PATCH`, `POST` hoặc `PUT` với JSON; không có `GET` nào đổi trạng thái. Các `GET` của nhóm admin chỉ đọc và nhận tham số qua query (không có body). Nhóm admin từ chối tham số query lạ hoặc trùng bằng 400 `INVALID_REQUEST`, chặt hơn các endpoint thí sinh (`GET /api/submissions` bỏ qua tham số lạ). Giới hạn body như `POST` thường (mục 3.2).
 - Không có rate limit. Mỗi thao tác ghi để lại một dòng trong log của server (admin, hành động, đối tượng), không ghi body.
 - Body của nhóm admin từ chối field thừa (400 `INVALID_REQUEST`): chặt hơn các endpoint thí sinh, vốn bỏ qua field lạ.
@@ -848,6 +855,63 @@ Chi tiết một bài nộp của bất kỳ người nào, kèm mã nguồn, ch
 - Không bao giờ có input hay output của test ẩn, stdout/stderr của test ẩn, hay giá trị mã thoát cụ thể (D11). `SE` chỉ có `verdict` = `SE`, không có chi tiết lỗi máy chấm.
 - Mỗi lần xem để lại một dòng trong log của server (admin, bài), không ghi nội dung `code`.
 
+##### `GET /api/admin/users`
+
+Danh sách tài khoản, mới nhất trước (`id` giảm dần), chỉ đọc. Không có body.
+
+| Tham số query | Kiểu | Ghi chú |
+| --- | --- | --- |
+| `before_id` | integer | Như `GET /api/submissions`: chỉ trả tài khoản có `id` nhỏ hơn |
+| `limit` | integer | 1 đến 200, mặc định 50 |
+
+Phản hồi `{"users": […], "next_before_id": …}`, phân trang như `GET /api/submissions`. Mỗi phần tử: `id` (integer), `username` (string), `role` (`user` hoặc `admin`), `disabled` (boolean), `created_at` (string, thời điểm tạo, cùng định dạng với `received_at`). Không bao giờ có mật khẩu hay hash.
+
+- Người không phải admin nhận 403 trước khi tham số query được kiểm tra. Tham số lạ hoặc trùng, giá trị sai: 400 `INVALID_REQUEST`.
+
+##### `POST /api/admin/users`
+
+Tạo tài khoản. Không có tự đăng ký (mục 1: tài khoản do admin tạo).
+
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+| --- | --- | --- | --- |
+| `username` | string | có | 1 đến 32 ký tự trong `A-Z a-z 0-9 _ . -`; phân biệt hoa thường |
+| `password` | string | có | 8 đến 128 byte UTF-8, không chứa NUL |
+| `role` | string | không | `user` (mặc định) hoặc `admin` |
+
+- Thành công: 201, thân là đối tượng tài khoản như phần tử của `GET /api/admin/users`. Tài khoản mới không bị khóa.
+- Username đã có: 409 `USERNAME_TAKEN`.
+- Thiếu field, sai kiểu, username sai quy tắc, mật khẩu ngoài khoảng, `role` ngoài hai giá trị: 400 `INVALID_REQUEST`; `message` không lặp lại giá trị đã gửi.
+
+##### `PATCH /api/admin/users/{id}`
+
+Khóa hoặc mở khóa tài khoản và đổi role.
+
+| Field | Kiểu | Bắt buộc | Ghi chú |
+| --- | --- | --- | --- |
+| `disabled` | boolean | không | `true` để khóa, `false` để mở khóa; phải là boolean JSON |
+| `role` | string | không | `user` hoặc `admin` |
+
+- Phải có ít nhất một field; object rỗng, field thừa hoặc sai kiểu: 400 `INVALID_REQUEST`.
+- Thành công: 200, thân là đối tượng tài khoản sau khi đổi. Id sai định dạng (mục 3.2) hoặc không tồn tại: 404 `USER_NOT_FOUND`.
+- Tài khoản bị khóa không đăng nhập được và mọi phiên của nó không còn hợp lệ (mục 3.2, 3.3). Tài khoản bị khóa vẫn nằm trên bảng xếp hạng.
+- Khi giá trị thật sự đổi và là khóa hoặc đổi `role` (kể cả nâng lên `admin`): mọi phiên của người đó bị xóa và mọi WebSocket của họ bị đóng 4401 ngay sau khi request trả lời (mục 4.5). Mở khóa không đụng phiên nào (khóa đã xóa hết phiên). Đổi `role` làm bảng xếp hạng tính lại (gộp tối đa một lần mỗi giây): admin không có hạng.
+- Đặt đúng giá trị đang có thì vẫn 200 và không làm gì: không xóa phiên, không đóng WebSocket, không tính lại bảng xếp hạng.
+- Không cho khóa hoặc hạ quyền admin đang hoạt động cuối cùng: 409 `LAST_ADMIN`, không thay đổi gì (kể cả khi admin đó tự làm với chính mình). Admin tự khóa hoặc tự hạ quyền mình thì được khi còn admin hoạt động khác; khi đó phiên của chính họ cũng bị xóa và response kèm `Set-Cookie: jh_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`.
+- Hai request đồng thời không thể cùng làm hệ thống mất hết admin hoạt động: nhiều nhất một cái thành công, cái kia 409.
+
+##### `POST /api/admin/users/{id}/password`
+
+Đặt lại mật khẩu của một tài khoản; admin tự gõ mật khẩu mới.
+
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+| --- | --- | --- | --- |
+| `password` | string | có | 8 đến 128 byte UTF-8, không chứa NUL |
+
+- Thành công: 204, không có body. Mọi phiên của người đó bị xóa và mọi WebSocket của họ bị đóng 4401 ngay sau khi request trả lời. Admin tự đặt lại mật khẩu của chính mình: phiên của họ cũng bị xóa và response kèm `Set-Cookie` xóa cookie như trên.
+- Thiếu field, field thừa, mật khẩu ngoài khoảng hoặc có NUL: 400 `INVALID_REQUEST`. Id sai định dạng hoặc không tồn tại: 404 `USER_NOT_FOUND`.
+- Đặt lại mật khẩu cho tài khoản đang bị khóa được; việc đó không mở khóa.
+- Mật khẩu không bao giờ có trong response hay log; log chỉ ghi admin, hành động và tài khoản bị tác động, không ghi body.
+
 
 ### 4. WebSocket (server đẩy)
 
@@ -907,7 +971,7 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 - `POST /api/login` khi request đã mang một phiên còn hiệu lực (mục 3.2: phiên cũ bị hủy và cấp phiên mới): mọi WebSocket thuộc phiên cũ bị đóng với mã 4401, giống logout.
 - Phiên hết hạn khi WebSocket đang mở: server kiểm tra lại phiên của mọi kết nối định kỳ 30 giây một lần, và đóng 4401 kết nối không còn phiên hợp lệ (hết hạn, đã bị xóa, hoặc thuộc tài khoản bị khóa); nên có thể trễ tối đa khoảng 30 giây sau khi hết hạn.
 - Khi mật khẩu của một người được đặt lại bằng `manage.py users set-password`, mọi phiên của người đó bị xóa. `manage.py` chạy ở process khác nên không đóng được WebSocket ngay: các kết nối đó bị đóng 4401 ở lần kiểm phiên định kỳ kế tiếp (tối đa khoảng 30 giây, như phiên hết hạn).
-- Khi admin đặt lại mật khẩu của một người qua web (PR sau), mọi WebSocket của người đó bị đóng 4401 ngay.
+- Khi admin đặt lại mật khẩu, đổi role hoặc khóa tài khoản của một người qua web (mục 3.6), mọi WebSocket của người đó bị đóng 4401 ngay sau khi request trả lời.
 - Server tắt: đóng mọi kết nối với mã 1012 (uvicorn đóng bằng mã này khi nhận SIGTERM; đã kiểm với uvicorn 0.54.0 và `websockets` 17.3).
 
 #### 4.6. Bảo đảm chuyển phát
