@@ -301,7 +301,7 @@ Mỗi phần tử của `tests`:
 | `tests_done` | integer | có | Số test đã chạy xong |
 | `tests_total` | integer | có | Số phần tử của `tests` |
 
-- Bắt buộc gửi `PROGRESS` với `tests_done = 0` ngay khi biên dịch xong. Python không có bước biên dịch nhưng có bước kiểm cú pháp chạy trước, và `PROGRESS` với `tests_done = 0` gửi sau khi bước đó xong; Python chỉ chạy bước kiểm, không chạy chương trình, nên lỗi lúc chạy (`NameError`, `ZeroDivisionError`...) vẫn là `RE`. Biên dịch lỗi (C++, Java) hoặc kiểm cú pháp lỗi (Python) thì không gửi `tests_done = 0`, gửi thẳng `RESULT` với `CE` trong cửa sổ biên dịch (xem bảng dưới). `PROGRESS` với `tests_done = 0` còn là tín hiệu xác nhận lần giao (mục 2.6).
+- Bắt buộc gửi `PROGRESS` với `tests_done = 0` ngay khi biên dịch xong. Python không có bước biên dịch nhưng có bước kiểm cú pháp chạy trước, và `PROGRESS` với `tests_done = 0` gửi sau khi bước đó xong; lỗi lúc chạy (`NameError`, `ZeroDivisionError`...) vẫn là `RE`. Biên dịch lỗi (C++, Java) hoặc kiểm cú pháp lỗi (Python) thì không gửi `tests_done = 0`, gửi thẳng `RESULT` với `CE` trong cửa sổ biên dịch (xem bảng dưới). `PROGRESS` với `tests_done = 0` còn là tín hiệu xác nhận lần giao (mục 2.6).
 - Sau đó gửi một `PROGRESS` sau mỗi test, không giới hạn tần suất.
 
 Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhất trong hai mốc: lúc server gửi xong `JOB` (thời gian gửi không tính), hoặc lúc nhận `PROGRESS` khớp `JOB` gần nhất.
@@ -335,7 +335,7 @@ Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhấ
 | `failed_test` | integer | khi `WA`, `TLE`, `MLE`, `RE` | Số thứ tự test sai đầu tiên |
 | `failed_is_sample` | boolean | khi `WA`, `TLE`, `MLE`, `RE` | Test sai là test mẫu hay ẩn |
 | `re_kind` | string | khi `RE` | `SIGSEGV`, `SIGFPE`, `SIGABRT`, `SIGKILL`, `OTHER_SIGNAL` (signal ngoài danh sách) hoặc `EXIT_NONZERO` |
-| `ce_message` | string | khi `CE` | Lỗi biên dịch rút gọn: tối đa 50 dòng và 4 KB (giới hạn nào chạm trước), đường dẫn tạm thay bằng `Main.cpp`/`Main.java`/`Main.py`, cắt an toàn UTF-8. Với Python, `CE` là lỗi mà bước kiểm cú pháp bắt được (cú pháp, thụt lề, `return` ngoài hàm...), kể cả mã quá phức tạp để biên dịch (lồng quá sâu, nhiều toán tử nối tiếp); chương trình đó chạy thật cũng không biên dịch được |
+| `ce_message` | string | khi `CE` | Lỗi biên dịch rút gọn: tối đa 50 dòng và 4 KB (giới hạn nào chạm trước), đường dẫn tạm thay bằng `Main.cpp`/`Main.java`/`Main.py`, cắt an toàn UTF-8. Với Python, `CE` là lỗi mà bước kiểm cú pháp bắt được (cú pháp, thụt lề, `return` ngoài hàm...) hoặc mã không biên dịch được |
 | `sample_stdout` | string | khi `failed_is_sample = true` | stdout của chương trình trên test mẫu bị sai, tối đa 4 KB. Gửi với mọi verdict có `failed_test`; `AC` không gửi |
 | `se_detail` | string | không, chỉ khi `SE` | Chi tiết lỗi máy chấm, server chỉ ghi log, không chuyển cho client. Không chứa input/output của test |
 

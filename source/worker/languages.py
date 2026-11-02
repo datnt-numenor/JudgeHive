@@ -25,13 +25,15 @@ PY_CHECK_TIMEOUT_S = 5
 PY_CHECK_AS_BYTES = 512 * 1024 * 1024
 # Chạy bằng `python3 -I -S -c` với cwd là thư mục bài. Chỉ biên dịch, KHÔNG exec. Đọc bytes để tôn trọng `# coding:`
 # và BOM như `python3 Main.py`. Tên file truyền vào compile() là hằng "Main.py" (không bao giờ là đường dẫn) và chỉ in
-# format_exception_only (không in frame), nên thông báo không chứa đường dẫn thư mục tạm.
+# format_exception_only (không in frame), nên thông báo không chứa đường dẫn thư mục tạm. Dòng nguồn kèm theo bị cắt ở
+# 300 ký tự để dòng "SyntaxError: ..." (cuối thông báo) không bị cắt mất bởi trần 4 KB của sanitize_ce.
 PY_CHECK_SRC = r"""import sys, traceback
 try:
     src = open('Main.py', 'rb').read()
     compile(src, 'Main.py', 'exec', dont_inherit=True)
 except SyntaxError as e:
-    sys.stderr.write(''.join(traceback.format_exception_only(type(e), e)))
+    lines = traceback.format_exception_only(type(e), e)
+    sys.stderr.write(''.join([ln[:300].rstrip('\n') + '\n' for ln in lines[:-1]] + lines[-1:]))
     sys.exit(1)
 except (ValueError, RecursionError, MemoryError) as e:
     sys.stderr.write('SyntaxError: ' + type(e).__name__ + '\n')
