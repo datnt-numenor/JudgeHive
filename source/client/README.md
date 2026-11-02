@@ -1,6 +1,6 @@
 # MODULE CLIENT
 
-Giao diện web của JudgeHive: đăng nhập, xem đề, nộp bài, xem lịch sử, kết quả chấm và bảng xếp hạng. Chạy trong trình duyệt, chỉ nói chuyện với server qua REST (README gốc, mục "Giao tiếp", phần 3) và WebSocket `/ws` (phần 4). Chưa có trang admin.
+Giao diện web của JudgeHive: đăng nhập, xem đề, nộp bài, xem lịch sử, kết quả chấm, bảng xếp hạng, và các trang quản trị cho admin. Chạy trong trình duyệt, chỉ nói chuyện với server qua REST (README gốc, mục "Giao tiếp", phần 3) và WebSocket `/ws` (phần 4). Chưa có trang admin.
 
 ## Công nghệ
 
@@ -45,6 +45,7 @@ client/
 └── src/
     ├── main.jsx, App.jsx, auth.jsx, realtime.jsx, styles.css
     ├── pages/        # Login, Problems, ProblemDetail (kèm form nộp), Submissions, SubmissionDetail, Scoreboard
+    ├── admin/        # AdminRoute (chặn theo role), HideToggle (nút ẩn/hiện đề), Workers, Submissions, SubmissionDetail của admin
     └── lib/
         ├── api.js        # mọi request REST: Content-Type, timeout 15 s, lỗi, 401 hết phiên
         ├── submitter.js  # quy tắc client_token của một lần nộp
@@ -61,5 +62,6 @@ client/
 - **Một kết nối WebSocket cho cả ứng dụng** (`realtime.jsx`): mở sau khi đăng nhập, đóng (mã 1000, không nối lại) khi đăng xuất. Mã đóng 4401 đưa về trang đăng nhập và không nối lại. Mã 4429 (quá 10 tab) không nối lại, hiện thông báo; chỉ tải lại trang mới thử WebSocket lại. Mọi trường hợp khác (mất mạng, 1006, 1008, 1012, 1013, 4408, quá 60 s không nhận gì) nối lại sau 1, 2, 4, 8, 10 s (cộng ngẫu nhiên tới 25%); khoảng chờ về 1 s khi nhận message hợp lệ đầu tiên của kết nối mới. `PING` được trả `PONG` với đúng `seq`.
 - **Theo dõi kết quả:** khi WebSocket đang sống, trang chi tiết và lịch sử bài nộp cập nhật theo `STATUS` và không poll; khi `judged`, trang chi tiết gọi `GET /api/submissions/{id}` một lần để lấy mã nguồn và các field chi tiết (STATUS không mang chúng). Khi WebSocket mất hoặc bị 4429 thì quay về gọi REST: trang chi tiết 1 giây một lần tính từ lúc nhận phản hồi trước cho tới khi `state` là `judged`, lịch sử gọi lại trang 1 mỗi 2 giây chừng nào còn bài chưa chấm xong. Lỗi mạng thì giãn khoảng nghỉ (gấp đôi mỗi lần, tối đa 10 s); 401 hoặc 404 thì dừng; tab ẩn thì không gọi, tab hiện lại thì gọi ngay. Sau khi nối lại, trang lấy lại dữ liệu từ REST (kết quả bị lỡ trong lúc mất kết nối); `STATUS` đến trễ không hạ bài đã `judged`.
 - **Bảng xếp hạng** (`/scoreboard`): hiển thị theo `SCOREBOARD` (server gửi ngay khi nối và mỗi khi tính lại). Chỉ nhận bản có `version` lớn hơn bản đang giữ, và bỏ mốc này mỗi khi trạng thái kết nối đổi (server khởi động lại thì `version` bắt đầu lại). `GET /api/scoreboard` chỉ gọi khi chưa có bản nào, hoặc mỗi 5 s khi không có WebSocket.
+- **Trang admin** (README gốc 3.6; chỉ hiện với `role` = `admin` của `/api/me`, còn quyền thật do server quyết, người thường vào `/admin/*` thấy "Không tìm thấy trang." và client không gọi API admin): nút **Ẩn đề / Hiện đề** ở danh sách đề (ẩn phải `confirm()` vì bảng xếp hạng thôi tính đề đó, hiện thì không hỏi; giao diện chỉ đổi theo đề server trả về); `/admin/workers` gọi lại `GET /api/admin/workers` mỗi 2 giây (tab ẩn thì nghỉ, lỗi mạng thì giãn, 403 hoặc lỗi khác thì dừng); `/admin/submissions` lọc theo trạng thái, mã đề, mã người dùng, phân trang bằng `before_id`, **không tự làm mới** (nút "Tải lại"); `/admin/submissions/:id` hiện mã nguồn của người nộp, cũng không tự làm mới.
 - **Hiển thị:** mọi chuỗi từ server (đề bài, mã nguồn, thông báo biên dịch, output) đi qua escape mặc định của React; không dùng `dangerouslySetInnerHTML` (có test quét `src/`). MLE không hiện số bộ nhớ; SE chỉ hiện thông báo chung.
 - **Giới hạn mã 64 KB** tính theo byte UTF-8 được kiểm ở client để báo sớm; server vẫn là nơi quyết định.
