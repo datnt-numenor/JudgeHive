@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 
 from server.rest import sessions, views
 from server.rest.body import body_default
-from server.rest.errors import ApiJSONResponse, invalid, log, problem_not_found
+from server.rest.errors import ApiJSONResponse, invalid, log, problem_not_found, submission_not_found
 from server.rest.parse import INT64_MAX, parse_uint
 from server.rest.problem_routes import PROBLEM_COLUMNS, PROBLEM_ID, summary
 from server.rest.submission_routes import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
@@ -108,3 +108,19 @@ def list_admin_submissions(request: Request, admin: sessions.SessionUser = Depen
     page = rows[:limit]
     return ApiJSONResponse({"submissions": [views.admin_submission_view(r) for r in page],
                             "next_before_id": page[-1]["id"] if len(rows) > limit else None})
+
+
+@router.get("/api/admin/submissions/{submission_id}")
+def get_admin_submission(submission_id: str, request: Request,
+                         admin: sessions.SessionUser = Depends(sessions.require_admin)):
+    _strict_query(request, ())
+    sid = parse_uint(submission_id, low=1, canonical=True)  # id sai định dạng và bài không tồn tại: cùng một 404
+    if sid is None:
+        raise submission_not_found()
+    conn = request.app.state.rest.db.conn()
+    row = conn.execute(f"SELECT {views.ADMIN_DETAIL_COLUMNS} FROM submissions s JOIN problems p ON p.id = s.problem_id "
+                       "JOIN users u ON u.id = s.user_id WHERE s.id = ?", (sid,)).fetchone()
+    if row is None:
+        raise submission_not_found()
+    log.info("ADMIN admin=%s view submission=%s", admin.id, sid)  # không ghi nội dung code
+    return ApiJSONResponse(views.admin_detail_view(conn, row))

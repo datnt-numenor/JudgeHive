@@ -16,17 +16,31 @@ DETAIL_COLUMNS = (LIST_COLUMNS + ", s.code, s.ce_message, s.sample_stdout, s.ver
                   "p.tests_hash AS problem_tests_hash, p.hidden AS problem_hidden")
 
 
-ADMIN_LIST_COLUMNS = (LIST_COLUMNS + ", s.user_id, u.username, s.attempt_id, s.delivery_count, s.total_deliveries, "
-                      "s.is_rejudge, s.rejudge_failed")
+_ADMIN_EXTRA_COLUMNS = (", s.user_id, u.username, s.attempt_id, s.delivery_count, s.total_deliveries, "
+                        "s.is_rejudge, s.rejudge_failed")
+ADMIN_LIST_COLUMNS = LIST_COLUMNS + _ADMIN_EXTRA_COLUMNS
+ADMIN_DETAIL_COLUMNS = DETAIL_COLUMNS + _ADMIN_EXTRA_COLUMNS
+
+
+def _admin_fields(row):
+    return {"user_id": row["user_id"], "username": row["username"], "attempt_id": row["attempt_id"],
+            "delivery_count": row["delivery_count"], "total_deliveries": row["total_deliveries"],
+            "is_rejudge": bool(row["is_rejudge"]), "rejudge_failed": bool(row["rejudge_failed"])}
 
 
 def admin_submission_view(row):
     """Bài nộp trong danh sách của admin: `submission_view` (whitelist theo verdict, D11) cộng các field vận hành.
     Không bao giờ có `code`, `ce_message`, `sample_*`: các cột đó không nằm trong `ADMIN_LIST_COLUMNS`."""
     view = submission_view(row)
-    view.update({"user_id": row["user_id"], "username": row["username"], "attempt_id": row["attempt_id"],
-                 "delivery_count": row["delivery_count"], "total_deliveries": row["total_deliveries"],
-                 "is_rejudge": bool(row["is_rejudge"]), "rejudge_failed": bool(row["rejudge_failed"])})
+    view.update(_admin_fields(row))
+    return view
+
+
+def admin_detail_view(conn, row):
+    """Chi tiết bài nộp cho admin: đúng `detail_view` của chủ bài (cùng whitelist theo verdict, D11, cùng hàm lọc,
+    với người gọi là admin) cộng các field vận hành. Không có đường nào khác tới `code`, `ce_message`, `sample_*`."""
+    view = detail_view(conn, row, True)
+    view.update(_admin_fields(row))
     return view
 
 
