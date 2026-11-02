@@ -145,6 +145,31 @@ def test_a_user_gets_403_before_any_body_error_even_for_unknown_ids(aw, kwargs):
         assert (r.status, r.error_code) == (403, "FORBIDDEN"), (target, kwargs)
 
 
+BAD_REQUESTS = [
+    {"obj": {"disabled": "x"}}, {"body": b"{broken", "content_type": "json"}, {"body": b"[1]", "content_type": "json"},
+    {"obj": {"password": NEW_PASSWORD, "username": "zed"}, "content_type": "text/plain"},
+    {"body": b'{"pad": "' + b"p" * (200 * 1024) + b'"}', "content_type": "json"},
+]
+
+
+@pytest.mark.parametrize("method,path", [("POST", "/api/admin/users"), ("PATCH", "/api/admin/users/{}"),
+                                         ("POST", "/api/admin/users/{}/password")])
+@pytest.mark.parametrize("kwargs", BAD_REQUESTS, ids=["bad-field", "broken-json", "array", "text-plain", "body-200kb"])
+def test_a_user_gets_403_before_any_body_type_size_or_id_error_on_every_write_route(aw, method, path, kwargs):
+    cookie = aw.login("alice")
+    for target in (str(uid(aw, "bob")), "99999", "abc"):
+        r = aw.request(method, path.format(target), cookie=cookie, **kwargs)
+        assert (r.status, r.error_code) == (403, "FORBIDDEN"), (method, path, target, r.status)
+        assert aw.request(method, path.format(target), **kwargs).status == 401  # chưa đăng nhập: 401 đứng trước mọi lỗi body
+
+
+@pytest.mark.parametrize("query", ["?limit=0", "?bogus=1", "?before_id=x", "?limit=5&limit=6", "?role=admin"])
+def test_a_user_gets_403_before_any_query_error_on_the_list(aw, query):
+    r = aw.request("GET", "/api/admin/users" + query, cookie=aw.login("alice"))
+    assert (r.status, r.error_code) == (403, "FORBIDDEN"), query
+    assert aw.request("GET", "/api/admin/users" + query).status == 401
+
+
 def test_a_client_cannot_claim_a_role_to_use_the_endpoints(aw):
     cookie = aw.login("alice")
     r = aw.request("PATCH", f"/api/admin/users/{uid(aw, 'alice')}?role=admin", obj={"role": "admin", "user_id": 3},
@@ -278,13 +303,16 @@ def test_disabling_deletes_sessions_closes_websockets_and_blocks_login_but_not_o
 
 
 def test_a_disabled_account_stays_on_the_scoreboard(aw):
-    def names():
-        return [x["username"] for x in aw.get("/api/scoreboard", cookie=root_cookie(aw)).json()["rows"]]
+    def board():
+        return aw.get("/api/scoreboard", cookie=root_cookie(aw)).json()
 
-    assert wait_until(lambda: "alice" in names(), 6)
+    assert wait_until(lambda: any(r["username"] == "alice" for r in board()["rows"]), 6)
+    before = board()["version"]
     assert patch(aw, "alice", {"disabled": True}).status == 200
-    time.sleep(0.4)  # quá nhịp tính lại 0,1 giây của fixture
-    assert "alice" in names()
+    assert aw.spy.dirty == 0  # khóa không tự đòi tính lại bảng
+    aw.spy.real.scoreboard_dirty()  # ép một lần tính lại SAU khi khóa, rồi đợi bản mới (không dùng sleep)
+    assert wait_until(lambda: board()["version"] > before, 6)
+    assert any(r["username"] == "alice" for r in board()["rows"])
 
 
 def test_enabling_lets_the_user_log_in_again_and_does_not_touch_sessions(aw):
@@ -333,6 +361,23 @@ def test_both_fields_at_once(aw):
     r = patch(aw, "alice", {"disabled": True, "role": "admin"})
     assert r.status == 200 and (r.json()["disabled"], r.json()["role"]) == (True, "admin")
     assert aw.get("/api/me", cookie=cookie).status == 401 and aw.spy.dirty == 1
+
+
+def test_unlocking_together_with_a_role_change_still_revokes_the_sessions(aw):
+    cookie = aw.login("alice")
+    r = patch(aw, "alice", {"disabled": False, "role": "admin"})  # disabled không đổi, role đổi
+    assert r.status == 200 and r.json()["role"] == "admin" and r.json()["disabled"] is False
+    assert aw.get("/api/me", cookie=cookie).status == 401 and sessions_of(aw, "alice") == 0 and aw.spy.dirty == 1
+
+
+def test_promoting_a_disabled_account_keeps_it_disabled_and_revokes_sessions(aw):
+    cookie = aw.login("alice")
+    with aw.db.write() as c:  # khóa "ngoài đường": phiên cũ vẫn nằm trong DB
+        c.execute("UPDATE users SET disabled = 1 WHERE username = 'alice'")
+    r = patch(aw, "alice", {"role": "admin"})
+    assert r.status == 200 and (r.json()["role"], r.json()["disabled"]) == ("admin", True)
+    assert sessions_of(aw, "alice") == 0 and aw.spy.dirty == 1
+    assert aw.post("/api/login", {"username": "alice", "password": PASSWORD}).status == 401
 
 
 def test_setting_the_current_values_changes_nothing(aw, caplog):
@@ -389,6 +434,15 @@ def test_an_admin_may_disable_or_demote_themselves_when_another_active_admin_exi
     assert aw.get("/api/me", cookie=cookie).status == 401  # phiên của chính họ đã bị xóa
     second = aw.login("second")
     assert patch(aw, "second", {"disabled": True}, cookie=second).status == 409  # giờ second là admin cuối
+
+
+def test_an_admin_demoting_themselves_is_logged_out_with_a_cleared_cookie_and_the_board_is_marked_dirty(aw):
+    add_account(aw.db, "second", "admin")
+    cookie = root_cookie(aw)
+    r = patch(aw, "root", {"role": "user"})
+    assert r.status == 200 and r.json()["role"] == "user"
+    assert r.headers["set-cookie"] == "jh_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+    assert aw.get("/api/me", cookie=cookie).status == 401 and aw.spy.dirty == 1
 
 
 def test_a_disabled_admin_does_not_count_as_an_active_admin(aw):
@@ -496,6 +550,32 @@ def test_hashing_happens_outside_the_write_transaction(aw, monkeypatch):
         release.set()
         thread.join(30)
     assert out and out[0].status == 204
+
+
+def test_creating_a_user_does_not_hold_the_write_lock_while_hashing(aw, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    real = auth.hash_password
+
+    def slow(password):
+        entered.set()
+        assert release.wait(15), "test không thả lần băm"
+        return real(password)
+
+    monkeypatch.setattr(auth, "hash_password", slow)
+    out = []
+    thread = threading.Thread(target=lambda: out.append(
+        call(aw, "POST", "/api/admin/users", {"username": "slowone", "password": "slow-pass-99"})))
+    thread.start()
+    try:
+        assert entered.wait(10)
+        started = time.monotonic()
+        with aw.db.write() as c:  # BUSY_TIMEOUT_MS là 5000: nếu route giữ BEGIN IMMEDIATE thì dòng này chờ gần 5 giây
+            c.execute("UPDATE users SET created_at = created_at WHERE username = 'bob'")
+        assert time.monotonic() - started < 2.0
+    finally:
+        release.set()
+        thread.join(30)
+    assert out and out[0].status == 201
 
 
 # ---- đua đăng nhập với endpoint admin -----------------------------------------------------------------------------
