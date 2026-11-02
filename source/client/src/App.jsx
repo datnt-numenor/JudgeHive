@@ -2,6 +2,10 @@ import { useState } from "react";
 import { Link, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth.jsx";
 import { RealtimeProvider, useRealtime } from "./realtime.jsx";
+import AdminRoute from "./admin/AdminRoute.jsx";
+import AdminSubmissionDetailPage from "./admin/SubmissionDetailPage.jsx";
+import AdminSubmissionsPage from "./admin/SubmissionsPage.jsx";
+import WorkersPage from "./admin/WorkersPage.jsx";
 import { errorText } from "./lib/format.js";
 import LoginPage from "./pages/LoginPage.jsx";
 import ProblemDetailPage from "./pages/ProblemDetailPage.jsx";
@@ -46,6 +50,12 @@ function Layout() {
         <Link to="/">Đề bài</Link>
         <Link to="/submissions">Bài nộp của tôi</Link>
         <Link to="/scoreboard">Bảng xếp hạng</Link>
+        {user.role === "admin" && (
+          <>
+            <Link to="/admin/workers">Worker</Link>
+            <Link to="/admin/submissions">Bài nộp (admin)</Link>
+          </>
+        )}
         <span className="spacer" />
         <span>{user.username}</span>
         <button type="button" onClick={onLogout}>
@@ -81,6 +91,11 @@ export default function App() {
             <Route path="/submissions" element={<SubmissionsPage />} />
             <Route path="/submissions/:id" element={<SubmissionDetailPage />} />
             <Route path="/scoreboard" element={<ScoreboardPage />} />
+            <Route element={<AdminRoute />}>
+              <Route path="/admin/workers" element={<WorkersPage />} />
+              <Route path="/admin/submissions" element={<AdminSubmissionsPage />} />
+              <Route path="/admin/submissions/:id" element={<AdminSubmissionDetailPage />} />
+            </Route>
             <Route path="*" element={<p>Không tìm thấy trang.</p>} />
           </Route>
         </Routes>
