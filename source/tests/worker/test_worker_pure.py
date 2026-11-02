@@ -223,6 +223,88 @@ def test_oom_signature_beyond_stderr_tail_window_is_not_seen():
     assert verdict("python", run(exit_code=1, stderr_tail=b"x" * 2048))[0] == "RE"
 
 
+SLACK_KIB = executor.STATIC_IMAGE_SLACK_KIB
+
+
+def seg(**kw):
+    return run(exit_code=None, signal=11, maxrss_kib=12000, **kw)
+
+
+def test_segv_with_a_static_image_over_limit_minus_slack_is_mle_for_cpp():
+    limit = 262144
+    over = limit - SLACK_KIB + 1  # đúng một KiB trên ngưỡng: MLE
+    assert executor.judge_run(LANGUAGES["cpp"], seg(), "3\n", limit, 2000, static_kib=over) == ("MLE", None)
+    assert executor.judge_run(LANGUAGES["cpp"], seg(), "3\n", limit, 2000, static_kib=300 * 1024) == ("MLE", None)
+
+
+def test_segv_with_a_static_image_at_or_under_the_threshold_stays_re():
+    limit = 262144
+    at = limit - SLACK_KIB  # đúng ngưỡng (không lớn hơn): vẫn RE
+    assert executor.judge_run(LANGUAGES["cpp"], seg(), "3\n", limit, 2000, static_kib=at) == ("RE", "SIGSEGV")
+    assert executor.judge_run(LANGUAGES["cpp"], seg(), "3\n", limit, 2000, static_kib=at - 1) == ("RE", "SIGSEGV")
+    assert executor.judge_run(LANGUAGES["cpp"], seg(), "3\n", limit, 2000, static_kib=None) == ("RE", "SIGSEGV")
+
+
+@pytest.mark.parametrize("sig,kind", [(6, "SIGABRT"), (8, "SIGFPE"), (9, "SIGKILL")])
+def test_only_sigsegv_is_reclassified_by_a_large_static_image(sig, kind):
+    res = run(exit_code=None, signal=sig, maxrss_kib=12000)
+    assert executor.judge_run(LANGUAGES["cpp"], res, "3\n", 262144, 2000, static_kib=300 * 1024) == ("RE", kind)
+
+
+def test_the_static_image_rule_scales_with_the_limit():
+    assert executor.judge_run(LANGUAGES["cpp"], seg(), "3\n", 65536, 2000, static_kib=53 * 1024) == ("MLE", None)
+    assert executor.judge_run(LANGUAGES["cpp"], seg(), "3\n", 65536, 2000, static_kib=52 * 1024) == ("RE", "SIGSEGV")
+
+
+def test_a_normal_exit_or_tle_is_not_changed_by_a_large_static_image():
+    assert executor.judge_run(LANGUAGES["cpp"], run(stdout=b"3\n"), "3\n", 262144, 2000, static_kib=900 * 1024) == ("AC", None)
+    assert executor.judge_run(LANGUAGES["cpp"], seg(timed_out=True), "3\n", 262144, 2000, static_kib=900 * 1024) == ("TLE", None)
+
+
+def elf64(loads, *, cls=2, data=1, extra_types=()):
+    """File ELF64 giả chỉ có header + bảng program header: `loads` là danh sách p_memsz của các PT_LOAD."""
+    import struct
+    entries = [(1, m) for m in loads] + [(t, 999999) for t in extra_types]
+    ehdr = bytearray(64)
+    ehdr[:4] = b"\x7fELF"
+    ehdr[4], ehdr[5] = cls, data
+    struct.pack_into("<Q", ehdr, 32, 64)  # e_phoff
+    struct.pack_into("<HH", ehdr, 54, 56, len(entries))  # e_phentsize, e_phnum
+    table = b"".join(struct.pack("<IIQQQQQQ", t, 5, 0, 0, 0, 0, memsz, 4096) for t, memsz in entries)
+    return bytes(ehdr) + table
+
+
+def test_elfinfo_sums_only_pt_load_and_rounds_up_to_kib(tmp_path):
+    from worker import elfinfo
+    p = tmp_path / "main"
+    p.write_bytes(elf64([4096, 300 * 1024 * 1024 + 1], extra_types=(2, 6, 7)))  # DYNAMIC, PHDR, TLS không tính
+    assert elfinfo.load_size_kib(str(p)) == 4 + 300 * 1024 + 1
+
+
+@pytest.mark.parametrize("content", [b"", b"\x7fEL", b"#!/bin/sh\n" * 20, elf64([4096], cls=1), elf64([4096], data=2),
+                                     elf64([])])
+def test_elfinfo_returns_none_for_anything_but_a_valid_elf64_le(tmp_path, content):
+    from worker import elfinfo
+    p = tmp_path / "x"
+    p.write_bytes(content)
+    assert elfinfo.load_size_kib(str(p)) is None
+
+
+def test_elfinfo_returns_none_for_a_missing_or_truncated_file(tmp_path):
+    from worker import elfinfo
+    assert elfinfo.load_size_kib(str(tmp_path / "nope")) is None
+    p = tmp_path / "trunc"
+    p.write_bytes(elf64([4096, 8192])[:100])  # bảng program header bị cắt
+    assert elfinfo.load_size_kib(str(p)) is None
+
+
+def test_elfinfo_reads_a_real_elf_of_this_machine():
+    import sys
+    from worker import elfinfo
+    size = elfinfo.load_size_kib(sys.executable)
+    assert size is not None and size > 0
+
+
 def test_spawn_error_is_executor_error():
     with pytest.raises(executor.ExecutorError):
         verdict("python", RunResult(spawn_error="boom"))

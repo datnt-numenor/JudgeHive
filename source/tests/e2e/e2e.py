@@ -42,6 +42,19 @@ SOLUTIONS = {
                         "        while (in.hasNextLong()) s += in.nextLong();\n        System.out.println(s);\n    }\n}\n",
                 "AC"),
 }
+# M4: ba ô MLE (cấp phát vượt giới hạn 256 MiB của đề seed), CE Java, WA C++ và Java. Do tài khoản admin nộp, ở cuối luồng:
+# alice đã dùng gần hết rate limit 10 bài/60 s ở trên, và bài của admin không vào bảng xếp hạng nên không làm lệch các kiểm
+# tra bảng của alice. Nộp theo lô ≤ PENDING_PER_USER.
+M4_SOLUTIONS = {
+    "py-mle": ("python", "x = bytearray(4 << 30)\nprint(len(x))\n", "MLE"),
+    "cpp-mle": ("cpp", "#include <cstdio>\nint main() {\n    volatile char* p = new char[4ULL << 30];\n"
+                       "    p[0] = 1;\n    printf(\"%d\\n\", (int)p[0]);\n}\n", "MLE"),
+    "java-mle": ("java", "public class Main {\n    public static void main(String[] a) {\n"
+                         "        long[] x = new long[1 << 28];\n        System.out.println(x.length);\n    }\n}\n", "MLE"),
+    "java-ce": ("java", "public class Main { public static void main(String[] a) { int x = ; } }\n", "CE"),
+    "cpp-wa": ("cpp", "#include <cstdio>\nint main() { puts(\"0\"); }\n", "WA"),
+    "java-wa": ("java", "public class Main { public static void main(String[] a) { System.out.println(0); } }\n", "WA"),
+}
 PROBE = (
     "import os\n"
     "for k, v in sorted(os.environ.items()):\n    print('ENV', k, v)\n"
@@ -474,6 +487,26 @@ def main():
               and http_call("GET", "/api/me", cookie=cookie)[0] == 200)
         for c in (ws_alice, ws_root):
             c.close()
+
+        # M4: MLE ×3, CE Java, WA C++ và Java qua stack thật (3 worker), do admin nộp, theo lô ≤ PENDING_PER_USER
+        m4_ids, batch = {}, []
+        for name, (lang, code, _) in M4_SOLUTIONS.items():
+            if len(batch) == PENDING_PER_USER:
+                for waited in batch:
+                    wait_judged(root_cookie, m4_ids[waited], f"bài {waited} chấm xong")
+                batch = []
+            m4_ids[name], _ = submit(root_cookie, lang, code)
+            batch.append(name)
+        for name, (_, _, expected) in M4_SOLUTIONS.items():
+            row = wait_judged(root_cookie, m4_ids[name], f"bài {name} chấm xong")
+            check(f"{name} ra {expected}", row["verdict"] == expected, f"được {row['verdict']}")
+        java_ce = detail(root_cookie, m4_ids["java-ce"])
+        check("java-ce có thông báo biên dịch nêu Main.java, không lộ thư mục tạm, không có thời gian",
+              "Main.java" in java_ce["ce_message"] and "job-" not in java_ce["ce_message"] and java_ce["time_ms"] is None)
+        for name in ("py-mle", "cpp-mle", "java-mle"):
+            mle = detail(root_cookie, m4_ids[name])
+            check(f"{name}: MLE chỉ ra test sai đầu tiên, không có thông báo biên dịch",
+                  mle["failed_test"] == 1 and mle["ce_message"] is None)
 
         # không endpoint nào của REST trả test ẩn hay secret
         blob = b"".join(rest_output)

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from common import protocol
 
-from . import checker, sandbox
+from . import checker, elfinfo, sandbox
 from .languages import LANGUAGES
 
 log = logging.getLogger("worker.executor")
@@ -22,6 +22,8 @@ LAUNCH_ALLOWANCE_S = 0.75  # hạn điều phối = giới hạn đã nhân hệ
 RSS_MLE_RATIO = 0.9  # D13
 
 RE_SIGNALS = {11: "SIGSEGV", 8: "SIGFPE", 6: "SIGABRT", 9: "SIGKILL"}
+SIGSEGV = 11
+STATIC_IMAGE_SLACK_KIB = 12 * 1024  # D32 [ĐỀ XUẤT]
 
 
 class BadJob(Exception):
@@ -97,8 +99,19 @@ def is_oom(language, res, memory_limit_kib):
     return language.rss_rule and res.maxrss_kib >= RSS_MLE_RATIO * memory_limit_kib
 
 
-def judge_run(language, res, expected, memory_limit_kib, scaled_limit_ms):
-    """Verdict của một lần chạy: (verdict, re_kind). Thứ tự: TLE, output vượt trần, MLE/RE, so output."""
+def static_image_exceeds_limit(res, static_kib, memory_limit_kib):
+    """D32: SIGSEGV của C++ mà ảnh nạp của chương trình (tổng `p_memsz` các `PT_LOAD`, nghĩa là `.data` + `.bss`)
+    lớn hơn giới hạn − 12 MiB. Dưới `RLIMIT_AS` kernel không map nổi `.bss` quá lớn, chương trình chạy rồi chết khi
+    chạm vùng chưa map: không có `bad_alloc`, không có chữ ký trong stderr. Ca biên: ảnh nằm trong
+    [giới hạn − 12 MiB, giới hạn] mà segfault thật (con trỏ sai...) cũng bị xếp MLE. [ĐỀ XUẤT] 12 MiB là chỗ cho thư
+    viện động và stack (đo: C++ AC tới giới hạn − 11 MiB, `.bss` 240 MiB AC ở giới hạn 256 MiB)."""
+    return (static_kib is not None and res.signal == SIGSEGV
+            and static_kib > memory_limit_kib - STATIC_IMAGE_SLACK_KIB)
+
+
+def judge_run(language, res, expected, memory_limit_kib, scaled_limit_ms, static_kib=None):
+    """Verdict của một lần chạy: (verdict, re_kind). Thứ tự: TLE, output vượt trần, MLE/RE, so output.
+    `static_kib`: kích thước ảnh nạp của file chạy (chỉ C++, xem `static_image_exceeds_limit`), None nếu không có."""
     if res.spawn_error:
         raise ExecutorError(res.spawn_error)
     if res.timed_out or res.wall_ms > scaled_limit_ms:
@@ -106,7 +119,7 @@ def judge_run(language, res, expected, memory_limit_kib, scaled_limit_ms):
     if res.output_capped:
         return "WA", None
     if res.abnormal:
-        if is_oom(language, res, memory_limit_kib):
+        if is_oom(language, res, memory_limit_kib) or static_image_exceeds_limit(res, static_kib, memory_limit_kib):
             return "MLE", None
         return "RE", re_kind(res)
     return ("AC" if checker.outputs_match(res.stdout, expected) else "WA"), None
@@ -243,6 +256,7 @@ def _grade(job, ctl, wd, uid):
         return None
 
     scaled_ms = job.time_limit_ms * lang.time_factor
+    static_kib = elfinfo.load_size_kib(os.path.join(wd.path, "main")) if lang.name == "cpp" else None
     argv = lang.run_cmd(job.memory_limit_kib)
     limits = lang.run_limits(job.memory_limit_kib)
     max_ms = max_kib = 0
@@ -253,7 +267,7 @@ def _grade(job, ctl, wd, uid):
                           stderr_tail=STDERR_TAIL, cancel=ctl.cancel)
         if res.cancelled:
             return None
-        verdict, kind = judge_run(lang, res, test.output, job.memory_limit_kib, scaled_ms)
+        verdict, kind = judge_run(lang, res, test.output, job.memory_limit_kib, scaled_ms, static_kib)
         max_ms = max(max_ms, round(res.wall_ms))
         max_kib = max(max_kib, res.maxrss_kib)
         if verdict != "AC":
