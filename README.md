@@ -1039,6 +1039,7 @@ assignment-network-project/
 - [ ] Đề bài viết bằng Markdown (render qua thư viện có sanitize); hiện `statement` chỉ là văn bản thường
 - [ ] Thêm tính năng xác thực và phân quyền
 - [ ] Bảng xếp hạng có lưới theo từng đề (AC hay số lần sai của mỗi người trên mỗi đề); hiện `GET /api/scoreboard` chỉ có tổng hợp theo người
+- [ ] Trang theo dõi worker của admin cập nhật realtime qua WebSocket (message `WORKERS`, worker vừa ngắt kết nối còn hiện trạng thái offline thêm 60 giây, đo RTT); hiện trang này dùng REST polling 2 giây (`GET /api/admin/workers`)
 - [ ] Tối ưu hóa hiệu suất
 - [ ] Triển khai trên cloud
 
