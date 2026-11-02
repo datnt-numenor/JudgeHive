@@ -1,6 +1,6 @@
 """Kích thước ảnh nạp của file ELF64 little-endian: tổng `p_memsz` của các segment `PT_LOAD`, chỉ dùng thư viện chuẩn.
 
-Dùng cho ca biên MLE của C++ (D30): mảng toàn cục lớn nằm trong `.bss`, kernel không map được dưới `RLIMIT_AS`
+Dùng cho ca biên MLE của C++ (D31): mảng toàn cục lớn nằm trong `.bss`, kernel không map được dưới `RLIMIT_AS`
 nên chương trình chết bằng SIGSEGV chứ không có `std::bad_alloc`, và không có chữ ký OOM nào trong stderr."""
 
 import struct
@@ -22,7 +22,7 @@ def load_size_kib(path):
                 return None
             f.seek(phoff)
             table = f.read(phentsize * phnum)
-    except OSError:
+    except (OSError, OverflowError):  # OverflowError: e_phoff >= 2^63 trong file hỏng
         return None
     if len(table) < phentsize * phnum:
         return None

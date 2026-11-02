@@ -107,7 +107,7 @@ def test_unbounded_recursion_is_re_not_mle(work_root, lang, kind):
     assert body["verdict"] == "RE" and body["re_kind"] == kind, body  # C++ stack overflow: ảnh nạp nhỏ nên không bị xếp MLE
 
 
-# ------------------------------------------------------- C++: mảng toàn cục / ảnh nạp lớn hơn giới hạn (D29 mục 1)
+# ------------------------------------------------------- C++: mảng toàn cục / ảnh nạp lớn hơn giới hạn (D31)
 
 def bss(mib, tail):
     return ('#include <cstdio>\nstatic volatile char a[%dULL << 20];\nint main() { a[0] = 1; a[(%dULL << 20) - 1] = 2; %s }\n'

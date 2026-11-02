@@ -23,7 +23,7 @@ RSS_MLE_RATIO = 0.9  # D13
 
 RE_SIGNALS = {11: "SIGSEGV", 8: "SIGFPE", 6: "SIGABRT", 9: "SIGKILL"}
 SIGSEGV = 11
-STATIC_IMAGE_SLACK_KIB = 12 * 1024  # D30 [ĐỀ XUẤT]
+STATIC_IMAGE_SLACK_KIB = 12 * 1024  # D31 [ĐỀ XUẤT]
 
 
 class BadJob(Exception):
@@ -100,7 +100,7 @@ def is_oom(language, res, memory_limit_kib):
 
 
 def static_image_exceeds_limit(res, static_kib, memory_limit_kib):
-    """D30: SIGSEGV của C++ mà ảnh nạp của chương trình (tổng `p_memsz` các `PT_LOAD`, nghĩa là `.data` + `.bss`)
+    """D31: SIGSEGV của C++ mà ảnh nạp của chương trình (tổng `p_memsz` các `PT_LOAD`, nghĩa là `.data` + `.bss`)
     lớn hơn giới hạn − 12 MiB. Dưới `RLIMIT_AS` kernel không map nổi `.bss` quá lớn, chương trình chạy rồi chết khi
     chạm vùng chưa map: không có `bad_alloc`, không có chữ ký trong stderr. Ca biên: ảnh nằm trong
     [giới hạn − 12 MiB, giới hạn] mà segfault thật (con trỏ sai...) cũng bị xếp MLE. [ĐỀ XUẤT] 12 MiB là chỗ cho thư
