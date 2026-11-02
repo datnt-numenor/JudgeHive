@@ -39,9 +39,16 @@ Biến môi trường:
 Worker chạy bằng root trong container để hạ quyền con xuống uid 61000 (`judge`); code thí sinh không bao giờ chạy
 bằng root. Cấu hình đã kiểm chứng ở PR 3 (lệnh test chuẩn dùng đúng các cờ này):
 
-- `cap_drop: [ALL]`, `cap_add: [SETUID, SETGID, KILL]`, `security_opt: [no-new-privileges:true]`. Không cần
+- `cap_drop: [ALL]`, `cap_add: [SETUID, SETGID, KILL, SYS_RESOURCE]` (`SYS_RESOURCE`: D28, xem bullet dưới), `security_opt: [no-new-privileges:true]`. Không cần
   `CHOWN`, `DAC_OVERRIDE`, `FOWNER`: file của uid thí sinh được xóa bằng một tiến trình chạy dưới chính uid đó.
   Thiếu `KILL` thì không kill được chương trình thí sinh khi TLE.
+- **`cap_add` thêm `SYS_RESOURCE` và `sysctls` (D28):** `kernel.shm_rmid_forced: 1`, `kernel.shmmax: 0`. Worker chạy root đặt
+  `oom_score_adj` +1000 cho tiến trình thí sinh (kể cả g++/javac) TRƯỚC `setpriv`; vì người ghi có `CAP_SYS_RESOURCE` nên
+  kernel khóa sàn giá trị và thí sinh không hạ lại được (không cap thì hạ lại được: đã đo). Sau `setpriv --no-new-privs` thí
+  sinh không có capability nào (`CapEff`/`CapPrm` bằng 0; test kiểm). Thiếu cap, sai sysctl, không nạp được bộ lọc, hoặc thí sinh vẫn hạ được `oom_score_adj` / gọi được `memfd_create` (thử bằng hành vi dưới uid thí sinh) thì `verify_guard()` làm worker thoát mã 2
+  khi khởi động. Bộ lọc seccomp (`worker/seccomp.py`, nạp bằng `setpriv --seccomp-filter`) chỉ áp cho tiến trình thí sinh:
+  `memfd_create`, `shmget` trả `EPERM`; ABI khác kiến trúc máy chủ (i386 `int 0x80`) và bit x32 thì `KILL_PROCESS`.
+  Worker vẫn tự dùng `memfd` cho input test. Không đặt `RLIMIT_NPROC` (xem dưới).
 - `pids_limit` (ví dụ 512): đây là biện pháp chặn fork bomb duy nhất (không đặt `RLIMIT_NPROC`). Khi bomb chiếm hết
   `pids_limit`, worker không tạo được thread hay tiến trình mới cho tới khi bomb bị kill; worker đã tránh việc này
   trong lúc chạy test (thread đọc và thread chấm tạo sẵn) và khôi phục sau khi kill. Kiểm chứng bằng

@@ -4,6 +4,10 @@ Chương trình luôn chạy qua launcher nhỏ (`launcher.py`: posix_spawn + wa
 worker, để `ru_maxrss` không bị cộng đỉnh RSS của worker. Hạ quyền bằng `setpriv`, đặt giới hạn bằng `prlimit`
 (không dùng preexec_fn). Không đặt RLIMIT_NPROC: fork bomb bị chặn bằng pids_limit của container, và sau mỗi
 test mọi tiến trình của uid thí sinh bị kill (kể cả tiến trình thoát nhóm bằng setsid).
+
+Ba lớp chống bộ nhớ ngoài RSS của thí sinh (D28): (1) `oom_score_adj` +1000 do root có CAP_SYS_RESOURCE đặt trước
+`setpriv`, nên thí sinh không hạ lại được và OOM killer luôn chọn thí sinh; (2) seccomp chặn `memfd_create`, `shmget`
+và ABI lạ (`worker/seccomp.py`); (3) sysctl `shm_rmid_forced`, `shmmax` ở compose. Cả biên dịch lẫn chạy đều qua `_wrap`.
 """
 
 import json
@@ -12,8 +16,12 @@ import selectors
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from dataclasses import dataclass
+
+from . import seccomp
 
 JUDGE_UID = 61000
 LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher.py")
@@ -152,8 +160,93 @@ def reset_uid(uid, roots=TMP_ROOTS):
     return cleanup_uid_files(uid, roots) and killed
 
 
+OOM_SCORE_ADJ = 1000
+CAP_SYS_RESOURCE = 24
+# Chạy dưới root (có CAP_SYS_RESOURCE) TRƯỚC `setpriv`: ghi bởi tiến trình có cap thì kernel đặt thêm sàn
+# `oom_score_adj_min`, nên sau khi hạ quyền thí sinh không ghi giá trị thấp hơn được (không cap thì hạ lại được: đã đo).
+# Chuỗi -c là HẰNG, không nối đường dẫn/lệnh nào vào đó: lệnh thật đi qua "$@" như các đối số riêng (không bị shell
+# diễn giải, nên không có injection qua tên file hay đường dẫn). Không dùng `preexec_fn` để đặt giá trị này: worker nhiều
+# thread, mà code chạy giữa fork và exec trong tiến trình nhiều thread có thể kẹt (deadlock) vì lock do thread khác giữ lúc fork.
+_OOM_WRAP_SCRIPT = 'echo 1000 > /proc/self/oom_score_adj && exec "$@"'
+_OOM_WRAP = ["sh", "-c", _OOM_WRAP_SCRIPT, "sh"]
+_filter_lock = threading.Lock()
+_filter_path = None
+
+
+def guard_filter_path():
+    """File BPF của thí sinh: tạo một lần (root sở hữu, 0444, nằm trong /tmp sticky nên thí sinh không sửa/xóa được)."""
+    global _filter_path
+    with _filter_lock:
+        if _filter_path is None or not os.path.exists(_filter_path):
+            fd, path = tempfile.mkstemp(prefix="jh-seccomp-", suffix=".bpf", dir="/tmp")
+            with os.fdopen(fd, "wb") as f:
+                f.write(seccomp.build_filter())
+            os.chmod(path, 0o444)
+            _filter_path = path
+        return _filter_path
+
+
+def _cap_eff():
+    with open("/proc/self/status") as f:
+        for line in f:
+            if line.startswith("CapEff:"):
+                return int(line.split()[1], 16)
+    raise seccomp.GuardError("không đọc được CapEff")
+
+
+def verify_guard():
+    """Kiểm điều kiện của D28 lúc worker khởi động; không đủ thì GuardError (worker không chạy code thí sinh).
+    Trả đường dẫn file BPF."""
+    if not _cap_eff() & (1 << CAP_SYS_RESOURCE):
+        raise seccomp.GuardError("thiếu CAP_SYS_RESOURCE (compose: cap_add SYS_RESOURCE): oom_score_adj của thí sinh "
+                                 "sẽ hạ lại được")
+    path = guard_filter_path()
+    out = subprocess.run(_OOM_WRAP + ["cat", "/proc/self/oom_score_adj"], capture_output=True, text=True, timeout=10)
+    if out.returncode != 0 or out.stdout.strip() != str(OOM_SCORE_ADJ):
+        raise seccomp.GuardError("không đặt được oom_score_adj cho tiến trình con")
+    for name, want in (("kernel/shmmax", "0"), ("kernel/shm_rmid_forced", "1")):
+        got = _read_sysctl(name)
+        if got != want:
+            raise seccomp.GuardError(f"sysctl {name.replace('/', '.')} = {got!r}, cần {want!r} (compose: sysctls)")
+    # Nạp thử bộ lọc thật bằng đúng chuỗi lệnh của thí sinh: util-linux/kernel không hỗ trợ seccomp thì lộ ngay lúc khởi động.
+    probe = subprocess.run(_wrap(["true"], {"nofile": 32}, JUDGE_UID), capture_output=True, timeout=10)
+    if probe.returncode != 0:
+        raise seccomp.GuardError("không chạy được lệnh mẫu dưới setpriv + seccomp-filter: "
+                                 + probe.stderr.decode(errors="replace")[:200])
+    # Hiệu lực thật, đo bằng hành vi dưới uid thí sinh: (a) không hạ lại được oom_score_adj, (b) memfd_create bị chặn.
+    # (close tường minh: lỗi ghi chỉ lộ ra khi flush, nếu không thì thoát mã 0 dù bị từ chối)
+    for what, code in (("hạ oom_score_adj", "f = open('/proc/self/oom_score_adj', 'w'); f.write('0'); f.close()"),
+                       ("memfd_create", "import os; os.memfd_create('x')")):
+        effective = subprocess.run(_wrap(["python3", "-I", "-S", "-c", code], {"nofile": 32}, JUDGE_UID),
+                                   capture_output=True, timeout=10)
+        if effective.returncode == 0:
+            raise seccomp.GuardError(f"thí sinh vẫn làm được: {what} (bảo vệ D28 không có hiệu lực)")
+    # Ngược chiều hai ca trên: ở đây phải THÀNH CÔNG. no_new_privs là điều kiện để nạp seccomp không cần cap và để
+    # thí sinh không lấy lại quyền qua setuid/file capability; đọc từ chính tiến trình thí sinh.
+    if not _candidate_no_new_privs():
+        raise seccomp.GuardError("tiến trình thí sinh không có NoNewPrivs: 1 (setpriv --no-new-privs không có hiệu lực)")
+    return path
+
+
+_NNP_PROBE = ("import sys; sys.exit(0 if any(l.split()[:2] == ['NoNewPrivs:', '1'] "
+              "for l in open('/proc/self/status')) else 1)")
+
+
+def _candidate_no_new_privs():
+    """True nếu tiến trình chạy qua `_wrap` (dưới uid thí sinh) thấy `NoNewPrivs: 1` trong /proc/self/status."""
+    probe = subprocess.run(_wrap(["python3", "-I", "-S", "-c", _NNP_PROBE], {"nofile": 32}, JUDGE_UID),
+                           capture_output=True, timeout=10)
+    return probe.returncode == 0
+
+
+def _read_sysctl(name):
+    with open("/proc/sys/" + name, encoding="utf-8") as f:
+        return f.read().strip()
+
+
 def _wrap(argv, limits, uid):
-    prefix = ["setpriv", f"--reuid={uid}", f"--regid={uid}", "--clear-groups"]
+    prefix = _OOM_WRAP + ["setpriv", f"--reuid={uid}", f"--regid={uid}", "--clear-groups", "--no-new-privs",
+                          "--seccomp-filter", guard_filter_path()]
     flags = [f"{_PRLIMIT_FLAGS[k]}={v}" for k, v in limits.items() if v is not None]
     if flags:
         prefix += ["prlimit", *flags]
@@ -186,6 +279,7 @@ def run(argv, *, cwd, timeout_s, limits=None, uid=JUDGE_UID, stdin_path=None, st
     # ngăn kernel đẩy core dump qua pipe (đo ở PR 3: abort() với 200 MB RSS mất 4,5 giây), còn 1 thì kernel bỏ qua.
     limits = {"core": 1, **(limits or {})}
     res = RunResult()
+    guard_filter_path()  # lỗi tạo file BPF (đầy /tmp...) phải nổ TRƯỚC khi mở pipe, để không rò rfd/wfd
     rfd, wfd = os.pipe()
     full = [sys.executable, "-S", "-I", LAUNCHER, str(wfd), *_wrap(argv, limits, uid)]
     stdin = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL

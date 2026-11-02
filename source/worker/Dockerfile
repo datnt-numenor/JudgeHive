@@ -11,7 +11,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && command -v setpriv sleep setsid tini >/dev/null
 
-# uid/gid chạy code thí sinh. Worker chạy root để hạ quyền con bằng setpriv; root cần SETUID, SETGID, KILL, CHOWN
+# uid/gid chạy code thí sinh. Worker chạy root để hạ quyền con bằng setpriv; root cần SETUID, SETGID, KILL, SYS_RESOURCE
 # (xem worker/README.md).
 RUN groupadd --gid 61000 judge \
     && useradd --uid 61000 --gid 61000 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin judge

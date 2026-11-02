@@ -46,8 +46,14 @@ services:
     env_file: ./secrets/worker.env
     # Cấu hình tối thiểu đã đo ở PR 3 (xem worker/README.md): worker chạy root để hạ quyền code thí sinh.
     cap_drop: [ALL]
-    cap_add: [SETUID, SETGID, KILL]
+    # SYS_RESOURCE (D28): để root đặt oom_score_adj +1000 cho thí sinh mà thí sinh không hạ lại được. Thí sinh không có
+    # cap nào sau setpriv + no-new-privs; chỉ tiến trình root của worker giữ cap này.
+    cap_add: [SETUID, SETGID, KILL, SYS_RESOURCE]
     security_opt: ["no-new-privileges:true"]
+    # SysV shm (D28): shmmax 0 chặn shmget; shm_rmid_forced hủy segment khi tiến trình thoát (lớp bổ trợ cho seccomp).
+    sysctls:
+      kernel.shm_rmid_forced: 1
+      kernel.shmmax: 0
     pids_limit: 512  # chặn fork bomb duy nhất (không đặt RLIMIT_NPROC)
     mem_limit: 1g
     memswap_limit: 1g  # bằng mem_limit: tmpfs không tràn sang swap
