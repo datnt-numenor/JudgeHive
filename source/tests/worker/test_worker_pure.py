@@ -118,6 +118,15 @@ def test_java_uses_xmx_only_no_address_space_limit_and_no_exit_on_oom():
     assert java.rss_rule is False
 
 
+def test_java_heap_flags_xmx_scales_with_the_limit_and_new_ratio_is_7_with_serial_gc():
+    """D29: -Xmx theo giới hạn của đề; -XX:NewRatio=7 để heap cũ (nơi mảng lớn nằm) chiếm 7/8 thay vì 2/3."""
+    java = LANGUAGES["java"]
+    for kib, xmx in ((65536, "-Xmx64m"), (262144, "-Xmx256m"), (524288, "-Xmx512m")):
+        cmd = java.run_cmd(kib)
+        assert xmx in cmd and "-XX:NewRatio=7" in cmd and "-XX:+UseSerialGC" in cmd
+        assert cmd.count("-XX:NewRatio=7") == 1 and cmd[-1] == "Main"
+
+
 def test_python_has_a_compile_only_syntax_check_step_with_approved_limits():
     lang = LANGUAGES["python"]
     assert lang.compile_cmd[:4] == ("python3", "-I", "-S", "-c") and len(lang.compile_cmd) == 5
