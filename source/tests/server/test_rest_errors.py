@@ -217,4 +217,5 @@ def test_no_route_declares_validated_parameters():
     assert seen == {"/api/login", "/api/logout", "/api/me", "/api/health", "/api/problems", "/api/problems/{problem_id}",
                     "/api/scoreboard", "/api/submissions", "/api/submissions/{submission_id}",
                     "/api/admin/problems/{problem_id}", "/api/admin/workers", "/api/admin/submissions",
-                    "/api/admin/submissions/{submission_id}"}, sorted(seen)
+                    "/api/admin/submissions/{submission_id}", "/api/admin/users", "/api/admin/users/{user_id}",
+                    "/api/admin/users/{user_id}/password"}, sorted(seen)

@@ -155,6 +155,13 @@ Migration 6 thêm `users.disabled` (0 hoặc 1). Chưa có endpoint nào đặt 
 
 `revoke_user_sessions(c, user_id)` xóa mọi phiên của một người bằng connection của người gọi, để đổi mật khẩu, role hoặc khóa và xóa phiên là một transaction. `manage.py users set-password` dùng nó; nó chạy ở process khác nên không đóng được WebSocket ngay (README 4.5: tối đa khoảng 30 giây). Username khi tạo tài khoản kiểm bằng `auth.is_valid_username` (`fullmatch`).
 
+Quản lý người dùng nằm ở `server/rest/admin_user_routes.py` (D30): băm mật khẩu ngoài transaction ghi; mỗi PATCH hoặc đặt mật khẩu
+đọc lại đối tượng, kiểm 404 và 409, ghi và xóa phiên trong cùng một `BEGIN IMMEDIATE`; sau commit mới đóng WebSocket
+(`hub.close_user_threadsafe`) và gọi `scoreboard_dirty`. Giới hạn đã biết: quyền admin của người gọi được kiểm ở `require_admin`
+NGOÀI transaction ghi, nên một admin vừa bị hạ quyền hoặc khóa bởi request khác nhưng request của họ đã qua `require_admin` vẫn
+hoàn tất được thao tác đó (cửa sổ bằng thời gian một request). Bất biến "còn ít nhất một admin hoạt động" vẫn giữ vì phép đếm
+nằm trong transaction ghi; nếu cần chặn hẳn thì kiểm lại `admin.id` trong transaction và trả 403.
+
 ### Bảng xếp hạng và event loop
 
 `ScoreboardService` giữ mọi trạng thái (bản gần nhất, phiên bản, cờ cần tính lại, danh sách subscriber) chỉ trên event loop. Truy vấn SQLite chạy trong một thread riêng của dịch vụ (`scoreboard-db`, một thread duy nhất, nên không có hai lần tính song song), vẫn qua `Database.conn()` nên cùng pragma với mọi chỗ khác. Thread khác (dispatcher, cổng worker) chỉ gọi `LoopHooks.scoreboard_dirty`, hàm này làm `loop.call_soon_threadsafe(service.mark_dirty)` rồi trả về và không bao giờ ném. Số phiên bản tăng trên event loop ngay trước khi giao việc cho thread, nên bản mang phiên bản v phản ánh mọi commit đã đánh dấu trước đó; bản đầu (phiên bản 1) tính xong trước khi mở cổng worker, lỗi thì server không khởi động. `GET /api/scoreboard` chỉ đọc bản đã tính, không bao giờ tự tính lại.
