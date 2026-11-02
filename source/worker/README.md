@@ -47,7 +47,8 @@ bằng root. Cấu hình đã kiểm chứng ở PR 3 (lệnh test chuẩn dùng
   kernel khóa sàn giá trị và thí sinh không hạ lại được (không cap thì hạ lại được: đã đo). Sau `setpriv --no-new-privs` thí
   sinh không có capability nào (`CapEff`/`CapPrm` bằng 0; test kiểm). Thiếu cap, sai sysctl, không nạp được bộ lọc, hoặc thí sinh vẫn hạ được `oom_score_adj` / gọi được `memfd_create` (thử bằng hành vi dưới uid thí sinh) thì `verify_guard()` làm worker thoát mã 2
   khi khởi động. Bộ lọc seccomp (`worker/seccomp.py`, nạp bằng `setpriv --seccomp-filter`) chỉ áp cho tiến trình thí sinh:
-  `memfd_create`, `shmget` trả `EPERM`; ABI khác kiến trúc máy chủ (i386 `int 0x80`) và bit x32 thì `KILL_PROCESS`.
+  `memfd_create`, `shmget`, `io_uring_setup/enter/register` trả `EPERM`; `socket()` chỉ cho `AF_UNIX`, mọi họ địa chỉ khác (kể cả `AF_INET`, `AF_INET6`) trả `EPERM`
+  (D33: thí sinh không có mạng, kể cả loopback và DNS); ABI khác kiến trúc máy chủ (i386 `int 0x80`) và bit x32 thì `KILL_PROCESS`.
   Worker vẫn tự dùng `memfd` cho input test. Không đặt `RLIMIT_NPROC` (xem dưới).
 - `pids_limit` (ví dụ 512): đây là biện pháp chặn fork bomb duy nhất (không đặt `RLIMIT_NPROC`). Khi bomb chiếm hết
   `pids_limit`, worker không tạo được thread hay tiến trình mới cho tới khi bomb bị kill; worker đã tránh việc này
