@@ -68,15 +68,18 @@ def test_stdin_file_is_closed_explicitly_not_left_to_the_garbage_collector(warm,
         opened.append(f)
         return f
     monkeypatch.setattr(sandbox, "open", recording_open, raising=False)
+    def stdin_files():  # sandbox còn open() các /proc/<pid>/stat khác, chỉ xét file stdin
+        return [f for f in opened if f.name == os.devnull]
+
     assert run_ok(warm, stdin_path=os.devnull).exit_code == 0
-    assert len(opened) == 1 and opened[0].closed
+    assert len(stdin_files()) == 1 and stdin_files()[0].closed
 
     def boom(*a, **k):
         raise PermissionError("không spawn được")
     monkeypatch.setattr(sandbox.subprocess, "Popen", boom)
     opened.clear()
     assert run_ok(warm, stdin_path=os.devnull).spawn_error
-    assert len(opened) == 1 and opened[0].closed
+    assert len(stdin_files()) == 1 and stdin_files()[0].closed
 
 
 def test_successful_runs_leak_no_fd(warm):
