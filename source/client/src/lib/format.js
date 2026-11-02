@@ -70,6 +70,8 @@ export function errorText(err) {
       return "Không tìm thấy đề bài.";
     case "SUBMISSION_NOT_FOUND":
       return "Không tìm thấy bài nộp.";
+    case "FORBIDDEN":
+      return "Bạn không đủ quyền thực hiện thao tác này.";
     case "INVALID_REQUEST":
       return "Dữ liệu không hợp lệ.";
     case "INTERNAL_ERROR":

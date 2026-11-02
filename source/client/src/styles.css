@@ -141,3 +141,12 @@ tr.me {
     grid-template-columns: 1fr;
   }
 }
+
+.filters label {
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.filters label > * {
+  margin-left: 4px;
+}

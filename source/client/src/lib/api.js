@@ -134,4 +134,21 @@ export const api = {
   },
   submission: (id, opts) => request("GET", `/api/submissions/${enc(id)}`, opts).then((r) => r.data),
   scoreboard: (opts) => request("GET", "/api/scoreboard", opts).then((r) => r.data),
+
+  // Nhóm admin (README 3.6). Server quyết định quyền: client gặp 403 thì chỉ báo, không suy ra gì.
+  setProblemHidden: (id, hidden, opts) =>
+    request("PATCH", `/api/admin/problems/${enc(id)}`, { ...opts, body: { hidden } }).then((r) => r.data),
+  adminWorkers: (opts) => request("GET", "/api/admin/workers", opts).then((r) => r.data),
+  /** Chỉ gửi tham số có giá trị: server từ chối tham số rỗng bằng 400. */
+  adminSubmissions: ({ state, problemId, userId, beforeId, limit } = {}, opts) => {
+    const q = new URLSearchParams();
+    if (state) q.set("state", state);
+    if (problemId) q.set("problem_id", problemId);
+    if (userId != null) q.set("user_id", String(userId));
+    if (beforeId != null) q.set("before_id", String(beforeId));
+    if (limit != null) q.set("limit", String(limit));
+    const qs = q.toString();
+    return request("GET", `/api/admin/submissions${qs ? `?${qs}` : ""}`, opts).then((r) => r.data);
+  },
+  adminSubmission: (id, opts) => request("GET", `/api/admin/submissions/${enc(id)}`, opts).then((r) => r.data),
 };

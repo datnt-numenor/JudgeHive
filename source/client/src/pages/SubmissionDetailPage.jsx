@@ -5,7 +5,7 @@ import { errorText, formatKib, formatTime, reKindLabel, stateLabel, verdictLabel
 import { startPolling } from "../lib/poll.js";
 import { isPollingMode, useRealtime, useStatusEvents } from "../realtime.jsx";
 
-function Verdict({ s }) {
+export function Verdict({ s }) {
   if (s.verdict == null) return <p>Chưa có kết quả.</p>;
   return (
     <ul className="verdict">
@@ -29,7 +29,7 @@ function Verdict({ s }) {
   );
 }
 
-function Details({ s }) {
+export function Details({ s }) {
   return (
     <>
       {s.verdict === "CE" && s.ce_message != null && (
