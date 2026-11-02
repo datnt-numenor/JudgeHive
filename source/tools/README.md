@@ -25,11 +25,11 @@ Kịch bản tùy chọn:
 
 ### 1. Tạo tài khoản (công cụ không tự tạo)
 
-Cần `COUNT` tài khoản `loadtest-01..` (10 cho kịch bản chính; thêm 1 cho `--with-s2`; 1 + 45 cho `--queue-full`). Chạy ở `source/`, stack đã `docker compose up`:
+Cần `COUNT` tài khoản `loadtest-01..`: **11** để chạy kịch bản chính + `--with-s2` (10 cho kịch bản chính, tài khoản thứ 11 cho S2); chỉ 10 nếu không bật `--with-s2`; thêm 45 nữa (tổng 56) nếu bật `--queue-full`. Chạy ở `source/`, stack đã `docker compose up`:
 
 ```bash
 export JH_LOADTEST_PASSWORD='đặt-mật-khẩu-8-đến-128-byte'
-COUNT=10
+COUNT=11
 for i in $(seq 1 "$COUNT"); do
   name=$(printf 'loadtest-%02d' "$i")
   printf '%s\n' "$JH_LOADTEST_PASSWORD" | docker compose exec -T server python -m server.manage users create "$name" --password-stdin
