@@ -27,8 +27,8 @@ TOUCH = {"python": PY_TOUCH, "cpp": CPP_TOUCH, "java": JAVA_TOUCH}
 HELLO = {"python": "print('ok')\n", "cpp": '#include <cstdio>\nint main() { puts("ok"); }\n',
          "java": 'public class Main { public static void main(String[] a) { System.out.println("ok"); } }\n'}
 # dùng được trong giới hạn 256 MiB: Python/C++ tới giới hạn − ~14/~8 MiB (RLIMIT_AS tính cả runtime);
-# Java: mảng đơn chỉ ~60% (heap cũ = 2/3 `-Xmx` với SerialGC; D29 sẽ chốt cờ JVM, đổi số này khi đó)
-SAFE_MIB = {"python": 230, "cpp": 235, "java": 100}
+# Java (D29: -Xmx + -XX:NewRatio=7): mảng đơn qua tới ~220 MiB ở 256 MiB (baseline SerialGC chỉ ~165)
+SAFE_MIB = {"python": 230, "cpp": 235, "java": 200}
 
 
 def run(work_root, lang, code, inp="", out="ok\n", limit_kib=LIMIT, time_ms=5000):
@@ -42,6 +42,14 @@ def test_allocating_clearly_inside_the_limit_is_ac(work_root, lang):
     body = run(work_root, lang, TOUCH[lang], f"{SAFE_MIB[lang]}\n")
     assert body["verdict"] == "AC", body
     assert body["memory_kib"] >= SAFE_MIB[lang] * MiB * 0.9  # báo RSS thật, không bị cắt về giới hạn
+
+
+@pytest.mark.parametrize("limit_mib,n", [(64, 48), (256, 200)])
+def test_java_single_array_close_to_the_limit_is_ac_thanks_to_new_ratio_7(work_root, limit_mib, n):
+    """D29: baseline (young = 1/3 heap) chỉ qua mảng đơn tới 40 MiB ở giới hạn 64 và 165 MiB ở 256; với
+    `-XX:NewRatio=7` qua tới 52 và 220 MiB. n nằm giữa hai mức đó nên bỏ cờ thì test đỏ."""
+    body = run(work_root, "java", TOUCH["java"], f"{n}\n", limit_kib=limit_mib * MiB)
+    assert body["verdict"] == "AC", body
 
 
 @pytest.mark.parametrize("lang", LANGS)
