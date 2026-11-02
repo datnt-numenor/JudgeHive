@@ -902,7 +902,7 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 
 - `POST /api/logout`: mọi WebSocket thuộc phiên bị hủy bị đóng với mã 4401 ngay sau khi logout trả lời. WebSocket thuộc các phiên khác của cùng người giữ nguyên.
 - `POST /api/login` khi request đã mang một phiên còn hiệu lực (mục 3.2: phiên cũ bị hủy và cấp phiên mới): mọi WebSocket thuộc phiên cũ bị đóng với mã 4401, giống logout.
-- Phiên hết hạn khi WebSocket đang mở: server kiểm tra lại phiên của mọi kết nối định kỳ 30 giây một lần, và đóng 4401 kết nối không còn phiên hợp lệ; nên có thể trễ tối đa khoảng 30 giây sau khi hết hạn.
+- Phiên hết hạn khi WebSocket đang mở: server kiểm tra lại phiên của mọi kết nối định kỳ 30 giây một lần, và đóng 4401 kết nối không còn phiên hợp lệ (hết hạn, đã bị xóa, hoặc thuộc tài khoản bị khóa); nên có thể trễ tối đa khoảng 30 giây sau khi hết hạn.
 - Khi mật khẩu của một người được đặt lại bằng `manage.py users set-password`, mọi phiên của người đó bị xóa. `manage.py` chạy ở process khác nên không đóng được WebSocket ngay: các kết nối đó bị đóng 4401 ở lần kiểm phiên định kỳ kế tiếp (tối đa khoảng 30 giây, như phiên hết hạn).
 - Khi admin đặt lại mật khẩu của một người qua web (PR sau), mọi WebSocket của người đó bị đóng 4401 ngay.
 - Server tắt: đóng mọi kết nối với mã 1012 (uvicorn đóng bằng mã này khi nhận SIGTERM; đã kiểm với uvicorn 0.54.0 và `websockets` 17.3).
@@ -965,7 +965,7 @@ WebSocket không có thân lỗi JSON; lý do đóng nằm ở mã đóng (close
 | Mã | Ai gửi | Khi nào | Client |
 |----|--------|---------|--------|
 | 403 (HTTP, không phải close code) | server | Handshake: thiếu `Origin` hoặc `Origin` không được phép (mục 4.1). Client chỉ thấy 1006 | Nối lại có backoff |
-| 4401 | server | Thiếu phiên, phiên sai hoặc hết hạn; logout; đặt lại mật khẩu bằng `manage.py` hoặc bởi admin (mục 4.1, 4.5) | Ngừng nối lại, về trang đăng nhập |
+| 4401 | server | Thiếu phiên, phiên sai hoặc hết hạn; tài khoản bị khóa; logout; đặt lại mật khẩu bằng `manage.py` hoặc bởi admin (mục 4.1, 4.5) | Ngừng nối lại, về trang đăng nhập |
 | 4408 | server | Không nhận được gì từ client quá 60 giây (mục 4.4) | Nối lại có backoff |
 | 4429 | server | Người dùng đã có 10 kết nối WebSocket (mục 4.1) | Ngừng nối lại, chuyển sang lấy dữ liệu bằng REST, báo người dùng (mục 4.7) |
 | 1013 | server | Vượt 400 kết nối toàn server (mục 4.1); kết nối nhận quá chậm (mục 4.4) | Nối lại có backoff |
