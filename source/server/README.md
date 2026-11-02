@@ -142,6 +142,10 @@ nên `admin_view` suy `state` từ `job is None`. `workers` lấy ảnh chụp t
 `len(snapshot())`) rồi mới đếm hàng đợi bằng một truy vấn trên chỉ mục phủ `idx_submissions_pending`, nên hai phần đọc ở hai
 thời điểm khác nhau. Tham số query do `_strict_query` tự parse (tên lạ hoặc trùng là 400), không khai báo query có kiểu.
 
+`GET /api/admin/submissions/{id}` đi qua `views.admin_detail_view`, hàm này gọi đúng `views.detail_view` của chủ bài (với
+`is_admin=True`) rồi thêm field vận hành, nên whitelist theo verdict (D11) chỉ có một bản. Mỗi lần xem ghi một dòng log
+`ADMIN admin=<id> view submission=<id>`, không ghi `code`.
+
 ### Bảng xếp hạng và event loop
 
 `ScoreboardService` giữ mọi trạng thái (bản gần nhất, phiên bản, cờ cần tính lại, danh sách subscriber) chỉ trên event loop. Truy vấn SQLite chạy trong một thread riêng của dịch vụ (`scoreboard-db`, một thread duy nhất, nên không có hai lần tính song song), vẫn qua `Database.conn()` nên cùng pragma với mọi chỗ khác. Thread khác (dispatcher, cổng worker) chỉ gọi `LoopHooks.scoreboard_dirty`, hàm này làm `loop.call_soon_threadsafe(service.mark_dirty)` rồi trả về và không bao giờ ném. Số phiên bản tăng trên event loop ngay trước khi giao việc cho thread, nên bản mang phiên bản v phản ánh mọi commit đã đánh dấu trước đó; bản đầu (phiên bản 1) tính xong trước khi mở cổng worker, lỗi thì server không khởi động. `GET /api/scoreboard` chỉ đọc bản đã tính, không bao giờ tự tính lại.

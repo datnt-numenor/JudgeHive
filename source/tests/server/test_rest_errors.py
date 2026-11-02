@@ -216,4 +216,5 @@ def test_no_route_declares_validated_parameters():
     # kiểm tra mà không ai biết. Mỗi PR thêm endpoint admin thêm đường dẫn của nó vào đây.
     assert seen == {"/api/login", "/api/logout", "/api/me", "/api/health", "/api/problems", "/api/problems/{problem_id}",
                     "/api/scoreboard", "/api/submissions", "/api/submissions/{submission_id}",
-                    "/api/admin/problems/{problem_id}", "/api/admin/workers", "/api/admin/submissions"}, sorted(seen)
+                    "/api/admin/problems/{problem_id}", "/api/admin/workers", "/api/admin/submissions",
+                    "/api/admin/submissions/{submission_id}"}, sorted(seen)

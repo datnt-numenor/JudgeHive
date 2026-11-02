@@ -462,7 +462,7 @@ Khi đó:
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
-Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có ba endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
+Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có bốn endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
 
 #### 3.1. Bảng tóm tắt
 
@@ -481,6 +481,7 @@ Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộ
 | `/api/admin/problems/{id}` | HTTP/1.1 | PATCH | `{"hidden"}` | 200 đề dạng phần tử của `GET /api/problems`; chỉ admin (mục 3.6) |
 | `/api/admin/workers` | HTTP/1.1 | GET | — | 200 `{"workers":[…],"queue":{…}}`; chỉ admin (mục 3.6) |
 | `/api/admin/submissions` | HTTP/1.1 | GET | query `state`, `problem_id`, `user_id`, `before_id`, `limit` (tùy chọn) | 200 `{"submissions":[…],"next_before_id"}` bài của mọi người, không có mã nguồn; chỉ admin (mục 3.6) |
+| `/api/admin/submissions/{id}` | HTTP/1.1 | GET | — | 200 một bài nộp của bất kỳ ai, kèm `code` và chi tiết; chỉ admin (mục 3.6) |
 
 Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
@@ -660,7 +661,7 @@ Server không bao giờ trả cho client: input hay output của test ẩn, stdo
 ##### `GET /api/submissions/{id}`
 
 - Trả đối tượng bài nộp (không bọc trong object khác) cộng các field chi tiết dưới đây.
-- Bài không tồn tại và bài của người khác (kể cả khi người gọi là admin) trả cùng 404 `SUBMISSION_NOT_FOUND`, cùng `message`. Xem bài của người khác là việc của endpoint admin (PR sau).
+- Bài không tồn tại và bài của người khác (kể cả khi người gọi là admin) trả cùng 404 `SUBMISSION_NOT_FOUND`, cùng `message`. Admin xem bài của người khác bằng `GET /api/admin/submissions/{id}` (mục 3.6).
 - Có field `code`: mã nguồn của chính người gọi, đúng như đã nộp.
 
 | Field thêm | Kiểu | Ghi chú |
@@ -733,7 +734,7 @@ Mỗi phần tử của `rows`:
 | `FORBIDDEN` | 403 | Đã đăng nhập nhưng không đủ quyền: mọi endpoint dưới `/api/admin/` khi người gọi không phải admin |
 | `NOT_FOUND` | 404 | Đường dẫn `/api/*` không tồn tại |
 | `PROBLEM_NOT_FOUND` | 404 | Đề không tồn tại hoặc ẩn với người gọi |
-| `SUBMISSION_NOT_FOUND` | 404 | Bài nộp không tồn tại hoặc không phải của người gọi |
+| `SUBMISSION_NOT_FOUND` | 404 | Bài nộp không tồn tại hoặc không phải của người gọi (route admin: không tồn tại) |
 | `METHOD_NOT_ALLOWED` | 405 | Sai method cho đường dẫn; kèm header `Allow` |
 | `BODY_TOO_LARGE` | 413 | Body vượt giới hạn mục 3.2 |
 | `CODE_TOO_LARGE` | 413 | `code` vượt 64 KB (byte UTF-8) |
@@ -804,7 +805,7 @@ Tình trạng các worker đang kết nối và độ dài hàng đợi, chỉ �
 
 ##### `GET /api/admin/submissions`
 
-Bài nộp của mọi người, mới nhất trước, chỉ đọc. Không có `code`, `ce_message` và các field `sample_*` (chi tiết kèm mã nguồn là việc của một endpoint khác, PR sau).
+Bài nộp của mọi người, mới nhất trước, chỉ đọc. Không có `code`, `ce_message` và các field `sample_*` (chi tiết kèm mã nguồn lấy bằng `GET /api/admin/submissions/{id}` bên dưới).
 
 | Tham số query | Kiểu | Ghi chú |
 | --- | --- | --- |
@@ -830,6 +831,17 @@ Phản hồi có dạng `{"submissions": […], "next_before_id": …}`, phân t
 
 - Người không phải admin nhận 403 trước khi tham số query được kiểm tra, kể cả bài của chính họ.
 - Không bao giờ có input hay output của test ẩn, stdout/stderr của test ẩn, hay giá trị mã thoát cụ thể (D11).
+
+##### `GET /api/admin/submissions/{id}`
+
+Chi tiết một bài nộp của bất kỳ người nào, kèm mã nguồn, chỉ đọc. Không có body, không nhận tham số query (có tham số nào, kể cả tham số lạ, thì 400 `INVALID_REQUEST`).
+
+- Trả đối tượng bài nộp (không bọc trong object khác) gồm đủ field của `GET /api/submissions/{id}` (mục 3.3: đối tượng bài nộp cùng `code`, `ce_message`, `sample_stdout`, `sample_input`, `sample_expected_output`, với cùng quy tắc `null`) và các field thêm của `GET /api/admin/submissions` (`user_id`, `username`, `attempt_id`, `delivery_count`, `total_deliveries`, `is_rejudge`, `rejudge_failed`).
+- `sample_input` và `sample_expected_output` chỉ lấy từ test mẫu của đề, không bao giờ từ test ẩn; vì người gọi là admin nên chúng không bị `null` do đề đang ẩn (mục 3.3), nhưng vẫn `null` khi bộ test của đề đã đổi sau lần chấm.
+- Người không phải admin nhận 403 `FORBIDDEN` trước khi id được kiểm tra, kể cả với bài của chính họ và kể cả khi bài không tồn tại.
+- Id sai định dạng (mục 3.2) hoặc bài không tồn tại: 404 `SUBMISSION_NOT_FOUND`.
+- Không bao giờ có input hay output của test ẩn, stdout/stderr của test ẩn, hay giá trị mã thoát cụ thể (D11). `SE` chỉ có `verdict` = `SE`, không có chi tiết lỗi máy chấm.
+- Mỗi lần xem để lại một dòng trong log của server (admin, bài), không ghi nội dung `code`.
 
 
 ### 4. WebSocket (server đẩy)
