@@ -118,6 +118,19 @@ def test_java_uses_xmx_only_no_address_space_limit_and_no_exit_on_oom():
     assert java.rss_rule is False
 
 
+def test_python_has_a_compile_only_syntax_check_step_with_approved_limits():
+    lang = LANGUAGES["python"]
+    assert lang.compile_cmd[:4] == ("python3", "-I", "-S", "-c") and len(lang.compile_cmd) == 5
+    src = lang.compile_cmd[4]
+    compile(src, "<check>", "exec")  # mã kiểm tự nó phải hợp lệ
+    assert "compile(src, 'Main.py', 'exec'" in src  # tên file là hằng, không phải đường dẫn
+    assert "exec(" not in src.replace("'exec'", "") and "import_module" not in src  # chỉ biên dịch, không chạy mã
+    assert "rb" in src  # đọc bytes để tôn trọng `# coding:` và BOM
+    assert lang.compile_timeout_s == 5 and lang.compile_as_bytes == 512 * 1024 * 1024
+    assert lang.compile_limits()["as"] == 512 * 1024 * 1024
+    validate()  # timeout ≤ COMPILE_TIMEOUT_MAX
+
+
 def test_python_and_cpp_use_address_space_limit_and_rss_rule():
     for name in ("python", "cpp"):
         lang = LANGUAGES[name]

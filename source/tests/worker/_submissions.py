@@ -305,6 +305,7 @@ print(attempt(lambda: os.rename(rootdir + "/victim", rootdir + "/moved")))
 }
 
 CE = {
+    "python": "def f(:\n    pass\n",
     "cpp": "int main( { return 0 }\n",
     "java": "public class Main { public static void main(String[] a) { int x = ; } }\n",
 }
