@@ -56,6 +56,18 @@ def submission_not_found():
     return ApiError(404, "SUBMISSION_NOT_FOUND", "submission not found")
 
 
+def user_not_found():
+    return ApiError(404, "USER_NOT_FOUND", "user not found")
+
+
+def username_taken():
+    return ApiError(409, "USERNAME_TAKEN", "username is already taken")
+
+
+def last_admin():
+    return ApiError(409, "LAST_ADMIN", "cannot disable or demote the last active admin")
+
+
 def rate_limited(retry_after_s):
     return ApiError(429, "RATE_LIMITED", "too many requests", {"Retry-After": str(max(1, int(retry_after_s)))})
 
