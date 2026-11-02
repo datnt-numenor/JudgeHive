@@ -158,7 +158,8 @@ Migration 6 thêm `users.disabled` (0 hoặc 1). Chưa có endpoint nào đặt 
 Quản lý người dùng nằm ở `server/rest/admin_user_routes.py` (D30): băm mật khẩu ngoài transaction ghi; mỗi PATCH hoặc đặt mật khẩu
 đọc lại đối tượng, kiểm 404 và 409, ghi và xóa phiên trong cùng một `BEGIN IMMEDIATE`; sau commit mới đóng WebSocket
 (`hub.close_user_threadsafe`) và gọi `scoreboard_dirty`. `require_admin` chạy ngoài transaction ghi, nên mỗi transaction ghi
-còn kiểm lại (`_require_active_admin`, ngay đầu khối `write()`) rằng người gọi vẫn là admin hoạt động: admin vừa bị hạ quyền hoặc
+còn kiểm lại (`_require_active_admin`, ngay đầu khối `write()`; tạo user là một transaction duy nhất gồm kiểm lại và
+INSERT) rằng người gọi vẫn là admin hoạt động: admin vừa bị hạ quyền hoặc
 khóa giữa lúc request đang chạy nhận 403 và không có gì được ghi. Phép đếm admin cuối cùng cũng nằm trong transaction ghi.
 
 ### Bảng xếp hạng và event loop
