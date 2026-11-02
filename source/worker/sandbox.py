@@ -216,11 +216,12 @@ def verify_guard():
     # Hiệu lực thật, đo bằng hành vi dưới uid thí sinh: (a) không hạ lại được oom_score_adj, (b) memfd_create bị chặn.
     # (close tường minh: lỗi ghi chỉ lộ ra khi flush, nếu không thì thoát mã 0 dù bị từ chối)
     for what, code in (("hạ oom_score_adj", "f = open('/proc/self/oom_score_adj', 'w'); f.write('0'); f.close()"),
-                       ("memfd_create", "import os; os.memfd_create('x')")):
+                       ("memfd_create", "import os; os.memfd_create('x')"),
+                       ("tạo socket AF_INET (D33)", "import socket; socket.socket(socket.AF_INET)")):
         effective = subprocess.run(_wrap(["python3", "-I", "-S", "-c", code], {"nofile": 32}, JUDGE_UID),
                                    capture_output=True, timeout=10)
         if effective.returncode == 0:
-            raise seccomp.GuardError(f"thí sinh vẫn làm được: {what} (bảo vệ D28 không có hiệu lực)")
+            raise seccomp.GuardError(f"thí sinh vẫn làm được: {what} (bảo vệ D28/D33 không có hiệu lực)")
     # Ngược chiều hai ca trên: ở đây phải THÀNH CÔNG. no_new_privs là điều kiện để nạp seccomp không cần cap và để
     # thí sinh không lấy lại quyền qua setuid/file capability; đọc từ chính tiến trình thí sinh.
     if not _candidate_no_new_privs():
