@@ -557,6 +557,27 @@ def test_an_admin_who_loses_the_role_while_the_request_runs_gets_403_and_nothing
     assert aw.get("/api/me", cookie=alice_cookie).status == 200 and aw.spy.dirty == 0
 
 
+ORDER_REQUESTS = {
+    "patch-unknown-id": lambda aw: call(aw, "PATCH", "/api/admin/users/99999", {"disabled": True}),
+    "create-duplicate-username": lambda aw: call(aw, "POST", "/api/admin/users",
+                                                 {"username": "bob", "password": "dup-pass-9999"}),
+    "patch-the-last-admin-itself": lambda aw: patch(aw, "root", {"role": "user"}),
+}
+
+
+@pytest.mark.parametrize("name", sorted(ORDER_REQUESTS))
+def test_the_recheck_of_the_caller_comes_before_404_and_409(aw, name):
+    """Admin đã bị hạ giữa chừng nhận 403, không phải 404 (id lạ), 409 `USERNAME_TAKEN` hay 409 `LAST_ADMIN`."""
+    root_cookie(aw)
+
+    def demote_root():
+        with aw.db.write() as c:
+            c.execute("UPDATE users SET role = 'user' WHERE username = 'root'")
+
+    r = run_gated(aw, lambda: ORDER_REQUESTS[name](aw), demote_root)
+    assert (r.status, r.error_code) == (403, "FORBIDDEN"), (name, r.status, r.error_code)
+
+
 @pytest.mark.parametrize("action", sorted(WRITE_REQUESTS))
 def test_the_same_gated_request_without_any_change_succeeds(aw, action):
     """Đối chứng: cổng chặn không tự làm request thất bại; chỉ việc đổi quyền giữa chừng mới gây 403."""
