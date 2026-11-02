@@ -8,6 +8,7 @@ export const json = (status, body, headers = {}) =>
 export const apiError = (status, code, message = "m", headers = {}) => json(status, { error: { code, message } }, headers);
 
 export const USER = { id: 5, username: "alice", role: "user" };
+export const ADMIN = { id: 1, username: "root", role: "admin" };
 
 export const PROBLEM = {
   id: "sum-two",
@@ -39,6 +40,36 @@ export function submissionObject(over = {}) {
     sample_stdout: null,
     sample_input: null,
     sample_expected_output: null,
+    ...over,
+  };
+}
+
+/** Bài nộp trong `GET /api/admin/submissions/{id}`: đối tượng chi tiết cộng các field vận hành (README 3.6). */
+export function adminSubmissionObject(over = {}) {
+  return {
+    ...submissionObject(),
+    user_id: 5,
+    username: "alice",
+    attempt_id: 1,
+    delivery_count: 0,
+    total_deliveries: 1,
+    is_rejudge: false,
+    rejudge_failed: false,
+    ...over,
+  };
+}
+
+/** Một worker trong `GET /api/admin/workers` (README 3.6). */
+export function workerObject(over = {}) {
+  return {
+    worker_id: 3,
+    name: "worker-1",
+    addr: "172.18.0.4:51234",
+    state: "idle",
+    connected_s: 812,
+    last_seen_s: 1,
+    jobs_done: 27,
+    job: null,
     ...over,
   };
 }
