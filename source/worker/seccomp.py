@@ -78,7 +78,7 @@ def simulate(prog, arch_value, nr, arg0=0):
         code, jt, jf, k = insns[pc]
         pc += 1
         if code == LD_ABS:
-            a = {0: nr, 4: arch_value, ARG0_OFFSET: arg0 & 0xFFFFFFFF}[k]
+            a = {0: nr, 4: arch_value, 16: arg0 & 0xFFFFFFFF}[k]  # 16 = offsetof(seccomp_data, args[0]) theo kernel, cố ý không dùng ARG0_OFFSET
         elif code == JEQ:
             pc += jt if a == k else jf
         elif code == JGE:
