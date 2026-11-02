@@ -98,6 +98,15 @@ def test_isolation_detects_foreign_submissions():
     assert len(problems) == 1 and "9" in problems[0]
 
 
+def test_history_check_allows_earlier_runs_but_catches_missing_extra_and_duplicate_ids():
+    assert lt.check_history([9, 8, 3, 2, 1], {1, 2, 3}, {8, 9}) == []  # có bài của lần chạy trước (baseline)
+    assert lt.check_history([8, 9], set(), {8, 9}) == []
+    assert any("thiếu [9]" in p for p in lt.check_history([8], set(), {8, 9}))
+    assert any("thừa [7]" in p for p in lt.check_history([7, 8, 9], set(), {8, 9}))
+    assert any("trùng" in p for p in lt.check_history([8, 8, 9], set(), {8, 9}))
+    assert any("thiếu [1]" in p for p in lt.check_history([8, 9], {1}, {8, 9}))  # bài của lần trước biến mất
+
+
 def test_forbidden_keys_are_found_at_any_depth_and_clean_data_passes():
     assert lt.find_forbidden_keys({"a": [{"b": {"code": "x"}}], "ce_message": "m"}) == ["a[0].b.code", "ce_message"]
     assert lt.find_forbidden_keys({"submission": {"verdict": "AC", "time_ms": 3}}) == []

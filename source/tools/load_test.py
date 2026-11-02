@@ -141,6 +141,18 @@ def check_isolation(received_ids, own_ids):
     return problems
 
 
+def check_history(ids, baseline, own):
+    """Lịch sử REST của một người sau lần chạy: `ids` (theo thứ tự trả về) phải là đúng `baseline` (bài có từ lần chạy
+    trước trên cùng tài khoản) cộng `own` (bài vừa nộp), không trùng id, không thiếu, không thừa."""
+    problems = []
+    if len(ids) != len(set(ids)):
+        problems.append("id trùng trong lịch sử")
+    want = set(baseline) | set(own)
+    if set(ids) != want:
+        problems.append(f"thiếu {sorted(want - set(ids))}, thừa {sorted(set(ids) - want)}")
+    return problems
+
+
 def find_forbidden_keys(obj, path=""):
     """Đường dẫn của mọi key cấm (FORBIDDEN_KEYS) ở bất kỳ độ sâu nào trong obj."""
     found = []
@@ -406,6 +418,15 @@ async def scenario_main(cfg, http_, report, cookies, result):
     not_ready = [cfg.username(u) for u, c in closed.items() if c]
     report.check("mọi WebSocket mở được và nhận SCOREBOARD đầu", not not_ready, f"đóng sớm: {not_ready} {[closed[u] for u in cookies if closed[u]]}")
 
+    # Lịch sử có sẵn của các tài khoản (từ lần chạy trước) để C5 chỉ xét phần thay đổi do lần chạy này.
+    baseline = {}
+    for u in cookies:
+        try:
+            baseline[u] = {it.get("submission_id") for it in fetch_history(http_, cookies[u])}
+        except RuntimeError as e:
+            report.check(f"đọc lịch sử trước khi nộp của {cfg.username(u)}", False, str(e))
+            baseline[u] = set()
+    report.info("READY-TO-SUBMIT sẵn sàng nộp bài (barrier)")  # mốc để tác nhân bên ngoài (thử phá có chủ đích) canh thời điểm
     barrier = threading.Barrier(len(recs))
     with ThreadPoolExecutor(max_workers=len(recs)) as pool:
         t_release = time.monotonic()
@@ -505,10 +526,7 @@ async def scenario_main(cfg, http_, report, cookies, result):
             hist_problems.append(f"{cfg.username(u)}: {e}")
             continue
         ids = [it.get("submission_id") for it in items]
-        if len(ids) != len(set(ids)):
-            hist_problems.append(f"{cfg.username(u)}: id trùng trong lịch sử")
-        if set(ids) != own[u]:
-            hist_problems.append(f"{cfg.username(u)}: thiếu {sorted(own[u] - set(ids))}, thừa {sorted(set(ids) - own[u])}")
+        hist_problems += [f"{cfg.username(u)}: {p}" for p in check_history(ids, baseline[u], own[u])]
         leaks += find_forbidden_keys(items, f"history[{cfg.username(u)}]")
     for u in cookies:
         for _, m in sinks[u]:
