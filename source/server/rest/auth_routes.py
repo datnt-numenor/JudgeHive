@@ -63,15 +63,15 @@ def login(request: Request, body: dict = Depends(body_default)):
     now = state.clock()
     sessions.purge_expired_sessions(state.db, now)
     previous = sessions.lookup(state.db, request.cookies.get(sessions.COOKIE_NAME), now)
-    if previous is not None:
-        sessions.delete_session(state.db, previous.token_hash)
-        _close_websockets(request, previous.token_hash)  # README 4.5: WebSocket của phiên bị thay đóng 4401
     # Kiểm lại trong cùng transaction rằng mật khẩu, role, trạng thái khóa chưa đổi từ lúc đọc `row` (D30): nếu admin vừa đổi
     # thì không cấp phiên (README 3.3).
     token = sessions.create_session(state.db, row["id"], now, state.cfg.session_ttl_s,
                                     expect=(row["password_hash"], row["role"]))
     if token is None:
-        raise ApiError(401, "INVALID_CREDENTIALS", "invalid username or password")
+        raise ApiError(401, "INVALID_CREDENTIALS", "invalid username or password")  # không tác dụng phụ: phiên cũ còn nguyên
+    if previous is not None:  # chỉ khi đã cấp được phiên mới mới hủy phiên cũ của request này
+        sessions.delete_session(state.db, previous.token_hash)
+        _close_websockets(request, previous.token_hash)  # README 4.5: WebSocket của phiên bị thay đóng 4401
     user = {"id": row["id"], "username": row["username"], "role": row["role"]}
     return ApiJSONResponse({"user": user},
                            headers={"Set-Cookie": sessions.set_cookie_header(token, state.cfg.session_ttl_s)})
