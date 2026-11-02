@@ -281,11 +281,14 @@ def run(argv, *, cwd, timeout_s, limits=None, uid=JUDGE_UID, stdin_path=None, st
     res = RunResult()
     guard_filter_path()  # lỗi tạo file BPF (đầy /tmp...) phải nổ TRƯỚC khi mở pipe, để không rò rfd/wfd
     rfd, wfd = os.pipe()
-    full = [sys.executable, "-S", "-I", LAUNCHER, str(wfd), *_wrap(argv, limits, uid)]
-    stdin = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL
+    stdin = None
     t0 = time.monotonic()
     proc = None
     try:
+        # Mọi thứ có thể ném lỗi sau khi mở pipe nằm trong try: lỗi mở `stdin_path` (OSError) thành `spawn_error`,
+        # lỗi khác thì đóng `rfd` rồi ném tiếp; `wfd` luôn đóng ở finally.
+        full = [sys.executable, "-S", "-I", LAUNCHER, str(wfd), *_wrap(argv, limits, uid)]
+        stdin = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL
         for attempt in range(SPAWN_RETRIES):
             try:
                 proc = subprocess.Popen(full, cwd=cwd, env=_env(cwd), stdin=stdin, stdout=subprocess.PIPE,
@@ -299,8 +302,11 @@ def run(argv, *, cwd, timeout_s, limits=None, uid=JUDGE_UID, stdin_path=None, st
         res.spawn_error = repr(e)
         os.close(rfd)
         return res
+    except BaseException:
+        os.close(rfd)
+        raise
     finally:
-        if stdin_path:
+        if stdin is not None and stdin_path:
             stdin.close()
         os.close(wfd)
 
@@ -396,6 +402,7 @@ def run(argv, *, cwd, timeout_s, limits=None, uid=JUDGE_UID, stdin_path=None, st
     res.stdout, res.stdout_bytes = bytes(out), out_n
     res.stderr_head, res.stderr_tail = bytes(head), tail
     proc.returncode = 0
+    sel.close()  # fd epoll: không đóng thì chỉ được thu khi GC chạy, mỗi lần chạy rò một fd (đo: +1 mỗi lần)
     proc.stdout.close()
     proc.stderr.close()
     os.close(rfd)
