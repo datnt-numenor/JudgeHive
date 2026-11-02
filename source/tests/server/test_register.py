@@ -171,4 +171,6 @@ def test_register_accepts_unicode_escapes_as_well_as_raw_utf8(stack):
     w = stack.connect()
     w.send_raw(b'{"type":"REGISTER","req_id":"r1","name":"w\\u00e9","secret":"test-secret","protocol_version":1}\n')
     assert w.recv()["type"] == "REGISTER_OK"
+    # REGISTER_OK được gửi trước khi worker vào bảng, nên phải chờ rồi mới đọc snapshot
+    assert wait_until(lambda: stack.server.snapshot())
     assert stack.server.snapshot()[0]["name"] == "wé"
