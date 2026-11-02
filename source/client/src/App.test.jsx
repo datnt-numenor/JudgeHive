@@ -161,6 +161,93 @@ describe("nộp bài", () => {
     expect(screen.getByRole("button", { name: "Chờ 7 giây" })).toBeDisabled();
   });
 
+  // Các test dưới đây dùng timer thật nên đặt Retry-After rất nhỏ (server thật trả 5 và 10 giây, README 3.5).
+  const failThenAccept = (firstReply) => {
+    let n = 0;
+    return problemRoutes(() => {
+      n += 1;
+      return n === 1 ? firstReply() : json(201, { submission_id: 42, state: "queued", received_at: "x" });
+    });
+  };
+  const postTokens = (calls) => calls.filter((c) => c.method === "POST").map((c) => c.body.client_token);
+
+  it("429 TOO_MANY_PENDING: nói lý do, gợi ý đợi bài chấm xong, khóa nút tới hết Retry-After, lần sau token mới", async () => {
+    const calls = installFetch(failThenAccept(() => apiError(429, "TOO_MANY_PENDING", "m", { "Retry-After": "2" })));
+    const user = userEvent.setup();
+    renderAt("/problems/sum-two");
+    await screen.findByRole("heading", { name: "Tổng hai số" });
+    await user.type(screen.getByLabelText("Mã nguồn"), "print(1)");
+    await user.click(screen.getByRole("button", { name: "Nộp bài" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("quá nhiều bài chờ chấm");
+    expect(alert).toHaveTextContent("đợi một bài chấm xong");
+    expect(alert).not.toHaveTextContent("bài sẽ không bị nộp trùng"); // bài chưa được lưu: đây không phải thử lại cùng token
+    expect(screen.getByRole("button", { name: "Chờ 2 giây" })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Nộp bài" })).toBeEnabled(), { timeout: 5000 });
+    await user.click(screen.getByRole("button", { name: "Nộp bài" }));
+    await screen.findByRole("heading", { name: /Bài nộp #42/ });
+    const tokens = postTokens(calls);
+    expect(tokens).toHaveLength(2);
+    expect(tokens[1]).not.toBe(tokens[0]);
+  });
+
+  it("503 QUEUE_FULL: thông báo riêng (không phải lỗi máy chủ), khóa nút theo Retry-After, thử lại dùng đúng token cũ", async () => {
+    const calls = installFetch(failThenAccept(() => apiError(503, "QUEUE_FULL", "m", { "Retry-After": "1" })));
+    const user = userEvent.setup();
+    renderAt("/problems/sum-two");
+    await screen.findByRole("heading", { name: "Tổng hai số" });
+    await user.type(screen.getByLabelText("Mã nguồn"), "print(1)");
+    await user.click(screen.getByRole("button", { name: "Nộp bài" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Hệ thống đang có quá nhiều bài chờ chấm");
+    expect(alert).toHaveTextContent("Thử lại sau 1 giây");
+    expect(alert).toHaveTextContent("bài sẽ không bị nộp trùng");
+    expect(alert).not.toHaveTextContent("Máy chủ gặp lỗi");
+    expect(screen.getByRole("button", { name: "Chờ 1 giây" })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Nộp bài" })).toBeEnabled(), { timeout: 4000 });
+    await user.click(screen.getByRole("button", { name: "Nộp bài" }));
+    await screen.findByRole("heading", { name: /Bài nộp #42/ });
+    const tokens = postTokens(calls);
+    expect(tokens).toHaveLength(2);
+    expect(tokens[1]).toBe(tokens[0]);
+  });
+
+  it("503 QUEUE_FULL rồi sửa mã: nội dung đổi nên token mới", async () => {
+    const calls = installFetch(failThenAccept(() => apiError(503, "QUEUE_FULL", "m", { "Retry-After": "1" })));
+    const user = userEvent.setup();
+    renderAt("/problems/sum-two");
+    await screen.findByRole("heading", { name: "Tổng hai số" });
+    await user.type(screen.getByLabelText("Mã nguồn"), "print(1)");
+    await user.click(screen.getByRole("button", { name: "Nộp bài" }));
+    await screen.findByRole("alert");
+    await user.type(screen.getByLabelText("Mã nguồn"), " # sửa");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Nộp bài" })).toBeEnabled(), { timeout: 4000 });
+    await user.click(screen.getByRole("button", { name: "Nộp bài" }));
+    await screen.findByRole("heading", { name: /Bài nộp #42/ });
+    const tokens = postTokens(calls);
+    expect(tokens[1]).not.toBe(tokens[0]);
+  });
+
+  it("503 trơn của hạ tầng (thân văn bản, không Retry-After): báo quá tải, không khóa nút, thử lại dùng đúng token cũ", async () => {
+    const calls = installFetch(
+      failThenAccept(() => new Response("Service Unavailable", { status: 503, headers: { "Content-Type": "text/plain" } })),
+    );
+    const user = userEvent.setup();
+    renderAt("/problems/sum-two");
+    await screen.findByRole("heading", { name: "Tổng hai số" });
+    await user.type(screen.getByLabelText("Mã nguồn"), "print(1)");
+    await user.click(screen.getByRole("button", { name: "Nộp bài" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Máy chủ đang quá tải");
+    expect(alert).toHaveTextContent("bài sẽ không bị nộp trùng");
+    expect(screen.getByRole("button", { name: "Nộp bài" })).toBeEnabled(); // không có đếm ngược
+    await user.click(screen.getByRole("button", { name: "Nộp bài" }));
+    await screen.findByRole("heading", { name: /Bài nộp #42/ });
+    const tokens = postTokens(calls);
+    expect(tokens).toHaveLength(2);
+    expect(tokens[1]).toBe(tokens[0]);
+  });
+
   it("mã quá 64 KB (tính theo byte UTF-8) bị chặn ngay ở client", async () => {
     const calls = installFetch(problemRoutes(() => json(201, { submission_id: 42, state: "queued", received_at: "x" })));
     renderAt("/problems/sum-two");

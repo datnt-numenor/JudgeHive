@@ -28,6 +28,9 @@ describe("client_token", () => {
     ["lỗi mạng", () => new NetworkError("network")],
     ["hết giờ chờ", () => new NetworkError("timeout")],
     ["5xx", () => new ApiError(502, "BAD_RESPONSE", "m")],
+    ["503 QUEUE_FULL", () => new ApiError(503, "QUEUE_FULL", "m", 10)],
+    ["503 trơn của hạ tầng", () => new ApiError(503, "BAD_RESPONSE", "HTTP 503")],
+    ["500 INTERNAL_ERROR", () => new ApiError(500, "INTERNAL_ERROR", "m")],
   ])("%s rồi thử lại cùng nội dung thì dùng lại token", async (_name, makeError) => {
     const { submitter, tokens } = setup([makeError(), { submission_id: 9 }]);
     await expect(submitter.submit(P)).rejects.toBeTruthy();
@@ -48,6 +51,7 @@ describe("client_token", () => {
     ["400", new ApiError(400, "INVALID_REQUEST", "m")],
     ["413", new ApiError(413, "CODE_TOO_LARGE", "m")],
     ["429", new ApiError(429, "RATE_LIMITED", "m", 5)],
+    ["429 TOO_MANY_PENDING (bài chưa được lưu)", new ApiError(429, "TOO_MANY_PENDING", "m", 5)],
     ["404", new ApiError(404, "PROBLEM_NOT_FOUND", "m")],
   ])("lỗi %s (chắc chắn không tạo bài) thì lần sau dùng token mới", async (_name, error) => {
     const { submitter, tokens } = setup([error, {}]);
