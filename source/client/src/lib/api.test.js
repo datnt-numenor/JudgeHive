@@ -83,6 +83,26 @@ describe("kết quả và lỗi", () => {
     expect(isTransient(err)).toBe(true);
   });
 
+  it("503 QUEUE_FULL (JSON) giữ code và Retry-After; 429 TOO_MANY_PENDING cũng vậy", async () => {
+    stubFetch(async () => json(503, { error: { code: "QUEUE_FULL", message: "queue full" } }, { "Retry-After": "10" }));
+    const full = await api.submit({}).catch((e) => e);
+    expect([full.status, full.code, full.retryAfter]).toEqual([503, "QUEUE_FULL", 10]);
+    expect(isTransient(full)).toBe(true);
+    stubFetch(async () => json(429, { error: { code: "TOO_MANY_PENDING", message: "pending" } }, { "Retry-After": "5" }));
+    const pending = await api.submit({}).catch((e) => e);
+    expect([pending.status, pending.code, pending.retryAfter]).toEqual([429, "TOO_MANY_PENDING", 5]);
+    expect(isTransient(pending)).toBe(true);
+  });
+
+  it("503 trơn của hạ tầng (thân văn bản) thành BAD_RESPONSE; Retry-After chỉ có khi header có", async () => {
+    stubFetch(async () => new Response("Service Unavailable", { status: 503, headers: { "Content-Type": "text/plain" } }));
+    const plain = await api.submit({}).catch((e) => e);
+    expect([plain.status, plain.code, plain.retryAfter]).toEqual([503, "BAD_RESPONSE", null]);
+    expect(isTransient(plain)).toBe(true);
+    stubFetch(async () => new Response("Service Unavailable", { status: 503, headers: { "Retry-After": "3" } }));
+    expect((await api.submit({}).catch((e) => e)).retryAfter).toBe(3);
+  });
+
   it("404 không phải lỗi tạm thời", async () => {
     stubFetch(async () => json(404, { error: { code: "SUBMISSION_NOT_FOUND", message: "m" } }));
     const err = await api.submission(5).catch((e) => e);

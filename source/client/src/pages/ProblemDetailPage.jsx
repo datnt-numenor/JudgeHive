@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api.js";
-import { LANGUAGES, MAX_CODE_BYTES, codeBytes, errorText } from "../lib/format.js";
+import { LANGUAGES, MAX_CODE_BYTES, codeBytes, errorText, waitSeconds } from "../lib/format.js";
 import { BusyError, createSubmitter } from "../lib/submitter.js";
 import { useFetch } from "../lib/useFetch.js";
 
@@ -45,10 +45,15 @@ function SubmitForm({ problemId }) {
       navigate(`/submissions/${result.submission_id}`);
     } catch (err) {
       if (err instanceof BusyError) return;
+      const wait = waitSeconds(err);
       let text = errorText(err);
-      if (err?.name === "NetworkError" || err?.status >= 500) text += " Nhấn Nộp bài để thử lại; bài sẽ không bị nộp trùng.";
+      // Chỉ khi chưa biết server đã nhận bài chưa (lỗi mạng, 5xx) mới có chuyện nộp lại cùng token; 4xx như TOO_MANY_PENDING
+      // thì bài chưa được lưu và lần sau là một lần nộp mới.
+      if (err?.name === "NetworkError" || err?.status >= 500) {
+        text += `${wait ? " Sau đó nhấn" : " Nhấn"} Nộp bài để thử lại; bài sẽ không bị nộp trùng.`;
+      }
       setError(text);
-      if (err?.code === "RATE_LIMITED" && err.retryAfter) startCountdown(err.retryAfter);
+      if (wait) startCountdown(wait);
     } finally {
       setBusy(false);
     }

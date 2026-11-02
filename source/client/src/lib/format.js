@@ -53,6 +53,17 @@ export function formatKib(kib) {
   return kib >= 1024 ? `${(kib / 1024).toFixed(1)} MiB` : `${kib} KiB`;
 }
 
+// Lỗi nộp bài kèm `Retry-After` (README 3.2, 3.3, 3.5): nộp quá nhanh, quá nhiều bài chờ chấm của người này, hàng đợi toàn
+// hệ thống đầy. Với hai mã sau `Retry-After` chỉ là gợi ý, không bảo đảm tới lúc đó nộp được.
+const RETRY_AFTER_CODES = new Set(["RATE_LIMITED", "TOO_MANY_PENDING", "QUEUE_FULL"]);
+
+/** Số giây nên chờ trước khi nộp lại (khóa nút theo đó), hoặc null nếu lỗi không có `Retry-After` hợp lệ. */
+export function waitSeconds(err) {
+  return err?.retryAfter && RETRY_AFTER_CODES.has(err.code) ? err.retryAfter : null;
+}
+
+const laterText = (err) => (err.retryAfter ? ` Thử lại sau ${err.retryAfter} giây.` : " Thử lại sau.");
+
 /** Thông báo cho lỗi API theo `code` (client rẽ nhánh theo code, README 3.2); `message` của server chỉ là phương án cuối. */
 export function errorText(err) {
   if (!err) return "";
@@ -62,6 +73,10 @@ export function errorText(err) {
       return "Sai tên đăng nhập hoặc mật khẩu.";
     case "RATE_LIMITED":
       return err.retryAfter ? `Quá nhiều lần thử. Thử lại sau ${err.retryAfter} giây.` : "Quá nhiều lần thử. Thử lại sau.";
+    case "TOO_MANY_PENDING":
+      return "Bạn đang có quá nhiều bài chờ chấm. Hãy đợi một bài chấm xong rồi nộp tiếp." + (err.retryAfter ? ` Có thể thử lại sau ${err.retryAfter} giây.` : "");
+    case "QUEUE_FULL":
+      return "Hệ thống đang có quá nhiều bài chờ chấm." + laterText(err);
     case "CODE_TOO_LARGE":
       return "Mã nguồn vượt quá 64 KB.";
     case "BODY_TOO_LARGE":
@@ -77,6 +92,8 @@ export function errorText(err) {
     case "INTERNAL_ERROR":
       return "Máy chủ gặp lỗi. Thử lại sau.";
     default:
+      // 503 không theo định dạng lỗi (thân văn bản thường) là uvicorn quá tải ở tầng hạ tầng (README 3.5), không phải lỗi của ứng dụng.
+      if (err.status === 503) return "Máy chủ đang quá tải. Thử lại sau.";
       return err.status >= 500 ? "Máy chủ gặp lỗi. Thử lại sau." : "Yêu cầu không thành công.";
   }
 }
