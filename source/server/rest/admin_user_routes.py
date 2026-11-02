@@ -6,8 +6,8 @@ người không phải admin nhận 403 trước mọi lỗi của body. Endpoin
 hay `ScoreboardService` trực tiếp từ thread.
 
 Thứ tự mỗi thao tác ghi: kiểm body (400) → kiểm id (404) → băm mật khẩu NGOÀI transaction (scrypt mất hàng trăm ms, còn
-`BEGIN IMMEDIATE` là khóa ghi duy nhất của cả dispatcher) → một transaction ghi (đọc lại đối tượng, kiểm 404 và 409, ghi, xóa
-phiên) → sau commit: đóng WebSocket 4401, `scoreboard_dirty`, log. Không bao giờ ghi mật khẩu, hash hay body vào response hoặc log."""
+`BEGIN IMMEDIATE` là khóa ghi duy nhất của cả dispatcher) → một transaction ghi (kiểm lại admin đang gọi vẫn là admin hoạt động: 403; đọc lại
+đối tượng, kiểm 404 và 409, ghi, xóa phiên) → sau commit: đóng WebSocket 4401, `scoreboard_dirty`, log. Không bao giờ ghi mật khẩu, hash hay body vào response hoặc log."""
 
 import sqlite3
 
@@ -17,7 +17,8 @@ from server import auth
 from server.rest import sessions, views
 from server.rest.admin_routes import _strict_query, _uint_param
 from server.rest.body import body_default, utf8_size
-from server.rest.errors import ApiJSONResponse, invalid, last_admin, log, no_content, user_not_found, username_taken
+from server.rest.errors import (ApiJSONResponse, forbidden, invalid, last_admin, log, no_content, user_not_found,
+                                username_taken)
 from server.rest.parse import INT64_MAX, parse_uint
 from server.rest.submission_routes import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
 
@@ -70,6 +71,15 @@ def _fetch(conn, uid):
     return conn.execute(f"SELECT {USER_COLUMNS} FROM users WHERE id = ?", (uid,)).fetchone()
 
 
+def _require_active_admin(c, admin_id):
+    """Kiểm lại TRONG transaction ghi rằng người gọi vẫn là admin hoạt động. `require_admin` chạy ngoài transaction, nên một
+    admin vừa bị hạ quyền hoặc khóa bởi request khác (nhưng request của họ đã qua `require_admin`) phải bị chặn ở đây: 403,
+    không ghi gì (README 3.6). Gọi ngay đầu mỗi `with state.db.write()` để 403 đứng trước 404 và 409."""
+    row = c.execute("SELECT 1 FROM users WHERE id = ? AND role = 'admin' AND disabled = 0", (admin_id,)).fetchone()
+    if row is None:
+        raise forbidden()
+
+
 @router.get("/api/admin/users")
 def list_users(request: Request, admin: sessions.SessionUser = Depends(sessions.require_admin)):
     q = _strict_query(request, ("before_id", "limit"))
@@ -100,11 +110,15 @@ def create_user(request: Request, admin: sessions.SessionUser = Depends(sessions
         raise invalid("role")
     stored = auth.hash_password(password)  # ngoài transaction
     try:
-        uid = state.db.create_user(username, stored, role)
+        with state.db.write() as c:
+            _require_active_admin(c, admin.id)
+            uid = c.execute("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                            (username, stored, role, state.clock())).lastrowid
+            created = _fetch(c, uid)
     except sqlite3.IntegrityError:
         raise username_taken() from None
     log.info("ADMIN admin=%s create user=%s role=%s", admin.id, uid, role)
-    return ApiJSONResponse(user_view(_fetch(state.db.conn(), uid)), status_code=201)
+    return ApiJSONResponse(user_view(created), status_code=201)
 
 
 @router.patch("/api/admin/users/{user_id}")
@@ -120,6 +134,7 @@ def update_user(user_id: str, request: Request, admin: sessions.SessionUser = De
         raise invalid("role")
     uid = _user_id(user_id)
     with state.db.write() as c:
+        _require_active_admin(c, admin.id)
         row = _fetch(c, uid)
         if row is None:
             raise user_not_found()
@@ -164,6 +179,7 @@ def set_user_password(user_id: str, request: Request, admin: sessions.SessionUse
         raise user_not_found()  # trước khi băm: id lạ không tốn một lần scrypt
     stored = auth.hash_password(password)  # ngoài transaction: scrypt không được giữ khóa ghi
     with state.db.write() as c:
+        _require_active_admin(c, admin.id)
         if _fetch(c, uid) is None:
             raise user_not_found()
         c.execute("UPDATE users SET password_hash = ? WHERE id = ?", (stored, uid))
