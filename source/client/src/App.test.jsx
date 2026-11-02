@@ -349,6 +349,8 @@ describe("trang bài nộp", () => {
     const view = renderAt("/submissions/42");
     await screen.findByText("Quá bộ nhớ (MLE)");
     expect(screen.queryByText(/Bộ nhớ:/)).not.toBeInTheDocument();
+    expect(screen.getByText("Vượt giới hạn bộ nhớ")).toBeInTheDocument();
+    expect(screen.queryByText(/262144|256 MiB|256,0/)).not.toBeInTheDocument();
     expect(screen.getByText("Sai ở test 3")).toBeInTheDocument();
     view.unmount();
 
@@ -360,6 +362,7 @@ describe("trang bài nộp", () => {
     installFetch(detailRoutes(() => json(200, submissionObject({ verdict: "RE", re_kind: "SIGSEGV", failed_test: 1, failed_is_sample: false, time_ms: null, memory_kib: null }))));
     renderAt("/submissions/42");
     await screen.findByText(/SIGSEGV/);
+    expect(screen.queryByText("Vượt giới hạn bộ nhớ")).not.toBeInTheDocument(); // chỉ MLE mới có dòng này
   });
 
   it("test mẫu sai hiện input, output mong đợi và output của chương trình", async () => {

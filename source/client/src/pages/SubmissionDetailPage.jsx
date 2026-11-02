@@ -21,8 +21,9 @@ export function Verdict({ s }) {
       )}
       {s.verdict === "RE" && s.re_kind && <li>Loại lỗi: {reKindLabel(s.re_kind)}</li>}
       {s.time_ms != null && <li>Thời gian: {s.time_ms} ms</li>}
-      {/* README 2.5: với MLE, UI không hiện con số bộ nhớ */}
+      {/* README 2.5: với MLE, UI không hiện con số bộ nhớ (đó là RSS lúc chương trình chết, không phải giới hạn), chỉ báo vượt giới hạn */}
       {s.memory_kib != null && s.verdict !== "MLE" && <li>Bộ nhớ: {formatKib(s.memory_kib)}</li>}
+      {s.verdict === "MLE" && <li>Vượt giới hạn bộ nhớ</li>}
       {s.verdict === "SE" && <li>Hệ thống chấm gặp sự cố. Thử nộp lại sau.</li>}
       {s.rejudged_at && <li>Chấm lại lúc {formatTime(s.rejudged_at)}</li>}
     </ul>
