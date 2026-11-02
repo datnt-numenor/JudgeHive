@@ -14,6 +14,10 @@ COMPILE_NOFILE = 256
 COMPILE_FSIZE = 64 * 1024 * 1024
 COMPILE_AS_BYTES_CPP = 1024 * 1024 * 1024  # g++; javac giới hạn bằng -J-Xmx (RLIMIT_AS làm JVM không khởi động)
 COMPILE_JAVAC_XMX = "-J-Xmx512m"
+# D29: chạy Java với -Xmx = giới hạn của đề kèm -XX:NewRatio=7 (young = 1/8 heap thay vì 1/3 với SerialGC). Đo 2/11, mảng
+# đơn lớn nhất qua được: 64 MiB: 40 -> 52 MiB; 256 MiB: 165 -> 220 MiB (thời gian bài nhiều đối tượng nhỏ chậm thêm khoảng
+# 20-30% ở 64 MiB, 3-9% ở 256 MiB, trong mức nhiễu).
+JAVA_NEW_RATIO = 7
 
 # Hệ số theo README mục RESULT; chính sách do chủ repo chốt sau spike PR 2.
 TIME_FACTORS = {"cpp": 1, "java": 2, "python": 5}
@@ -63,7 +67,8 @@ class Language:
         if self.name == "cpp":
             return ["./main"]
         xmx_mib = max(16, memory_limit_kib // 1024)
-        return ["java", f"-Xmx{xmx_mib}m", "-XX:+UseSerialGC", "-Xshare:auto", "-XX:-UsePerfData",
+        return ["java", f"-Xmx{xmx_mib}m", "-XX:+UseSerialGC", f"-XX:NewRatio={JAVA_NEW_RATIO}", "-Xshare:auto",
+                "-XX:-UsePerfData",
                 "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "Main"]
 
     def run_limits(self, memory_limit_kib):
