@@ -82,7 +82,7 @@ def test_division_by_zero_is_re(work_root, lang, kind):
 
 # --------------------------------------------------------------------------------------------------- CE
 
-@pytest.mark.parametrize("lang", ["cpp", "java"])
+@pytest.mark.parametrize("lang", LANGS)
 def test_compile_error(work_root, lang):
     body, progress = grade(work_root, lang, CE[lang], [case("", "")])
     assert body["verdict"] == "CE" and progress == []  # CE gửi thẳng RESULT, không có tests_done = 0
@@ -97,6 +97,130 @@ def test_compile_timeout_is_ce(work_root):
     job = executor.parse_job(make_job("cpp", SUB["ac"]["cpp"], SUM_TESTS), {"cpp": slow})
     body = executor.grade(job, FakeCtl(), work_root=work_root)
     assert body["verdict"] == "CE" and "timed out" in body["ce_message"]
+
+
+# --------------------------------------------------------------------------- Python: bước kiểm cú pháp (D24)
+
+PY_SYNTAX_ERRORS = {  # tên -> (mã, loại lỗi phải xuất hiện trong thông báo)
+    "missing_colon": ("def f(:\n    pass\n", "SyntaxError: invalid syntax"),
+    "indentation": ("if 1:\npass\n", "IndentationError"),
+    "tab_error": ("if 1:\n        x = 1\n\ty = 2\n", "TabError"),
+    "unclosed_paren": ("print((1 + 2)\n", "SyntaxError: '(' was never closed"),
+    "return_outside_function": ("return 1\n", "SyntaxError: 'return' outside function"),
+    "break_outside_loop": ("break\n", "SyntaxError: 'break' outside loop"),
+    "nul_byte": ("x = 1\n\x00\n", "null bytes"),
+    "coding_ascii_with_utf8": ("# coding: ascii\nx = 'é'\n", "SyntaxError"),
+    "too_many_nested_parens": ("(" * 5000 + "\n", "too many nested parentheses"),
+}
+
+
+def _run_py_check(work_root, code, *, append=""):
+    """Chạy đúng bước kiểm của Python (lệnh, rlimit, timeout, uid của `LANGUAGES`) qua sandbox thật. `append` nối thêm
+    vào mã kiểm (chạy sau compile() khi mã hợp lệ). Trả (RunResult, tên các file còn lại trong thư mục bài)."""
+    lang = LANGUAGES["python"]
+    d = tempfile.mkdtemp(prefix="job-", dir=work_root)
+    os.chmod(d, 0o1777)
+    path = os.path.join(d, "Main.py")
+    with open(path, "wb") as f:
+        f.write(code.encode("utf-8", errors="surrogatepass"))
+    os.chmod(path, 0o444)
+    cmd = list(lang.compile_cmd)
+    cmd[-1] += append
+    try:
+        res = sandbox.run(cmd, cwd=d, timeout_s=lang.compile_timeout_s, limits=lang.compile_limits(), uid=UID,
+                          stdout_keep=4096, stderr_head=4096)
+        return res, sorted(os.listdir(d))
+    finally:
+        sandbox.reset_uid(UID, (d,))
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_python_check_runs_under_the_real_wrapper_valid_exits_0_syntax_error_exits_1(work_root):
+    probe = ("\nprint(open('/proc/self/oom_score_adj').read().strip())"
+             "\nprint([l.split()[1] for l in open('/proc/self/status') if l.startswith('NoNewPrivs:')][0])")
+    res, _ = _run_py_check(work_root, "x = 1\nprint(x)\n", append=probe)
+    assert res.exit_code == 0 and res.signal is None, res
+    assert res.stdout.decode().split() == ["1000", "1"]  # oom_score_adj của D28 và NoNewPrivs, trong chính bước kiểm
+    res, _ = _run_py_check(work_root, "def f(:\n")
+    assert res.exit_code == 1 and res.signal is None
+    assert b"SyntaxError" in res.stderr_head
+
+
+def test_python_check_accepts_a_64kb_valid_program_under_the_limits(work_root):
+    code = "x = 1\n" * (64 * 1024 // 6)
+    assert len(code.encode()) <= 64 * 1024
+    res, _ = _run_py_check(work_root, code)
+    assert res.exit_code == 0 and res.signal is None and not res.timed_out
+
+
+@pytest.mark.parametrize("name", sorted(PY_SYNTAX_ERRORS))
+def test_python_syntax_error_is_ce_and_sends_no_progress_zero(work_root, name):
+    code, kind = PY_SYNTAX_ERRORS[name]
+    body, progress = grade(work_root, "python", code, [case("", "")])
+    assert body["verdict"] == "CE" and progress == [], body  # CE gửi thẳng RESULT, không có tests_done = 0
+    msg = body["ce_message"]
+    assert kind in msg, msg  # thí sinh thấy đúng loại lỗi, không phải "Compilation failed" chung chung
+    assert work_root not in msg and "job-" not in msg
+    assert len(msg.encode()) <= 4096 and msg.count("\n") < 50
+
+
+def test_python_ce_message_names_main_py_and_hides_workdir(work_root):
+    body, _ = grade(work_root, "python", PY_SYNTAX_ERRORS["missing_colon"][0], [case("", "")])
+    assert body["ce_message"].startswith('  File "Main.py", line 1') and "SyntaxError" in body["ce_message"]
+    # dòng rất dài và định danh tiếng Việt: không lộ đường dẫn, và dòng lỗi (ở cuối) không bị cắt mất cùng dòng nguồn
+    long_line = "tên_biến = (" + "1 + " * 15000 + "\n"
+    body, _ = grade(work_root, "python", long_line, [case("", "")])
+    msg = body["ce_message"]
+    assert body["verdict"] == "CE" and len(msg.encode()) <= 4096
+    assert work_root not in msg and "job-" not in msg
+    assert "'(' was never closed" in msg, msg[-200:]
+
+
+def test_python_bom_and_coding_declaration_behave_like_the_real_interpreter(work_root):
+    """Bước kiểm đọc bytes: BOM và `# coding:` hợp lệ không được thành CE oan (đọc text sẽ sai)."""
+    body, progress = grade(work_root, "python", "﻿print(1)\n", [case("", "1\n", True)])
+    assert body["verdict"] == "AC" and progress == [0, 1], body
+    body, _ = grade(work_root, "python", "# -*- coding: utf-8 -*-\nprint('é')\n", [case("", "é\n", True)])
+    assert body["verdict"] == "AC", body
+
+
+@pytest.mark.parametrize("code,error", [("x = " + "+".join(["1"] * 30000) + "\n", "RecursionError"),
+                                        ("x = " + "-" * (64 * 1024 - 8) + "1\n", "MemoryError")])
+def test_python_unbuildable_source_is_ce_and_the_real_interpreter_agrees(work_root, code, error):
+    """Mã mà compile() không xử lý nổi (chuỗi toán tử quá dài, ...) là CE với thông báo ngắn, và chạy thật cũng không
+    biên dịch được (cùng lỗi), nên CE ở đây không phải CE oan."""
+    body, progress = grade(work_root, "python", code, [case("", "")])
+    assert body["verdict"] == "CE" and progress == []
+    assert body["ce_message"].strip() == f"SyntaxError: {error}", body["ce_message"]
+    with tempfile.TemporaryDirectory(dir=work_root) as d:
+        path = os.path.join(d, "Main.py")
+        with open(path, "w") as f:
+            f.write(code)
+        real = subprocess.run(["python3", "-I", "-S", path], capture_output=True, timeout=30)
+        assert real.returncode != 0 and error.encode() in real.stderr, real.stderr[-200:]
+
+
+def test_python_check_leaves_no_pyc_or_pycache_and_does_not_execute_the_code(work_root):
+    code = "open('ran.txt', 'w').write('x')\nimport time\ntime.sleep(30)\n"
+    res, files = _run_py_check(work_root, code)
+    assert res.exit_code == 0 and not res.timed_out  # sleep(30) mà không quá hạn 5 s: mã không được chạy
+    assert files == ["Main.py"], files  # không ran.txt, không __pycache__/.pyc
+
+
+def test_python_check_timeout_is_ce(work_root):
+    slow = dataclasses.replace(LANGUAGES["python"], compile_timeout_s=0.01)
+    job = executor.parse_job(make_job("python", SUB["ac"]["python"], SUM_TESTS), {"python": slow})
+    ctl = FakeCtl()
+    body = executor.grade(job, ctl, work_root=work_root)
+    assert body["verdict"] == "CE" and "timed out" in body["ce_message"] and ctl.progress_calls == []
+
+
+@pytest.mark.parametrize("code", ["print(undefined_name)\n", "import no_such_module_xyz\n", "print(1 // 0)\n",
+                                  "raise SyntaxError('do chương trình tự ném')\n"])
+def test_python_runtime_errors_after_a_clean_check_are_still_re(work_root, code):
+    body, progress = grade(work_root, "python", code, [case("", "x\n")])
+    assert body["verdict"] == "RE" and body["re_kind"] == "EXIT_NONZERO", body
+    assert progress == [0]  # bước kiểm qua rồi mới gửi tests_done = 0
 
 
 # ------------------------------------------------------------------------------------ output, tiếng Việt

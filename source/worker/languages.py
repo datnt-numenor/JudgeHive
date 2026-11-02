@@ -19,6 +19,27 @@ COMPILE_JAVAC_XMX = "-J-Xmx512m"
 TIME_FACTORS = {"cpp": 1, "java": 2, "python": 5}
 COMPILE_TIMEOUT_S = 15  # ≤ COMPILE_TIMEOUT_MAX_S
 
+# Bước kiểm cú pháp Python (D24). [ĐỀ XUẤT đã duyệt] Đo 2/11 (cờ compose thật, --cpus=2): VmPeak ≤ 32 MB kể cả ca xấu
+# nhất; 0,16-0,31 s khi rảnh, tối đa ~0,9 s khi 6 tiến trình CPU tranh chấp; trần 5 s và 512 MiB còn dư xa.
+PY_CHECK_TIMEOUT_S = 5
+PY_CHECK_AS_BYTES = 512 * 1024 * 1024
+# Chạy bằng `python3 -I -S -c` với cwd là thư mục bài. Chỉ biên dịch, KHÔNG exec. Đọc bytes để tôn trọng `# coding:`
+# và BOM như `python3 Main.py`. Tên file truyền vào compile() là hằng "Main.py" (không bao giờ là đường dẫn) và chỉ in
+# format_exception_only (không in frame), nên thông báo không chứa đường dẫn thư mục tạm. Dòng nguồn kèm theo bị cắt ở
+# 300 ký tự để dòng "SyntaxError: ..." (cuối thông báo) không bị cắt mất bởi trần 4 KB của sanitize_ce.
+PY_CHECK_SRC = r"""import sys, traceback
+try:
+    src = open('Main.py', 'rb').read()
+    compile(src, 'Main.py', 'exec', dont_inherit=True)
+except SyntaxError as e:
+    lines = traceback.format_exception_only(type(e), e)
+    sys.stderr.write(''.join([ln[:300].rstrip('\n') + '\n' for ln in lines[:-1]] + lines[-1:]))
+    sys.exit(1)
+except (ValueError, RecursionError, MemoryError) as e:
+    sys.stderr.write('SyntaxError: ' + type(e).__name__ + '\n')
+    sys.exit(1)
+"""
+
 
 class ConfigError(Exception):
     pass
@@ -28,7 +49,7 @@ class ConfigError(Exception):
 class Language:
     name: str
     source_file: str
-    compile_cmd: tuple | None  # None: không biên dịch
+    compile_cmd: tuple | None  # lệnh biên dịch; với Python là bước kiểm cú pháp (D24); None: không có bước nào
     compile_timeout_s: float
     compile_as_bytes: int | None
     time_factor: int
@@ -59,7 +80,8 @@ class Language:
 
 
 LANGUAGES = {
-    "python": Language("python", "Main.py", None, 0, None, TIME_FACTORS["python"], "MemoryError", True, True),
+    "python": Language("python", "Main.py", ("python3", "-I", "-S", "-c", PY_CHECK_SRC), PY_CHECK_TIMEOUT_S,
+                       PY_CHECK_AS_BYTES, TIME_FACTORS["python"], "MemoryError", True, True),
     "cpp": Language("cpp", "Main.cpp", ("g++", "-O2", "-std=c++17", "-o", "main", "Main.cpp"), COMPILE_TIMEOUT_S,
                     COMPILE_AS_BYTES_CPP, TIME_FACTORS["cpp"], "std::bad_alloc", True, True),
     "java": Language("java", "Main.java", ("javac", COMPILE_JAVAC_XMX, "Main.java"), COMPILE_TIMEOUT_S, None,

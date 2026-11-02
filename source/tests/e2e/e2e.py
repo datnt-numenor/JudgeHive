@@ -33,6 +33,7 @@ SOLUTIONS = {
     "py-wa": ("python", "print(0)\n", "WA"),
     "py-tle": ("python", "while True:\n    pass\n", "TLE"),
     "py-re": ("python", "print(1 // 0)\n", "RE"),
+    "py-ce": ("python", "def f(:\n    pass\n", "CE"),
     "cpp-ac": ("cpp", "#include <iostream>\nint main() { long long s = 0, x; while (std::cin >> x) s += x;"
                       " std::cout << s << \"\\n\"; }\n", "AC"),
     "cpp-ce": ("cpp", "int main( { return 0 }\n", "CE"),
@@ -309,6 +310,9 @@ def main():
             check(f"{name} ra {expected}", row["verdict"] == expected, f"được {row['verdict']}")
         check("cpp-ce có thông báo biên dịch rút gọn và không có thời gian",
               detail(cookie, ids["cpp-ce"])["ce_message"] and detail(cookie, ids["cpp-ce"])["time_ms"] is None)
+        py_ce = detail(cookie, ids["py-ce"])
+        check("py-ce có thông báo lỗi cú pháp nêu Main.py, không lộ thư mục tạm, không có thời gian",
+              "Main.py" in py_ce["ce_message"] and "job-" not in py_ce["ce_message"] and py_ce["time_ms"] is None)
         check("py-re báo loại lỗi, không báo mã thoát", detail(cookie, ids["py-re"])["re_kind"] is not None
               and "exit_code" not in detail(cookie, ids["py-re"]))
         history = http_call("GET", "/api/submissions?limit=5", cookie=cookie)[2]

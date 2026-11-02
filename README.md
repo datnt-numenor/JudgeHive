@@ -301,7 +301,7 @@ Mỗi phần tử của `tests`:
 | `tests_done` | integer | có | Số test đã chạy xong |
 | `tests_total` | integer | có | Số phần tử của `tests` |
 
-- Bắt buộc gửi `PROGRESS` với `tests_done = 0` ngay khi biên dịch xong. Ngôn ngữ không biên dịch vẫn gửi ngay khi bắt đầu chấm, không có ngoại lệ. Biên dịch lỗi thì không gửi `tests_done = 0`, gửi thẳng `RESULT` với `CE` trong cửa sổ biên dịch (xem bảng dưới). `PROGRESS` với `tests_done = 0` còn là tín hiệu xác nhận lần giao (mục 2.6).
+- Bắt buộc gửi `PROGRESS` với `tests_done = 0` ngay khi biên dịch xong. Python không có bước biên dịch nhưng có bước kiểm cú pháp chạy trước, và `PROGRESS` với `tests_done = 0` gửi sau khi bước đó xong; lỗi lúc chạy (`NameError`, `ZeroDivisionError`...) vẫn là `RE`. Biên dịch lỗi (C++, Java) hoặc kiểm cú pháp lỗi (Python) thì không gửi `tests_done = 0`, gửi thẳng `RESULT` với `CE` trong cửa sổ biên dịch (xem bảng dưới). `PROGRESS` với `tests_done = 0` còn là tín hiệu xác nhận lần giao (mục 2.6).
 - Sau đó gửi một `PROGRESS` sau mỗi test, không giới hạn tần suất.
 
 Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhất trong hai mốc: lúc server gửi xong `JOB` (thời gian gửi không tính), hoặc lúc nhận `PROGRESS` khớp `JOB` gần nhất.
@@ -335,7 +335,7 @@ Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhấ
 | `failed_test` | integer | khi `WA`, `TLE`, `MLE`, `RE` | Số thứ tự test sai đầu tiên |
 | `failed_is_sample` | boolean | khi `WA`, `TLE`, `MLE`, `RE` | Test sai là test mẫu hay ẩn |
 | `re_kind` | string | khi `RE` | `SIGSEGV`, `SIGFPE`, `SIGABRT`, `SIGKILL`, `OTHER_SIGNAL` (signal ngoài danh sách) hoặc `EXIT_NONZERO` |
-| `ce_message` | string | khi `CE` | Lỗi biên dịch rút gọn: tối đa 50 dòng và 4 KB (giới hạn nào chạm trước), đường dẫn tạm thay bằng `Main.cpp`/`Main.java`, cắt an toàn UTF-8 |
+| `ce_message` | string | khi `CE` | Lỗi biên dịch rút gọn: tối đa 50 dòng và 4 KB (giới hạn nào chạm trước), đường dẫn tạm thay bằng `Main.cpp`/`Main.java`/`Main.py`, cắt an toàn UTF-8. Với Python, `CE` là lỗi mà bước kiểm cú pháp bắt được (cú pháp, thụt lề, `return` ngoài hàm...) hoặc mã không biên dịch được |
 | `sample_stdout` | string | khi `failed_is_sample = true` | stdout của chương trình trên test mẫu bị sai, tối đa 4 KB. Gửi với mọi verdict có `failed_test`; `AC` không gửi |
 | `se_detail` | string | không, chỉ khi `SE` | Chi tiết lỗi máy chấm, server chỉ ghi log, không chuyển cho client. Không chứa input/output của test |
 
@@ -708,7 +708,7 @@ Mỗi phần tử của `rows`:
 - *Đề được tính:* chỉ đề không ẩn tại thời điểm tính. Ẩn một đề thì mọi bài trên đề đó thôi được tính; hiện lại thì được tính lại.
 - *Người được xếp:* chỉ tài khoản có role `user`. Admin không bao giờ có hàng, kể cả khi đã nộp bài. Một người có hàng khi có ít nhất một bài nộp đã có verdict (mọi verdict, kể cả `CE` hay `SE`) trên một đề được tính, kể cả khi chưa AC đề nào. Bài chưa có verdict lần đầu thì chưa được tính; bài đang chấm lại vẫn được tính theo verdict cũ cho tới khi có kết quả mới.
 - *AC đầu tiên* của một người trên một đề: trong các bài nộp của người đó trên đề đó có verdict hiện tại là `AC`, bài có thời điểm nhận sớm nhất (hòa thì `submission_id` nhỏ hơn). Có bài như vậy thì đề được tính là đã giải. Chấm lại làm một bài trở thành AC hoặc hết AC thì bảng tự đúng theo verdict mới.
-- `wrong` là tổng, trên các đề đã giải, số bài nộp có verdict `WA`, `TLE`, `MLE` hoặc `RE` được nhận **trước** AC đầu tiên của đề đó. `CE`, `SE` và bài chưa có verdict không tính. Bài nộp sau AC đầu tiên không ảnh hưởng. Trên đề chưa giải không tính lần sai nào.
+- `wrong` là tổng, trên các đề đã giải, số bài nộp có verdict `WA`, `TLE`, `MLE` hoặc `RE` được nhận **trước** AC đầu tiên của đề đó. `CE`, `SE` và bài chưa có verdict không tính. Lỗi cú pháp Python là `CE` (không tính), như C++ và Java; bài Python lỗi cú pháp đã chấm `RE` trước khi có quy tắc này giữ nguyên verdict cũ (và vẫn tính) cho tới khi được chấm lại. Bài nộp sau AC đầu tiên không ảnh hưởng. Trên đề chưa giải không tính lần sai nào.
 - `last_ac_at` là thời điểm nhận lớn nhất, trên các đề đã giải, của bài AC đầu tiên mỗi đề.
 - *Thứ tự:* `solved` giảm dần, rồi `wrong` tăng dần, rồi `last_ac_at` tăng dần (sớm hơn xếp trước; `null` xếp sau cùng). Ba giá trị bằng nhau thì cùng `rank`; các hàng cùng hạng xếp theo `username` tăng dần theo thứ tự byte UTF-8.
 - *Mốc thời gian* là lúc server nhận bài (giờ server, UTC, mili giây), không phải lúc chấm xong.
