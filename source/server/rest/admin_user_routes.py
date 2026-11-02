@@ -123,7 +123,7 @@ def update_user(user_id: str, request: Request, admin: sessions.SessionUser = De
         row = _fetch(c, uid)
         if row is None:
             raise user_not_found()
-        new_disabled = row["disabled"] if "disabled" not in body else int(disabled)
+        new_disabled = row["disabled"] if "disabled" not in body else (1 if disabled else 0)
         new_role = row["role"] if "role" not in body else role
         disabled_changed, role_changed = new_disabled != row["disabled"], new_role != row["role"]
         if not (disabled_changed or role_changed):
