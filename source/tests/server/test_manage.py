@@ -156,3 +156,99 @@ def test_module_entry_point_works_as_python_dash_m(env, tmp_path):
                           env={"PATH": os.environ["PATH"], "PYTHONPATH": os.getcwd(), **env})
     assert proc.returncode == 0, proc.stderr
     assert db_of(env).conn().execute("SELECT username FROM users").fetchone()[0] == "bob"
+
+
+def test_users_create_rejects_a_username_with_a_trailing_newline(env):
+    assert call(env, "users", "create", "alice\n", "--password-stdin", stdin="s3cret-pass\n") == 1
+    assert db_of(env).conn().execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+
+
+# ---- users set-password (D30) -------------------------------------------------------------------------------------
+
+def make_user(env, name="alice", password="old-password"):
+    assert call(env, "users", "create", name, "--password-stdin", stdin=password + "\n") == 0
+
+
+def add_sessions(env, name, n):
+    from server.rest import sessions
+
+    db = db_of(env)
+    uid = db.conn().execute("SELECT id FROM users WHERE username = ?", (name,)).fetchone()[0]
+    for _ in range(n):
+        sessions.create_session(db, uid, 1_800_000_000_000, 3600)
+
+
+def sessions_of(env, name):
+    return db_of(env).conn().execute(
+        "SELECT COUNT(*) FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.username = ?", (name,)).fetchone()[0]
+
+
+def test_set_password_changes_the_hash_and_prints_no_password(env, capsys):
+    make_user(env)
+    capsys.readouterr()
+    assert call(env, "users", "set-password", "alice", "--password-stdin", stdin="new-password-1\n") == 0
+    stored = stored_hash(env, "alice")
+    assert auth.verify_password("new-password-1", stored) and not auth.verify_password("old-password", stored)
+    out = capsys.readouterr()
+    assert "new-password-1" not in out.out + out.err and "old-password" not in out.out + out.err
+
+
+def test_set_password_deletes_all_sessions_of_that_user_and_only_theirs(env, capsys):
+    make_user(env, "alice")
+    make_user(env, "bob")
+    add_sessions(env, "alice", 2)
+    add_sessions(env, "bob", 1)
+    capsys.readouterr()
+    assert call(env, "users", "set-password", "alice", "--password-stdin", stdin="new-password-1\n") == 0
+    assert sessions_of(env, "alice") == 0 and sessions_of(env, "bob") == 1
+    assert "2 phiên" in capsys.readouterr().out
+
+
+def test_set_password_leaves_role_and_disabled_alone(env):
+    assert call(env, "users", "create", "root", "--role", "admin", "--password-stdin", stdin="old-password\n") == 0
+    with db_of(env).write() as c:
+        c.execute("UPDATE users SET disabled = 1 WHERE username = 'root'")
+    assert call(env, "users", "set-password", "root", "--password-stdin", stdin="new-password-1\n") == 0
+    row = db_of(env).conn().execute("SELECT role, disabled FROM users WHERE username = 'root'").fetchone()
+    assert tuple(row) == ("admin", 1)
+
+
+def test_set_password_for_an_unknown_user_fails_before_reading_any_password(env, capsys):
+    class Boom(io.StringIO):
+        def readline(self, *a):
+            raise AssertionError("không được đọc mật khẩu khi user không tồn tại")
+
+    assert manage.main(["users", "set-password", "ghost", "--password-stdin"], env=env, stdin=Boom()) == 1
+    assert "không có user" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("password", ["short", "", "x" * 200, "s3cret-pass\x00"])
+def test_set_password_rejects_bad_passwords_and_changes_nothing(env, password):
+    make_user(env)
+    add_sessions(env, "alice", 1)
+    before = stored_hash(env, "alice")
+    assert call(env, "users", "set-password", "alice", "--password-stdin", stdin=password + "\n") == 1
+    assert stored_hash(env, "alice") == before and sessions_of(env, "alice") == 1  # hỏng thì không hủy phiên
+
+
+def test_set_password_drops_a_leading_bom(env):
+    make_user(env)
+    assert call(env, "users", "set-password", "alice", "--password-stdin", stdin="\ufeffnew-password-1\r\n") == 0
+    assert auth.verify_password("new-password-1", stored_hash(env, "alice"))
+
+
+def test_set_password_never_takes_the_password_as_an_argument(env):
+    make_user(env)
+    with pytest.raises(SystemExit):
+        call(env, "users", "set-password", "alice", "--password", "new-password-1")
+    with pytest.raises(SystemExit):
+        call(env, "users", "set-password", "alice", "new-password-1")
+
+
+def test_set_password_works_as_python_dash_m(env):
+    make_user(env)
+    proc = subprocess.run([sys.executable, "-m", "server.manage", "users", "set-password", "alice", "--password-stdin"],
+                          input=b"new-password-1\n", capture_output=True, timeout=60,
+                          env={"PATH": os.environ["PATH"], "PYTHONPATH": os.getcwd(), **env})
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    assert auth.verify_password("new-password-1", stored_hash(env, "alice"))

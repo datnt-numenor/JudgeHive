@@ -433,3 +433,34 @@ def test_server_shutdown_closes_connected_clients_with_a_close_frame(make_web):
     kind, value = client.recv(timeout=10)
     stopper.join(15)
     assert kind == "close" and value == 1012, (kind, value)  # uvicorn đóng 1012 (service restart) khi tắt; README 4.5
+
+
+# ---- tài khoản bị khóa (D30) --------------------------------------------------------------------------------------
+
+def _disable(web, name):
+    with web.db.write() as c:
+        c.execute("UPDATE users SET disabled = 1 WHERE username = ?", (name,))
+
+
+def test_a_disabled_accounts_session_is_closed_4401_at_the_handshake(make_web):  # [không khóa]
+    web = make_web()
+    populate(web.db)
+    web.start()
+    cookie = web.login("alice")
+    _disable(web, "alice")
+    expect_close(open_ws(web, cookie), 4401)
+
+
+def test_disabling_an_account_closes_its_open_websocket_within_one_heartbeat(make_web):  # [không khóa]
+    web = make_web(ws_ping_interval_s=0.2, ws_idle_timeout_s=30)
+    populate(web.db)
+    web.start()
+    cookie = web.login("alice")
+    client = open_ws(web, cookie)
+    client.recv_json()
+    other = open_ws(web, web.login("bob"))
+    other.recv_json()
+    _disable(web, "alice")
+    expect_close(client, 4401, timeout=5)
+    kind, value = other.recv(timeout=1.0)  # người khác không bị đóng (nhận PING, không phải frame đóng)
+    assert kind != "close", value
