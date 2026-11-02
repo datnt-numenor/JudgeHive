@@ -221,7 +221,22 @@ def verify_guard():
                                    capture_output=True, timeout=10)
         if effective.returncode == 0:
             raise seccomp.GuardError(f"thí sinh vẫn làm được: {what} (bảo vệ D28 không có hiệu lực)")
+    # Ngược chiều hai ca trên: ở đây phải THÀNH CÔNG. no_new_privs là điều kiện để nạp seccomp không cần cap và để
+    # thí sinh không lấy lại quyền qua setuid/file capability; đọc từ chính tiến trình thí sinh.
+    if not _candidate_no_new_privs():
+        raise seccomp.GuardError("tiến trình thí sinh không có NoNewPrivs: 1 (setpriv --no-new-privs không có hiệu lực)")
     return path
+
+
+_NNP_PROBE = ("import sys; sys.exit(0 if any(l.split()[:2] == ['NoNewPrivs:', '1'] "
+              "for l in open('/proc/self/status')) else 1)")
+
+
+def _candidate_no_new_privs():
+    """True nếu tiến trình chạy qua `_wrap` (dưới uid thí sinh) thấy `NoNewPrivs: 1` trong /proc/self/status."""
+    probe = subprocess.run(_wrap(["python3", "-I", "-S", "-c", _NNP_PROBE], {"nofile": 32}, JUDGE_UID),
+                           capture_output=True, timeout=10)
+    return probe.returncode == 0
 
 
 def _read_sysctl(name):

@@ -109,6 +109,28 @@ def test_verify_guard_detects_a_guard_that_does_not_actually_protect(monkeypatch
         sandbox.verify_guard()
 
 
+def test_wrap_sets_no_new_privs_before_loading_the_seccomp_filter():
+    """Cấu trúc lệnh bọc: container đã có no-new-privileges (compose) nên NoNewPrivs của thí sinh luôn là 1 dù setpriv
+    thiếu cờ; chỉ kiểm cấu trúc mới bắt được việc bỏ cờ này trong điều kiện test chuẩn."""
+    argv = sandbox._wrap(["true"], {}, sandbox.JUDGE_UID)
+    assert "--no-new-privs" in argv and "--seccomp-filter" in argv
+    assert argv.index("--no-new-privs") < argv.index("--seccomp-filter")
+    assert argv.index("setpriv") < argv.index("--no-new-privs")
+
+
+def test_candidate_process_has_no_new_privs_set(work_root):
+    code = ("print([l.split()[1] for l in open('/proc/self/status') if l.startswith('NoNewPrivs:')])")
+    body, _ = grade(work_root, "python", code, [case("", "['1']\n", True)])
+    assert body["verdict"] == "AC", body
+    assert sandbox._candidate_no_new_privs() is True
+
+
+def test_verify_guard_fails_closed_when_the_candidate_lacks_no_new_privs(monkeypatch):
+    monkeypatch.setattr(sandbox, "_candidate_no_new_privs", lambda: False)
+    with pytest.raises(seccomp.GuardError, match="NoNewPrivs"):
+        sandbox.verify_guard()
+
+
 def test_filter_file_is_root_owned_readonly_and_candidate_cannot_replace_it(work_root):
     path = sandbox.guard_filter_path()
     st = os.stat(path)
