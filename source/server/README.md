@@ -147,6 +147,14 @@ thời điểm khác nhau. Tham số query do `_strict_query` tự parse (tên l
 `is_admin=True`) rồi thêm field vận hành, nên whitelist theo verdict (D11) chỉ có một bản. Mỗi lần xem ghi một dòng log
 `ADMIN admin=<id> view submission=<id>`, không ghi `code`.
 
+### Tài khoản bị khóa và phiên (D30)
+
+Migration 6 thêm `users.disabled` (0 hoặc 1). Chưa có endpoint nào đặt cột này (PR sau); `sessions.lookup` và truy vấn `live_sessions` của WebSocket cùng loại tài khoản bị khóa (`u.disabled = 0`), nên phiên của họ vô hiệu ở REST ngay và đóng 4401 ở lần kiểm định kỳ kế tiếp của WebSocket. `login` vẫn băm thật rồi trả 401 chung cho tài khoản khóa.
+
+`create_session(db, user_id, now, ttl, expect=(password_hash, role))` kiểm lại trong cùng `BEGIN IMMEDIATE` rằng tài khoản còn, chưa khóa và hai giá trị đó chưa đổi so với lúc `login` đọc; sai thì trả `None` và `login` trả 401. Lý do: băm mất hàng trăm ms, nên không kiểm lại thì một đăng nhập đang chạy để lại phiên còn sống với mật khẩu hoặc quyền cũ. Bước `if row["disabled"]` ở `login` là kiểm sớm; bỏ nó thì `create_session` vẫn chặn (đột biến tương đương), nên test không phân biệt được hai lớp.
+
+`revoke_user_sessions(c, user_id)` xóa mọi phiên của một người bằng connection của người gọi, để đổi mật khẩu, role hoặc khóa và xóa phiên là một transaction. `manage.py users set-password` dùng nó; nó chạy ở process khác nên không đóng được WebSocket ngay (README 4.5: tối đa khoảng 30 giây). Username khi tạo tài khoản kiểm bằng `auth.is_valid_username` (`fullmatch`).
+
 ### Bảng xếp hạng và event loop
 
 `ScoreboardService` giữ mọi trạng thái (bản gần nhất, phiên bản, cờ cần tính lại, danh sách subscriber) chỉ trên event loop. Truy vấn SQLite chạy trong một thread riêng của dịch vụ (`scoreboard-db`, một thread duy nhất, nên không có hai lần tính song song), vẫn qua `Database.conn()` nên cùng pragma với mọi chỗ khác. Thread khác (dispatcher, cổng worker) chỉ gọi `LoopHooks.scoreboard_dirty`, hàm này làm `loop.call_soon_threadsafe(service.mark_dirty)` rồi trả về và không bao giờ ném. Số phiên bản tăng trên event loop ngay trước khi giao việc cho thread, nên bản mang phiên bản v phản ánh mọi commit đã đánh dấu trước đó; bản đầu (phiên bản 1) tính xong trước khi mở cổng worker, lỗi thì server không khởi động. `GET /api/scoreboard` chỉ đọc bản đã tính, không bao giờ tự tính lại.
