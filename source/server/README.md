@@ -99,6 +99,7 @@ DB nằm trong named volume nên chạy trong container server:
 ```bash
 docker compose exec server python -m server.manage users create alice            # nhắc nhập mật khẩu (8 đến 128 byte)
 docker compose exec server python -m server.manage users create root --role admin
+docker compose exec server python -m server.manage users set-password alice      # D30: đổi mật khẩu và hủy mọi phiên của alice
 docker compose exec server python -m server.manage problems reimport aplusb      # D5: nạp lại một đề từ thư mục
 ```
 
@@ -145,6 +146,14 @@ thời điểm khác nhau. Tham số query do `_strict_query` tự parse (tên l
 `GET /api/admin/submissions/{id}` đi qua `views.admin_detail_view`, hàm này gọi đúng `views.detail_view` của chủ bài (với
 `is_admin=True`) rồi thêm field vận hành, nên whitelist theo verdict (D11) chỉ có một bản. Mỗi lần xem ghi một dòng log
 `ADMIN admin=<id> view submission=<id>`, không ghi `code`.
+
+### Tài khoản bị khóa và phiên (D30)
+
+Migration 6 thêm `users.disabled` (0 hoặc 1). Chưa có endpoint nào đặt cột này (PR sau); `sessions.lookup` và truy vấn `live_sessions` của WebSocket cùng loại tài khoản bị khóa (`u.disabled = 0`), nên phiên của họ vô hiệu ở REST ngay và đóng 4401 ở lần kiểm định kỳ kế tiếp của WebSocket. `login` vẫn băm thật rồi trả 401 chung cho tài khoản khóa.
+
+`create_session(db, user_id, now, ttl, expect=(password_hash, role))` kiểm lại trong cùng `BEGIN IMMEDIATE` rằng tài khoản còn, chưa khóa và hai giá trị đó chưa đổi so với lúc `login` đọc; sai thì trả `None` và `login` trả 401. Lý do: băm mất hàng trăm ms, nên không kiểm lại thì một đăng nhập đang chạy để lại phiên còn sống với mật khẩu hoặc quyền cũ. Bước `if row["disabled"]` ở `login` là kiểm sớm; bỏ nó thì `create_session` vẫn chặn (đột biến tương đương), nên test không phân biệt được hai lớp.
+
+`revoke_user_sessions(c, user_id)` xóa mọi phiên của một người bằng connection của người gọi, để đổi mật khẩu, role hoặc khóa và xóa phiên là một transaction. `manage.py users set-password` dùng nó; nó chạy ở process khác nên không đóng được WebSocket ngay (README 4.5: tối đa khoảng 30 giây). Username khi tạo tài khoản kiểm bằng `auth.is_valid_username` (`fullmatch`).
 
 ### Bảng xếp hạng và event loop
 

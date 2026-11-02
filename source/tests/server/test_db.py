@@ -208,3 +208,31 @@ def test_migration_backfills_total_deliveries_and_returns_the_in_flight_delivery
     rows = [tuple(r) for r in db.conn().execute(
         "SELECT state, delivery_count, total_deliveries FROM submissions ORDER BY id")]
     assert rows == [("queued", 2, 2), ("done", 3, 3), ("judging", 1, 2), ("judging", 0, 0)]
+
+
+def test_users_get_a_disabled_flag_that_defaults_to_zero_and_only_takes_zero_or_one(db):
+    uid = db.create_user("alice", "scrypt$x", "user")
+    assert db.conn().execute("SELECT disabled FROM users WHERE id = ?", (uid,)).fetchone()[0] == 0
+    with db.write() as c:
+        c.execute("UPDATE users SET disabled = 1 WHERE id = ?", (uid,))
+    with pytest.raises(sqlite3.IntegrityError):
+        with db.write() as c:
+            c.execute("UPDATE users SET disabled = 2 WHERE id = ?", (uid,))
+
+
+def test_the_disabled_migration_keeps_existing_users_enabled(tmp_path):
+    """Thêm cột vào DB đã có user (nâng cấp tại chỗ): mọi user cũ vẫn hoạt động."""
+    from server.db import MIGRATIONS
+
+    index = [i for i, script in enumerate(MIGRATIONS) if "disabled" in script]
+    assert len(index) == 1, index
+    old = Database(str(tmp_path / "old.db"))
+    with old.write() as c:
+        for script in MIGRATIONS[:index[0]]:
+            for statement in db_module._split_statements(script):
+                c.execute(statement)
+        c.execute("PRAGMA user_version = %d" % index[0])
+        c.execute("INSERT INTO users (username, password_hash, role, created_at) VALUES ('old', 'h', 'admin', 1)")
+    old.migrate()
+    assert old.conn().execute("SELECT disabled FROM users WHERE username = 'old'").fetchone()[0] == 0
+    assert old.conn().execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)

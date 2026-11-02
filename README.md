@@ -76,7 +76,7 @@ Image server tự build giao diện web trong lúc build (cần mạng ở lần
 docker compose exec server python -m server.manage users create alice
 ```
 
-Mật khẩu từ 8 đến 128 byte. Thêm `--role admin` để tạo quản trị viên. Chi tiết các biến môi trường và lệnh quản lý: `source/server/README.md`.
+Mật khẩu từ 8 đến 128 byte. Thêm `--role admin` để tạo quản trị viên. Đặt lại mật khẩu: `docker compose exec server python -m server.manage users set-password alice` (nhắc nhập, hoặc `--password-stdin`); mọi phiên đăng nhập của người đó bị hủy ngay. Chi tiết các biến môi trường và lệnh quản lý: `source/server/README.md`.
 
 ### 3. Chạy client (khi phát triển giao diện)
 Giao diện đã có sẵn trong image server (mục 2). Chỉ khi sửa mã giao diện mới cần chạy riêng, với backend đang chạy ở cổng 8000:
@@ -503,6 +503,7 @@ Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
 - `POST /api/login` thành công thì server tạo phiên mới và đặt cookie: `jh_session=<giá trị ngẫu nhiên không đoán được>; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`. Không có `Secure` vì hệ thống không có HTTPS.
 - Phiên hết hạn đúng 7 ngày kể từ lúc đăng nhập (tuyệt đối, dùng hoạt động cũng không gia hạn). Phiên lưu ở server nên khởi động lại server không làm mất phiên.
+- Tài khoản bị khóa: mọi phiên của tài khoản đó không còn hợp lệ (401 `UNAUTHENTICATED`) và tài khoản không đăng nhập được (mục 3.3).
 - Một người có thể có nhiều phiên cùng lúc (nhiều tab, nhiều máy). `POST /api/logout` chỉ hủy phiên đang dùng.
 - Đăng nhập khi request đã mang một phiên còn hiệu lực thì phiên cũ bị hủy và cấp phiên mới.
 - Chỉ `POST /api/login`, `GET /api/health` (và file tĩnh) không cần phiên. Mọi endpoint khác: chưa đăng nhập, cookie sai hoặc phiên hết hạn thì 401 `UNAUTHENTICATED`; kể cả `POST /api/logout`, client coi 401 ở đây là đã đăng xuất.
@@ -557,10 +558,11 @@ Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi p
 | Field | Kiểu | Bắt buộc | Ràng buộc |
 |-------|------|----------|-----------|
 | `username` | string | có | 1–64 ký tự; so khớp chính xác, phân biệt hoa thường |
-| `password` | string | có | Tối đa 128 byte UTF-8 (độ dài tối thiểu chỉ áp khi admin đặt mật khẩu, PR sau) |
+| `password` | string | có | Tối đa 128 byte UTF-8 (độ dài tối thiểu 8 byte chỉ áp khi tạo hoặc đặt mật khẩu, không áp khi đăng nhập) |
 
 - Thành công: 200, header `Set-Cookie` như mục 3.2, body `{"user": {"id": 5, "username": "alice", "role": "user"}}`. `role` là `user` hoặc `admin`.
-- Username không tồn tại, mật khẩu sai, và mật khẩu vượt độ dài tối đa: cùng 401 `INVALID_CREDENTIALS`, cùng `message`, thời gian trả lời xấp xỉ nhau; response không cho biết trường hợp nào.
+- Username không tồn tại, mật khẩu sai, mật khẩu vượt độ dài tối đa, và tài khoản bị khóa (kể cả khi mật khẩu đúng): cùng 401 `INVALID_CREDENTIALS`, cùng `message`, thời gian trả lời xấp xỉ nhau; response không cho biết trường hợp nào.
+- Nếu trong lúc đang xử lý đăng nhập mà mật khẩu, quyền (`role`) hoặc trạng thái khóa của tài khoản vừa bị đổi, server không cấp phiên và trả 401 `INVALID_CREDENTIALS`; đăng nhập lại để có phiên theo thông tin mới.
 - Thiếu field, sai kiểu, username rỗng hoặc quá dài: 400 `INVALID_REQUEST`.
 - Quá 10 lần thử cho cùng `username` trong 60 giây, hoặc đã có 8 đăng nhập đang xử lý cùng lúc: 429 `RATE_LIMITED` (mục 3.2).
 
@@ -903,8 +905,9 @@ Trình duyệt mở một WebSocket tới `/ws` (cùng cổng HTTP, mục 1) đ�
 
 - `POST /api/logout`: mọi WebSocket thuộc phiên bị hủy bị đóng với mã 4401 ngay sau khi logout trả lời. WebSocket thuộc các phiên khác của cùng người giữ nguyên.
 - `POST /api/login` khi request đã mang một phiên còn hiệu lực (mục 3.2: phiên cũ bị hủy và cấp phiên mới): mọi WebSocket thuộc phiên cũ bị đóng với mã 4401, giống logout.
-- Phiên hết hạn khi WebSocket đang mở: server kiểm tra lại phiên của mọi kết nối định kỳ 30 giây một lần, và đóng 4401 kết nối không còn phiên hợp lệ; nên có thể trễ tối đa khoảng 30 giây sau khi hết hạn.
-- Khi admin đặt lại mật khẩu của một người (PR sau), mọi WebSocket của người đó bị đóng 4401.
+- Phiên hết hạn khi WebSocket đang mở: server kiểm tra lại phiên của mọi kết nối định kỳ 30 giây một lần, và đóng 4401 kết nối không còn phiên hợp lệ (hết hạn, đã bị xóa, hoặc thuộc tài khoản bị khóa); nên có thể trễ tối đa khoảng 30 giây sau khi hết hạn.
+- Khi mật khẩu của một người được đặt lại bằng `manage.py users set-password`, mọi phiên của người đó bị xóa. `manage.py` chạy ở process khác nên không đóng được WebSocket ngay: các kết nối đó bị đóng 4401 ở lần kiểm phiên định kỳ kế tiếp (tối đa khoảng 30 giây, như phiên hết hạn).
+- Khi admin đặt lại mật khẩu của một người qua web (PR sau), mọi WebSocket của người đó bị đóng 4401 ngay.
 - Server tắt: đóng mọi kết nối với mã 1012 (uvicorn đóng bằng mã này khi nhận SIGTERM; đã kiểm với uvicorn 0.54.0 và `websockets` 17.3).
 
 #### 4.6. Bảo đảm chuyển phát
@@ -965,7 +968,7 @@ WebSocket không có thân lỗi JSON; lý do đóng nằm ở mã đóng (close
 | Mã | Ai gửi | Khi nào | Client |
 |----|--------|---------|--------|
 | 403 (HTTP, không phải close code) | server | Handshake: thiếu `Origin` hoặc `Origin` không được phép (mục 4.1). Client chỉ thấy 1006 | Nối lại có backoff |
-| 4401 | server | Thiếu phiên, phiên sai hoặc hết hạn; logout; admin đặt lại mật khẩu (mục 4.1, 4.5) | Ngừng nối lại, về trang đăng nhập |
+| 4401 | server | Thiếu phiên, phiên sai hoặc hết hạn; tài khoản bị khóa; logout; đặt lại mật khẩu bằng `manage.py` hoặc bởi admin (mục 4.1, 4.5) | Ngừng nối lại, về trang đăng nhập |
 | 4408 | server | Không nhận được gì từ client quá 60 giây (mục 4.4) | Nối lại có backoff |
 | 4429 | server | Người dùng đã có 10 kết nối WebSocket (mục 4.1) | Ngừng nối lại, chuyển sang lấy dữ liệu bằng REST, báo người dùng (mục 4.7) |
 | 1013 | server | Vượt 400 kết nối toàn server (mục 4.1); kết nối nhận quá chậm (mục 4.4) | Nối lại có backoff |

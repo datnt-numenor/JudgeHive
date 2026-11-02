@@ -71,3 +71,15 @@ def test_nul_bytes_are_refused_because_openssl_scrypt_ignores_trailing_nul():
     assert not auth.verify_password("correct horse\x00", stored)
     with pytest.raises(auth.PasswordError):
         auth.hash_password("has\x00nul")
+
+
+@pytest.mark.parametrize("name", ["a", "alice", "Alice_01", "a.b-c", "x" * 32])
+def test_valid_usernames(name):
+    assert auth.is_valid_username(name)
+
+
+@pytest.mark.parametrize("name", ["", "x" * 33, "has space", "bad/slash", "é", "a@b", "alice\n", "alice\r\n", "\nalice",
+                                  "al\nice", "alice\x00", None, 5])
+def test_invalid_usernames_including_a_trailing_newline(name):
+    # `re.match` với `$` cho lọt "alice\n"; quy tắc dùng `fullmatch` (D30)
+    assert not auth.is_valid_username(name)
