@@ -109,6 +109,10 @@ MIGRATIONS = [
     """
     CREATE INDEX idx_submissions_pending ON submissions(state, is_rejudge, user_id);
     """,
+    # D30: khóa tài khoản. Chặn đăng nhập và làm mọi phiên của tài khoản vô hiệu; không xóa gì, không đổi bảng xếp hạng.
+    """
+    ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1));
+    """,
 ]
 
 

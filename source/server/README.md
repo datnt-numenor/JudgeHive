@@ -99,6 +99,7 @@ DB nằm trong named volume nên chạy trong container server:
 ```bash
 docker compose exec server python -m server.manage users create alice            # nhắc nhập mật khẩu (8 đến 128 byte)
 docker compose exec server python -m server.manage users create root --role admin
+docker compose exec server python -m server.manage users set-password alice      # D30: đổi mật khẩu và hủy mọi phiên của alice
 docker compose exec server python -m server.manage problems reimport aplusb      # D5: nạp lại một đề từ thư mục
 ```
 

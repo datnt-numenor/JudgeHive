@@ -8,6 +8,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import re
 import secrets
 import threading
 
@@ -17,11 +18,19 @@ KEY_BYTES = 32
 MIN_PASSWORD_BYTES = 8  # [ĐỀ XUẤT] (D4, D10)
 MAX_PASSWORD_BYTES = 128  # [ĐỀ XUẤT] (D4, D10)
 
+# Username khi TẠO tài khoản (`manage.py`, endpoint admin; D30). Đăng nhập vẫn nhận 1 đến 64 ký tự (tài khoản cũ). Luôn kiểm
+# bằng `fullmatch`: `match` với `$` cho lọt tên có dấu xuống dòng ở cuối.
+USERNAME = re.compile(r"[A-Za-z0-9_.-]{1,32}")  # [ĐỀ XUẤT]
+
 _slots = threading.Semaphore(4)  # giới hạn số lần băm đồng thời: mỗi lần khoảng 16 MB
 
 
 class PasswordError(ValueError):
     pass
+
+
+def is_valid_username(username):
+    return isinstance(username, str) and USERNAME.fullmatch(username) is not None
 
 
 def check_password_length(password):

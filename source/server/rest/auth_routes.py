@@ -47,7 +47,7 @@ def login(request: Request, body: dict = Depends(body_default)):
         wait = state.login_limiter.hit(username, state.clock())
         if wait:
             raise rate_limited(wait)  # kiểm tra trước mật khẩu, kể cả khi mật khẩu đúng
-        row = state.db.conn().execute("SELECT id, username, password_hash, role FROM users WHERE username = ?",
+        row = state.db.conn().execute("SELECT id, username, password_hash, role, disabled FROM users WHERE username = ?",
                                       (username,)).fetchone()
         # Username không tồn tại hoặc mật khẩu quá dài vẫn băm một lần với cùng tham số: thời gian xấp xỉ nhau.
         if row is not None and fits:
@@ -57,7 +57,8 @@ def login(request: Request, body: dict = Depends(body_default)):
             ok = False
     finally:
         state.login_gate.leave()
-    if not ok:
+    # Tài khoản bị khóa đã băm thật ở trên (thời gian như mật khẩu sai) và nhận đúng 401 chung (README 3.3).
+    if not ok or row["disabled"]:
         raise ApiError(401, "INVALID_CREDENTIALS", "invalid username or password")
     now = state.clock()
     sessions.purge_expired_sessions(state.db, now)
@@ -65,7 +66,12 @@ def login(request: Request, body: dict = Depends(body_default)):
     if previous is not None:
         sessions.delete_session(state.db, previous.token_hash)
         _close_websockets(request, previous.token_hash)  # README 4.5: WebSocket của phiên bị thay đóng 4401
-    token = sessions.create_session(state.db, row["id"], now, state.cfg.session_ttl_s)
+    # Kiểm lại trong cùng transaction rằng mật khẩu, role, trạng thái khóa chưa đổi từ lúc đọc `row` (D30): nếu admin vừa đổi
+    # thì không cấp phiên (README 3.3).
+    token = sessions.create_session(state.db, row["id"], now, state.cfg.session_ttl_s,
+                                    expect=(row["password_hash"], row["role"]))
+    if token is None:
+        raise ApiError(401, "INVALID_CREDENTIALS", "invalid username or password")
     user = {"id": row["id"], "username": row["username"], "role": row["role"]}
     return ApiJSONResponse({"user": user},
                            headers={"Set-Cookie": sessions.set_cookie_header(token, state.cfg.session_ttl_s)})

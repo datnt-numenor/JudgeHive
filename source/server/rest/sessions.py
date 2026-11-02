@@ -46,9 +46,18 @@ def clear_cookie_header():
     return f"{COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
 
 
-def create_session(db, user_id, now_ms, ttl_s):
+def create_session(db, user_id, now_ms, ttl_s, expect=None):
+    """Tạo phiên, hoặc trả None nếu tài khoản không còn đủ điều kiện (D30). Kiểm lại trong cùng transaction ghi:
+    tài khoản còn tồn tại và chưa bị khóa; và nếu có `expect = (password_hash, role)` (đăng nhập truyền vào giá trị nó đã
+    đọc trước khi băm mật khẩu) thì hai giá trị đó chưa đổi. Băm mất hàng trăm ms, nên nếu không kiểm lại thì một đăng nhập
+    đang chạy có thể để lại phiên còn sống với mật khẩu hoặc quyền cũ sau khi admin vừa đổi chúng."""
     token = new_token()
     with db.write() as c:
+        row = c.execute("SELECT password_hash, role, disabled FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None or row["disabled"]:
+            return None
+        if expect is not None and (row["password_hash"], row["role"]) != tuple(expect):
+            return None
         c.execute("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
                   (hash_token(token), user_id, now_ms, now_ms + ttl_s * 1000))
     return token
@@ -60,10 +69,17 @@ def lookup(db, token, now_ms):
         return None
     digest = hash_token(token)
     row = db.conn().execute("SELECT u.id, u.username, u.role FROM sessions s JOIN users u ON u.id = s.user_id "
-                            "WHERE s.token_hash = ? AND s.expires_at > ?", (digest, now_ms)).fetchone()
+                            "WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled = 0",
+                            (digest, now_ms)).fetchone()
     if row is None:
         return None
     return SessionUser(row["id"], row["username"], row["role"], digest)
+
+
+def revoke_user_sessions(c, user_id):
+    """Xóa mọi phiên của một người. `c` là connection đang trong transaction ghi (`db.write()`), để việc đổi mật khẩu,
+    role hoặc khóa tài khoản và việc xóa phiên là một transaction (D30). Trả số phiên đã xóa."""
+    return c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,)).rowcount
 
 
 def delete_session(db, token_hash):

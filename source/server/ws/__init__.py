@@ -110,8 +110,10 @@ class WsHub:
             for i in range(0, len(hashes), _IN_CHUNK):
                 chunk = hashes[i:i + _IN_CHUNK]
                 marks = ",".join("?" * len(chunk))
-                for row in conn.execute(f"SELECT token_hash FROM sessions WHERE token_hash IN ({marks}) "
-                                        "AND expires_at > ?", (*chunk, now)):
+                # JOIN users: phiên của tài khoản bị khóa không còn hợp lệ (D30), cùng điều kiện với `sessions.lookup`.
+                for row in conn.execute("SELECT s.token_hash FROM sessions s JOIN users u ON u.id = s.user_id "
+                                        f"WHERE s.token_hash IN ({marks}) AND s.expires_at > ? AND u.disabled = 0",
+                                        (*chunk, now)):
                     alive.add(row[0])
             return alive
 
