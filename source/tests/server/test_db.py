@@ -229,9 +229,8 @@ def test_the_disabled_migration_keeps_existing_users_enabled(tmp_path):
     old = Database(str(tmp_path / "old.db"))
     with old.write() as c:
         for script in MIGRATIONS[:index[0]]:
-            for statement in script.split(";"):
-                if statement.strip():
-                    c.execute(statement)
+            for statement in db_module._split_statements(script):
+                c.execute(statement)
         c.execute("PRAGMA user_version = %d" % index[0])
         c.execute("INSERT INTO users (username, password_hash, role, created_at) VALUES ('old', 'h', 'admin', 1)")
     old.migrate()

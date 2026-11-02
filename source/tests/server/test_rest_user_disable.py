@@ -67,7 +67,9 @@ def test_an_existing_session_of_a_disabled_account_stops_working_and_comes_back_
     assert (r.status, r.error_code) == (401, "UNAUTHENTICATED")
     assert web.get("/api/problems", cookie=cookie).status == 401
     assert web.post("/api/logout", {}, cookie=cookie).status == 401
-    set_column(web.db, "alice", "disabled", 0)  # PR này chưa xóa phiên khi khóa; endpoint admin sẽ làm việc đó
+    # Giả lập bằng SQL: cột `disabled` đổi mà phiên không bị xóa, nên mở lại là dùng được tiếp. Đây KHÔNG phải hành vi cuối:
+    # khóa qua endpoint admin (PR sau) xóa mọi phiên của người đó (D30(3)). Dòng này chỉ ghim rằng `lookup` lọc theo cột.
+    set_column(web.db, "alice", "disabled", 0)
     assert web.get("/api/me", cookie=cookie).status == 200
 
 
@@ -171,11 +173,11 @@ class SlowVerify:
         monkeypatch.setattr(auth, "verify_password", slow)
 
 
-def login_during(web, monkeypatch, admin_change):
+def login_during(web, monkeypatch, admin_change, cookie=None):
     """Bắt đầu đăng nhập đúng mật khẩu, đợi nó đang băm, để 'admin' đổi tài khoản, rồi thả. Trả response của đăng nhập."""
     gate = SlowVerify(monkeypatch)
     out = []
-    thread = threading.Thread(target=lambda: out.append(web.post("/api/login", {"username": "alice", "password": PASSWORD})))
+    thread = threading.Thread(target=lambda: out.append(web.post("/api/login", {"username": "alice", "password": PASSWORD}, cookie=cookie)))
     thread.start()
     assert gate.entered.wait(10), "đăng nhập không tới bước băm"
     admin_change()
@@ -207,6 +209,22 @@ def test_login_racing_with_disabling_the_account_leaves_no_session(web, monkeypa
     r = login_during(web, monkeypatch, lambda: set_column(web.db, "alice", "disabled", 1))
     assert (r.status, r.error_code) == (401, "INVALID_CREDENTIALS")
     assert session_count(web.db, "alice") == 0
+
+
+def test_a_refused_login_does_not_destroy_the_session_the_request_carried(web, monkeypatch):
+    """Đăng nhập bị từ chối vì đua không có tác dụng phụ: phiên cũ mà request mang theo vẫn còn (README 3.3)."""
+    old = web.login("alice")
+    new_hash = auth.hash_password("brand-new-pass")
+    r = login_during(web, monkeypatch, lambda: set_column(web.db, "alice", "password_hash", new_hash), cookie=old)
+    assert r.status == 401 and "set-cookie" not in r.headers
+    assert web.get("/api/me", cookie=old).status == 200 and session_count(web.db, "alice") == 1
+
+
+def test_a_successful_login_still_replaces_the_session_the_request_carried(web):
+    old = web.login("alice")
+    r = web.post("/api/login", {"username": "alice", "password": PASSWORD}, cookie=old)
+    assert r.status == 200 and r.cookie_value() != old
+    assert web.get("/api/me", cookie=old).status == 401 and web.get("/api/me", cookie=r.cookie_value()).status == 200
 
 
 def test_the_login_after_the_race_works_with_the_new_password(web, monkeypatch):
