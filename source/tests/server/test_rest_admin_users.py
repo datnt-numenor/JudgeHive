@@ -452,33 +452,117 @@ def test_a_disabled_admin_does_not_count_as_an_active_admin(aw):
     assert patch(aw, "root", {"role": "user"}).status == 409
 
 
-def test_two_admins_demoting_each_other_at_once_cannot_both_succeed(aw):
-    add_account(aw.db, "second", "admin")
-    first, second = root_cookie(aw), aw.login("second")
+def race_patches(aw, plans):
+    """Nhiều PATCH đồng thời: mọi request đã qua `require_admin` rồi mới cùng xin khóa ghi (cổng `Barrier` trên `db.write`).
+    `plans`: danh sách `(cookie, tên_đối_tượng, body)`. Trả danh sách response."""
     db = aw.app.state.rest.db
-    real, barrier = db.write, threading.Barrier(2)
+    real, barrier = db.write, threading.Barrier(len(plans))
 
     @contextlib.contextmanager
     def gated():
-        barrier.wait(10)  # cả hai request đã qua kiểm quyền rồi mới cùng xin khóa ghi
+        barrier.wait(10)
         with real() as c:
             yield c
 
     db.write = gated
     results = []
 
-    def go(cookie, target):
-        results.append(patch(aw, target, {"role": "user"}, cookie=cookie))
+    def go(cookie, target, body):
+        results.append(patch(aw, target, body, cookie=cookie))
 
     try:
-        threads = [threading.Thread(target=go, args=(first, "second")), threading.Thread(target=go, args=(second, "root"))]
+        threads = [threading.Thread(target=go, args=plan) for plan in plans]
         [t.start() for t in threads]
         [t.join(30) for t in threads]
     finally:
         db.write = real
+    assert len(results) == len(plans), "có request không trả lời"
+    return results
+
+
+def active_admins(aw):
+    return aw.db.conn().execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0").fetchone()[0]
+
+
+def test_two_admins_demoting_themselves_at_once_cannot_both_succeed(aw):
+    """Cả hai là admin hợp lệ suốt cuộc đua: request thứ hai thắng khóa ghi sau thì chỉ còn thấy mình là admin cuối (409)."""
+    add_account(aw.db, "second", "admin")
+    results = race_patches(aw, [(root_cookie(aw), "root", {"role": "user"}), (aw.login("second"), "second", {"role": "user"})])
     assert sorted(r.status for r in results) == [200, 409], [(r.status, r.error_code) for r in results]
-    admins = aw.db.conn().execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0").fetchone()[0]
-    assert admins == 1  # còn đúng một admin hoạt động
+    assert active_admins(aw) == 1
+
+
+def test_two_admins_demoting_each_other_at_once_leave_one_admin_and_the_loser_gets_403(aw):
+    """Người bị hạ trước không còn là admin khi request của họ vào transaction ghi: 403, không phải 409 (kiểm lại người gọi)."""
+    add_account(aw.db, "second", "admin")
+    results = race_patches(aw, [(root_cookie(aw), "second", {"role": "user"}), (aw.login("second"), "root", {"role": "user"})])
+    assert sorted(r.status for r in results) == [200, 403], [(r.status, r.error_code) for r in results]
+    assert {r.error_code for r in results if r.status == 403} == {"FORBIDDEN"}
+    assert active_admins(aw) == 1
+
+
+def run_gated(aw, request, mutate=None):
+    """Chạy `request()` ở thread riêng, giữ nó lại ngay trước khi xin khóa ghi (đã qua `require_admin`), gọi `mutate()` ở
+    thread chính (mô phỏng request khác vừa đổi tài khoản), rồi thả. Trả response."""
+    db = aw.app.state.rest.db
+    real, entered, release = db.write, threading.Event(), threading.Event()
+
+    @contextlib.contextmanager
+    def gated():
+        entered.set()
+        assert release.wait(15), "test không thả request"
+        with real() as c:
+            yield c
+
+    db.write = gated
+    out = []
+    thread = threading.Thread(target=lambda: out.append(request()))
+    thread.start()
+    try:
+        assert entered.wait(10), "request không tới bước ghi"
+        if mutate:
+            mutate()
+    finally:
+        release.set()
+        thread.join(30)
+        db.write = real
+    assert out, "request không trả lời"
+    return out[0]
+
+
+WRITE_REQUESTS = {
+    "create": lambda aw: call(aw, "POST", "/api/admin/users", {"username": "ghost", "password": "ghost-pass-99"}),
+    "patch": lambda aw: patch(aw, "alice", {"disabled": True}),
+    "password": lambda aw: set_password(aw, "alice", NEW_PASSWORD),
+}
+
+
+@pytest.mark.parametrize("how", ["demoted", "disabled"])
+@pytest.mark.parametrize("action", sorted(WRITE_REQUESTS))
+def test_an_admin_who_loses_the_role_while_the_request_runs_gets_403_and_nothing_is_written(aw, action, how):
+    root_cookie(aw)
+    alice_cookie = aw.login("alice")
+    alice_hash = row(aw, "alice")["password_hash"]
+    column, value = ("role", "user") if how == "demoted" else ("disabled", 1)
+
+    def demote_root():
+        with aw.db.write() as c:  # mô phỏng admin khác vừa hạ quyền hoặc khóa root, không xóa phiên của root
+            c.execute(f"UPDATE users SET {column} = ? WHERE username = 'root'", (value,))
+
+    r = run_gated(aw, lambda: WRITE_REQUESTS[action](aw), demote_root)
+    assert (r.status, r.error_code) == (403, "FORBIDDEN"), (action, how, r.status)
+    assert row(aw, "ghost") is None
+    assert tuple(row(aw, "alice")[k] for k in ("role", "disabled")) == ("user", 0)
+    assert row(aw, "alice")["password_hash"] == alice_hash and sessions_of(aw, "alice") == 1
+    assert aw.get("/api/me", cookie=alice_cookie).status == 200 and aw.spy.dirty == 0
+
+
+@pytest.mark.parametrize("action", sorted(WRITE_REQUESTS))
+def test_the_same_gated_request_without_any_change_succeeds(aw, action):
+    """Đối chứng: cổng chặn không tự làm request thất bại; chỉ việc đổi quyền giữa chừng mới gây 403."""
+    root_cookie(aw)
+    r = run_gated(aw, lambda: WRITE_REQUESTS[action](aw))
+    assert r.status in (200, 201, 204), (action, r.status)
 
 
 # ---- POST password ------------------------------------------------------------------------------------------------
