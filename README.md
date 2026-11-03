@@ -1049,9 +1049,80 @@ WebSocket không có thân lỗi JSON; lý do đóng nằm ở mã đóng (close
 
 ## 📊 KẾT QUẢ THỰC NGHIỆM
 
-> Đưa ảnh chụp kết quả hoặc mô tả log chạy thử.
+Mọi số trong mục này do nhóm tự đo trên **một máy** và chưa lặp lại thành thống kê; chúng cho biết bậc độ lớn và hành vi, không phải cam kết hiệu năng. Số lần chạy ghi ngay cạnh từng bảng.
 
-![Demo Result](./statics/result.png)
+**Máy đo.** Laptop Windows 11 Home, Intel Core i5-13500H (12 lõi, 16 luồng), RAM 15,7 GB. Docker Desktop (Engine 29.6.1) chạy trên WSL2, kernel 6.18.33.2-microsoft-standard-WSL2; máy ảo của Docker thấy 16 CPU và khoảng 7,6 GiB RAM. Mỗi worker trong `docker-compose.yml` bị giới hạn `cpus: 2`, `mem_limit: 1g`. Server, ba worker, trình đo và các việc khác của máy dev chạy chung một máy, nên thời gian dưới đây là cận trên so với một máy chấm riêng. Tải nền khác của máy không được kiểm soát khi đo.
+
+### 1. Kiểm thử tải: 50 bài nộp, 3 worker (`source/tools/load_test.py`)
+
+Cấu hình: `docker compose up --scale worker=3`, 10 tài khoản người dùng (11 khi có `--with-s2`), 50 bài nộp (hỗn hợp theo trọng số: Python đúng 50, C++ đúng 20, Java đúng 10, Python sai 10, Python lỗi cú pháp 10), đề `aplusb`, hạn chờ mỗi bài 120 giây.
+
+| Lần chạy | Điều kiện | Kết quả |
+| --- | --- | --- |
+| 1 | 50 bài, có kiểm bổ sung `--with-s2`, đi qua `host.docker.internal:8000` | 15 kiểm tra đạt, 0 hỏng. Tổng thời gian từ lúc nộp đến lúc có verdict: p50 5,61 s, p90 10,02 s, lớn nhất 11,35 s; thông lượng 4,40 bài/s. 5 bài Java: lớn nhất 11 s, không bài nào chạm hạn 120 s |
+| 3 | Đi qua mạng compose (`http://server:8000`), `docker kill` một worker (worker-2) giữa lúc đang chấm | 12 kiểm tra đạt, 0 hỏng. Bài đang nằm ở worker bị kill (bài 117) được giao lại đúng 1 lần và chấm xong |
+
+- Phần lớn thời gian của mỗi bài là **chờ trong hàng đợi**; chấm thật mất khoảng 0,6 đến 1,8 s.
+- Lần 2 không có giá trị kiểm kill (kill quá muộn, bài đã chấm xong), nên không dùng.
+- Giới hạn: một máy, ba lần chạy, hai lần có số liệu dùng được. Chế độ `--queue-full` và `--delivery-log` của công cụ chưa chạy thật. Thời gian xấu nhất khi một bài làm sập worker lúc biên dịch (ước tính khoảng 150 s, tức 6 lần giao × 25 s) chưa đo.
+- Lần chạy đầu tiên của công cụ báo hỏng oan một kiểm tra khi chạy lại trên cùng tài khoản (thiếu mốc lịch sử); đã sửa trong công cụ trước khi lấy số trên.
+
+### 2. Ranh giới bộ nhớ (MLE) ở cả ba ngôn ngữ
+
+Giới hạn bộ nhớ 256 MiB, một worker `--cpus=2`, chạy trong container test với cờ chuẩn của dự án. Mỗi ngưỡng được dò theo bước; không có thống kê lặp lại. "Dùng được" là lượng bộ nhớ chương trình thí sinh cấp phát thêm mà vẫn ra AC.
+
+| Ngôn ngữ | AC tới | MLE từ | Ghi chú |
+| --- | --- | --- | --- |
+| Python | 240 MiB | 245 MiB | khoảng giới hạn trừ 14 MiB (runtime chiếm phần còn lại của `RLIMIT_AS`) |
+| C++ | 245 MiB | 250 MiB | khoảng giới hạn trừ 8 MiB |
+| Java, mảng đơn | 150 MiB (cờ cũ) | 180 MiB (cờ cũ) | hai điểm dò; mảng đơn lớn nhất còn AC với cờ cũ là 165 MiB, xem bảng so cờ bên dưới |
+
+**Cờ JVM (D29).** Với `-Xmx` và SerialGC thì young generation chiếm 1/3 heap, nên một mảng đơn chỉ dùng được 60 đến 65% giới hạn. Ba phương án, mảng đơn lớn nhất còn AC (MiB) và thời gian một bài tạo nhiều đối tượng nhỏ (3 lần chạy, lấy trung vị):
+
+| Phương án | Giới hạn 64 MiB | Giới hạn 256 MiB | Thời gian, 64 MiB | Thời gian, 256 MiB |
+| --- | --- | --- | --- | --- |
+| Chỉ `-Xmx` (cũ) | 40 | 165 | 167 ms | 914 ms |
+| `-XX:NewRatio=7` (đã chọn) | 52 | 220 | 218 ms | 944 ms |
+| `-Xmn16m` | 44 | 235 | 202 ms | 995 ms |
+
+Trên máy ở trên, hello world Java chạy được dưới `-Xmx64m` (RSS khoảng 37 MiB); hello world cả ba ngôn ngữ ra AC ở giới hạn 64 MiB và 512 MiB.
+
+**Mảng toàn cục lớn trong C++ (D32).** Mảng `volatile` 300 MiB và 1 GiB dưới `RLIMIT_AS` 256 MiB ban đầu ra RE/SIGSEGV vì không nạp được ảnh chương trình; mảng 200 và 240 MiB ra AC. Nay, khi tổng kích thước các đoạn nạp (`PT_LOAD`) của file ELF lớn hơn giới hạn trừ 12 MiB thì ra MLE. Ngưỡng 12 MiB là số đề xuất, đo ở một máy. Lưu ý khi đo: nếu không dùng `volatile`, `-O2` xóa mảng không dùng nên cho kết quả AC giả.
+
+**Nhiều tiến trình con.** 10 tiến trình con × 200 MiB: RE/SIGKILL, RSS đỉnh khoảng 201 đến 206 MiB, bộ đếm `oom_kill` của cgroup tăng 5 đến 6, worker vẫn sống; 3 × 150 MiB: AC.
+
+Giới hạn thiết kế: nếu một thread phụ của Java hết bộ nhớ mà thread chính vẫn thoát mã 0 thì ra AC. Bộ nhớ dùng được của chương trình thí sinh nhỏ hơn giới hạn của đề một lượng bằng bộ nhớ runtime (khoảng 14 MiB với Python, 8 MiB với C++).
+
+### 3. Bộ bài nộp phá hoại (tầng worker và tầng hệ thống)
+
+Hai tầng: 43 ca chạy thẳng qua executor trong container worker (`source/tests/worker/test_worker_destructive.py`) và một lượt chạy trên cả hệ thống, 3 worker thật (`python source/tests/e2e/destructive.py`). Sau **mỗi** ca, cả hai tầng kiểm thêm: không còn tiến trình hay file của tài khoản thí sinh, worker không rò file descriptor, và một bài đúng của người khác nộp ngay sau đó vẫn ra AC (tầng hệ thống: trong 60 s). Kết quả lệnh test chuẩn: **706 passed**, 0 failed, 0 skipped, một lượt 258 giây. Lượt `destructive.py`: **152 kiểm tra đạt, 0 hỏng**, 105 giây, một lượt (lượt chạy cuối; các lượt trước đó dùng để sửa chính bộ kiểm).
+
+| Nhóm | Ca đại diện | Verdict quan sát được |
+| --- | --- | --- |
+| B. Hệ tệp | symlink ra `/etc` và `/work`; hardlink tới `/etc/passwd`; FIFO mở ghi chặn mãi; thư mục lồng 3000 cấp; file thưa vượt `RLIMIT_FSIZE`; tên file lạ | AC hoặc WA theo chương trình; FIFO chặn mãi ra TLE; ghi vượt `RLIMIT_FSIZE` ra RE (`write` trả `EFBIG`, không có tín hiệu SIGXFSZ ở cả Python, C++, Java) |
+| C. stdin/stdout | không đọc stdin 2 MiB; đóng stdout; in NUL và UTF-8 hỏng; một dòng 100 MB; in rồi segfault; xả 100 MB ra stderr | WA hoặc AC đúng như chương trình in; segfault ra RE/SIGSEGV; không ca nào làm hỏng JSON kết quả |
+| D. Tiến trình, tín hiệu | bỏ qua SIGTERM; tự SIGSTOP; fork bomb; 12 tiến trình con × 200 MiB; ghi 3 × 200 MiB vào `/tmp`, `/dev/shm`, thư mục bài; con giữ stdout sau khi cha thoát; `kill(-1)`; nâng `RLIMIT_AS` | bỏ qua SIGTERM và tự SIGSTOP ra TLE; fork bomb, nhiều tiến trình con và ghi đầy tmpfs ra RE, MLE, TLE hoặc WA tùy chương trình (bộ kiểm chấp nhận cả bốn); ca nào cũng không để sót tiến trình, worker sống, bài sau vẫn AC |
+| E. Biên dịch | bom template, `constexpr` lặp 2^40, `#include` chính nó, bom macro; Java `package x;`, lớp khác tên | CE (bom macro trong khoảng 1,3 s, ít hơn ngưỡng 15 s); Java không có `Main.class` ở gói mặc định ra CE |
+| F. Mạng | kết nối `server:9000`, `server:8000`, `1.1.1.1:53`, `8.8.8.8:443`, DNS; 1000 kết nối tới cổng worker | Mọi kết nối và DNS bị từ chối (`EPERM`), bài ra AC (xem mục 4) |
+| G. Hiển thị | `ce_message` và mã nguồn chứa `<script>`, `"><img onerror>`, ký tự điều khiển; username chứa HTML | REST trả nguyên văn trong JSON với `Content-Type: application/json`; không tạo được username chứa HTML |
+| H. Đồng thời | fork bomb, ghi đầy tmpfs và nhiều tiến trình con chạy cùng lúc, cùng 10 bài đúng của người khác | 10 bài đều AC, không bài nào bị giao lại ngoài ý muốn, không worker nào restart |
+
+Hai điều cần đọc cùng bảng này:
+- Cờ `State.OOMKilled` của Docker bật ở một số container trong ca nhiều tiến trình con và ca đồng thời. Đó là kỳ vọng: OOM killer của cgroup giết tiến trình con của thí sinh, còn worker vẫn chạy, `RestartCount` không đổi và `StartedAt` không đổi. Vì vậy bộ kiểm dùng ba tiêu chí sau, và chỉ ghi chú khi cờ này bật.
+- Giới hạn của bộ kiểm: mỗi nhóm chỉ có vài ca đại diện ở tầng hệ thống; nhóm H chạy một lượt với 3 ca nặng; chưa có kiểm tay hiển thị trên trình duyệt thật cho nhóm G (phần giao diện có test tự động riêng). Thông báo lỗi biên dịch (`ce_message`) có thể hiện nội dung các file mà tài khoản thí sinh đọc được (ví dụ `#include "/etc/passwd"`); đây là hạn chế đã biết, không phải kênh lấy file của worker (file của worker không đọc được).
+
+### 4. Chặn tài nguyên của thí sinh: trước và sau khi sửa
+
+Mỗi dòng là một rủi ro được đo trên cấu hình compose thật (hoặc image test với cờ tương đương) rồi sửa; "trước" và "sau" do cùng người đo trên cùng máy. Ngày đo: D27 trước sửa 30/10, sau sửa 1/11; D28 1 đến 2/11; D33 2/11. Biên bản đo không ghi số lần lặp, nên mỗi số coi là một lượt đo, chưa lặp lại.
+
+| Rủi ro | Trước | Sau |
+| --- | --- | --- |
+| Ghi file liên tục vào `/tmp`, `/dev/shm`, `/work` (D27) | tmpfs không có trần: cgroup (`mem_limit` 1g) hết bộ nhớ, OOM killer giết **chính worker** (container thoát mã 137), bài mất kết nối rồi bị giao lại cho tới khi báo lỗi hệ thống | tmpfs `/tmp` 16m, `/dev/shm` 16m, `/work` 64m, mỗi cái `nr_inodes=2048`: ghi đầy ra `ENOSPC`, ngập inode dừng ở 2047 file, `oom_kill` = 0 ở mọi ca, worker sống |
+| Input test lớn làm đầy `/work` | input 2 MiB khi `/work` đầy: lỗi hệ thống `OSError 28` | input ghi vào `memfd` và truyền qua stdin, không còn phụ thuộc chỗ trống của `/work` |
+| `memfd_create` hàng loạt, `shmget`, socket pair nhiều tiến trình (D28) | OOM killer giết worker (container thoát 137, `OOMKilled=true`); đã đo thêm: gọi `int 0x80` (i386) và syscall x32 tới được kernel, x32 gọi `memfd_create` thành công | `memfd_create` và `shmget` trả `EPERM`; ABI lạ bị `SIGSYS`; OOM killer luôn chọn tiến trình thí sinh (`oom_score_adj` +1000 do worker đặt) nên worker sống; cấu hình `kernel.shmmax=0` và `shm_rmid_forced=1` cho SysV |
+| Mạng của thí sinh (D33) | trong container worker, thí sinh kết nối được `server:8000` và `server:9000`, ra Internet (TCP `1.1.1.1:53`, `8.8.8.8:443`, `example.com:80`) và phân giải DNS; hệ quả: có thể gửi input test ẩn ra ngoài | `socket()` chỉ cho `AF_UNIX`, `io_uring` bị chặn: mọi kết nối loopback, Internet và DNS của cả ba ngôn ngữ nhận `EPERM`; worker không khởi động nếu thí sinh vẫn mở được socket `AF_INET` |
+
+Chưa kiểm chứng hoặc chưa đo: kiến trúc aarch64 chỉ kiểm qua mô phỏng bộ lọc; kênh socket `AF_UNIX` trừu tượng giữa các bài chạy song song cùng uid; tác động trực tiếp của 16 kết nối chưa xác thực lên việc đăng ký của worker thật (chỉ suy từ log, trước D33).
 
 ---
 
