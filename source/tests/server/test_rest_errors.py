@@ -218,4 +218,5 @@ def test_no_route_declares_validated_parameters():
                     "/api/scoreboard", "/api/submissions", "/api/submissions/{submission_id}",
                     "/api/admin/problems/{problem_id}", "/api/admin/workers", "/api/admin/submissions",
                     "/api/admin/submissions/{submission_id}", "/api/admin/users", "/api/admin/users/{user_id}",
-                    "/api/admin/users/{user_id}/password"}, sorted(seen)
+                    "/api/admin/users/{user_id}/password", "/api/admin/submissions/{submission_id}/rejudge",
+                    "/api/admin/problems/{problem_id}/rejudge"}, sorted(seen)

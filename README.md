@@ -467,7 +467,7 @@ Khi đó:
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
-Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có tám endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
+Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có mười endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
 
 #### 3.1. Bảng tóm tắt
 
@@ -491,6 +491,8 @@ Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộ
 | `/api/admin/users` | HTTP/1.1 | POST | `{"username","password","role"?}` | 201 tài khoản vừa tạo; chỉ admin (mục 3.6) |
 | `/api/admin/users/{id}` | HTTP/1.1 | PATCH | `{"disabled"?,"role"?}` | 200 tài khoản sau khi đổi; chỉ admin (mục 3.6) |
 | `/api/admin/users/{id}/password` | HTTP/1.1 | POST | `{"password"}` | 204; chỉ admin (mục 3.6) |
+| `/api/admin/submissions/{id}/rejudge` | HTTP/1.1 | POST | `{}` | 200 `{"submission_id","outcome"}`; chỉ admin (mục 3.6) |
+| `/api/admin/problems/{id}/rejudge` | HTTP/1.1 | POST | `{}` | 200 `{"problem_id","queued","after_current","already_queued","remaining"}`; chỉ admin (mục 3.6) |
 
 Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
@@ -913,6 +915,31 @@ Khóa hoặc mở khóa tài khoản và đổi role.
 - Thiếu field, field thừa, mật khẩu ngoài khoảng hoặc có NUL: 400 `INVALID_REQUEST`. Id sai định dạng hoặc không tồn tại: 404 `USER_NOT_FOUND`.
 - Đặt lại mật khẩu cho tài khoản đang bị khóa được; việc đó không mở khóa.
 - Mật khẩu không bao giờ có trong response hay log; log chỉ ghi admin, hành động và tài khoản bị tác động, không ghi body.
+
+##### `POST /api/admin/submissions/{id}/rejudge`
+
+Cho một bài nộp được chấm lại bằng bộ test và giới hạn hiện tại của đề. Body là `{}`; field nào khác (kể cả field thừa) thì 400 `INVALID_REQUEST`.
+
+- Thành công: 200 `{"submission_id": <id>, "outcome": …}`. `outcome`:
+  - `queued`: bài đã có kết quả, nay vào hàng đợi chấm lại.
+  - `after_current`: bài đang được chấm; nó đã nhận test cũ lúc giao, nên sẽ tự vào hàng đợi chấm lại ngay sau khi lượt hiện tại có kết quả.
+  - `already_queued`: bài đang chờ; không làm gì, vì bài chờ sẽ được chấm bằng test hiện tại lúc giao.
+- Gọi lại khi đã `queued` hoặc `after_current` vô hại (không xếp hàng hai lần).
+- Verdict, thời gian, bộ nhớ và mọi chi tiết kết quả cũ **giữ nguyên** cho tới khi kết quả mới đến, rồi được thay trong một lần ghi (field `rejudged_at` đặt lúc đó). Bảng xếp hạng vẫn tính verdict cũ trong lúc chấm lại.
+- Xếp hàng chấm lại **không đẩy `STATUS`** (mục 4.2). Chủ bài nhận `STATUS` `judging` khi bài được giao cho worker và `STATUS` `judged` khi có kết quả mới. Trước đó, `GET /api/submissions` và `GET /api/submissions/{id}` (mục 3.3) trả `state` là `queued` (hoặc `judging`) kèm verdict và chi tiết cũ. Nếu lần chấm lại kết thúc bằng `SE` thì verdict cũ được giữ và `rejudge_failed` là `true` (mục 3.6, `GET /api/admin/submissions`).
+- Chấm lại đếm lại từ đầu cả hai giới hạn số lần giao (mục 2.6). Bài chấm lại có ưu tiên thấp nhất, sau bài mới nộp, nên có thể chờ lâu khi bài mới đến liên tục; không tính vào hai trần số bài chờ của người nộp (mục 3.2).
+- Id sai định dạng (mục 3.2) hoặc không tồn tại: 404 `SUBMISSION_NOT_FOUND`. Người không phải admin nhận 403 trước khi id được kiểm tra, kể cả với bài của chính họ.
+- Không có input hay output của test ẩn trong response (D11). Log ghi admin, hành động và id bài, không ghi body.
+
+##### `POST /api/admin/problems/{id}/rejudge`
+
+Cho mọi bài nộp của một đề (của mọi người, kể cả admin, mọi verdict kể cả `SE`) được chấm lại; đề ẩn cũng được. Body là `{}`; field nào khác thì 400. Mỗi bài xử lý như `POST /api/admin/submissions/{id}/rejudge`.
+
+- Mỗi request xử lý tối đa **1000** bài, theo thứ tự `id` tăng dần, chia lô 100 bài. Thành công: 200 `{"problem_id": …, "queued": n, "after_current": n, "already_queued": n, "remaining": n}`: `queued` là số bài vừa vào hàng đợi, `after_current` là số bài đang chấm được đánh dấu chấm lại, `already_queued` là số bài đang chờ (bỏ qua), `remaining` là số bài chưa được xử lý vì vượt 1000. Các số đếm đọc lúc bắt đầu request nên chỉ gần đúng nếu worker đang giao hoặc chấm xong bài cùng lúc. `remaining` lớn hơn 0 thì gọi lại để tiếp tục; các bài đã xếp hàng được bỏ qua nên mỗi lần gọi tiến thêm.
+- Request có thể dừng giữa chừng (server khởi động lại): bài đã vào hàng đợi vẫn được chấm (chúng được nạp lại khi khởi động), bài chưa xử lý vẫn giữ kết quả cũ; gọi lại để tiếp tục.
+- Rejudge một đề không đổi bộ test hay giới hạn của đề; đổi chúng không tự chấm lại bài nào. Số bài còn chờ chấm lại xem ở `queue.rejudge_queued` của `GET /api/admin/workers`.
+- Rủi ro quan sát được: trong lúc chấm lại một đề dài, bảng xếp hạng mang verdict cũ của các bài chưa chấm xong, rồi đổi dần khi kết quả đến.
+- Đề không tồn tại hoặc id sai định dạng: 404 `PROBLEM_NOT_FOUND`. Người không phải admin nhận 403 trước khi id được kiểm tra. Log ghi admin, đề và các số đếm, không ghi body.
 
 
 ### 4. WebSocket (server đẩy)
