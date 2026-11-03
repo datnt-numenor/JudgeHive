@@ -467,7 +467,7 @@ Khi đó:
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
-Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có mười endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
+Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có mười ba endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
 
 #### 3.1. Bảng tóm tắt
 
@@ -493,6 +493,9 @@ Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộ
 | `/api/admin/users/{id}/password` | HTTP/1.1 | POST | `{"password"}` | 204; chỉ admin (mục 3.6) |
 | `/api/admin/submissions/{id}/rejudge` | HTTP/1.1 | POST | `{}` | 200 `{"submission_id","outcome"}`; chỉ admin (mục 3.6) |
 | `/api/admin/problems/{id}/rejudge` | HTTP/1.1 | POST | `{}` | 200 `{"problem_id","queued","after_current","already_queued","remaining"}`; chỉ admin (mục 3.6) |
+| `/api/admin/problems` | HTTP/1.1 | POST | `{"id","title","statement","time_limit_ms","memory_limit_kib","tests"}` | 201 đề vừa tạo (luôn ẩn); chỉ admin (mục 3.6) |
+| `/api/admin/problems/{id}` | HTTP/1.1 | PUT | `{"title","statement","time_limit_ms","memory_limit_kib","tests"?}` | 200 đề sau khi sửa; chỉ admin (mục 3.6) |
+| `/api/admin/problems/{id}/tests` | HTTP/1.1 | GET | — | 200 siêu dữ liệu bộ test, nội dung chỉ với test mẫu; chỉ admin (mục 3.6) |
 
 Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 
@@ -533,6 +536,7 @@ Mọi lỗi dùng chung một định dạng và một bảng mã (mục 3.5).
 | Endpoint | Body tối đa |
 |----------|-------------|
 | `POST /api/submissions` | 512 KB |
+| `POST /api/admin/problems`, `PUT /api/admin/problems/{id}` | 17 MB (mục 3.6) |
 | Các endpoint khác của phần này | 128 KB |
 
 Riêng mã nguồn nộp bị giới hạn 64 KB tính theo byte UTF-8 sau khi parse JSON, quá thì 413 `CODE_TOO_LARGE`. Hai giới hạn khác nhau vì 64 KB mã sau khi escape JSON có thể vượt 128 KB.
@@ -751,6 +755,7 @@ Mỗi phần tử của `rows`:
 | `USER_NOT_FOUND` | 404 | Tài khoản không tồn tại (route admin `/api/admin/users/{id}`) |
 | `METHOD_NOT_ALLOWED` | 405 | Sai method cho đường dẫn; kèm header `Allow` |
 | `USERNAME_TAKEN` | 409 | `POST /api/admin/users` với username đã có |
+| `PROBLEM_ID_TAKEN` | 409 | `POST /api/admin/problems` với mã đề đã có |
 | `LAST_ADMIN` | 409 | Thay đổi làm hệ thống không còn admin nào đang hoạt động (khóa hoặc hạ quyền admin hoạt động cuối cùng) |
 | `BODY_TOO_LARGE` | 413 | Body vượt giới hạn mục 3.2 |
 | `CODE_TOO_LARGE` | 413 | `code` vượt 64 KB (byte UTF-8) |
@@ -940,6 +945,56 @@ Cho mọi bài nộp của một đề (của mọi người, kể cả admin, m
 - Rejudge một đề không đổi bộ test hay giới hạn của đề; đổi chúng không tự chấm lại bài nào. Số bài còn chờ chấm lại xem ở `queue.rejudge_queued` của `GET /api/admin/workers`.
 - Rủi ro quan sát được: trong lúc chấm lại một đề dài, bảng xếp hạng mang verdict cũ của các bài chưa chấm xong, rồi đổi dần khi kết quả đến.
 - Đề không tồn tại hoặc id sai định dạng: 404 `PROBLEM_NOT_FOUND`. Người không phải admin nhận 403 trước khi id được kiểm tra. Log ghi admin, đề và các số đếm, không ghi body.
+
+##### `POST /api/admin/problems`
+
+Tạo một đề mới cùng bộ test. Đề mới **luôn ẩn** (tạo xong, kiểm tra bằng cách nộp bài với tư cách admin, rồi mới hiện bằng `PATCH /api/admin/problems/{id}`).
+
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+| --- | --- | --- | --- |
+| `id` | string | có | 1 đến 64 ký tự trong `a-z 0-9 _ -` (chữ thường); không đổi được sau khi tạo. Chặt hơn quy tắc chung ở mục 3.2 (vốn cho cả chữ hoa), vì đề tạo qua web chỉ dùng chữ thường |
+| `title` | string | có | 1 đến 200 ký tự, không toàn khoảng trắng |
+| `statement` | string | có | Văn bản thường (không Markdown), 1 đến 65 536 byte UTF-8 |
+| `time_limit_ms` | integer | có | 100 đến 5000 |
+| `memory_limit_kib` | integer | có | 65 536 đến 524 288 (64 đến 512 MiB) |
+| `tests` | array | có | 1 đến 100 phần tử `{"input": string, "output": string, "is_sample": boolean}`, xem dưới |
+
+- Thứ tự chạy: test mẫu (`is_sample` là `true`) trước, rồi test ẩn, mỗi nhóm giữ nguyên thứ tự trong mảng. `input` và `output` là văn bản UTF-8 hợp lệ, có thể rỗng. Tổng `input` và `output` của mọi test tối đa 8 MB (thô, mục 1), và dòng `JOB` xấu nhất (mục 2.2) không được vượt 16 MB; vi phạm một trong hai thì 400.
+- Body tối đa 17 MB (mục 3.2); quá thì 413 `BODY_TOO_LARGE`. Mỗi lúc server chỉ nhận một lượt upload đề: đây là cổng đồng thời riêng của hai endpoint upload (`POST /api/admin/problems`, `PUT /api/admin/problems/{id}`), không phải giới hạn tốc độ và không liên quan tới rate limit của nộp bài hay đăng nhập. Request thứ hai đến trong lúc đó nhận 429 `RATE_LIMITED` kèm `Retry-After` (số giây nguyên ≥ 1) và không ghi gì; lượt đang chạy không bị ảnh hưởng.
+- Thành công: 201, thân là đối tượng đề như `GET /api/problems/{id}` (mục 3.3) với `hidden` là `true`; `samples` là các test mẫu vừa tạo.
+- Mã đề đã có (kể cả đề đang ẩn): 409 `PROBLEM_ID_TAKEN`. Thiếu field, field thừa, sai kiểu, giá trị ngoài khoảng, `input`/`output` không phải UTF-8 hợp lệ, bộ test vượt hai giới hạn trên: 400 `INVALID_REQUEST`; `message` không lặp lại giá trị đã gửi.
+- Việc ghi đề và bộ test là một lần ghi duy nhất: lỗi giữa chừng không để lại đề nửa vời.
+- Đề tạo ở đây là do web quản lý: lệnh `manage.py problems reimport` từ chối đề này trừ khi có `--force`, để không ghi đè im lặng chỉnh sửa trên web. Đề nạp từ thư mục `problems/` lúc khởi động không bao giờ bị ghi đè (chỉ nạp đề chưa có).
+
+##### `PUT /api/admin/problems/{id}`
+
+Thay nội dung của một đề đã có. Không đổi `id` và không đổi `hidden` (dùng `PATCH`).
+
+| Field | Kiểu | Bắt buộc | Ghi chú |
+| --- | --- | --- | --- |
+| `title`, `statement`, `time_limit_ms`, `memory_limit_kib` | | có | Ràng buộc như `POST /api/admin/problems` |
+| `tests` | array | không | Có thì thay **toàn bộ** bộ test (ràng buộc như `POST`); vắng thì giữ nguyên bộ test và dấu vân tay của nó |
+
+- Thành công: 200, thân là đối tượng đề như `GET /api/problems/{id}` (`hidden` giữ giá trị hiện tại). Id sai định dạng (mục 3.2) hoặc không tồn tại: 404 `PROBLEM_NOT_FOUND`. Lỗi đầu vào: 400 `INVALID_REQUEST`; body quá 17 MB: 413; lượt upload khác đang chạy: 429, như `POST`. Lỗi thì đề và bộ test cũ còn nguyên.
+- Sửa **không tự chấm lại** bài nào. Bài đang chờ chấm lúc sửa sẽ được chấm theo đề và bộ test mới khi được giao cho worker; bài đã được giao cho worker trước đó chấm theo bản cũ. Muốn chấm lại các bài đã có kết quả, gọi `POST /api/admin/problems/{id}/rejudge`. Đổi giới hạn thời gian hay bộ nhớ không đổi dấu vân tay của bộ test, nhưng vẫn cần rejudge nếu muốn áp dụng cho bài cũ.
+- Bài nộp đã có kết quả bằng bộ test cũ: `sample_input` và `sample_expected_output` của nó thành `null` khi bộ test đã đổi (mục 3.3). Bảng xếp hạng không tính lại vì sửa đề; chỉ tính lại khi có kết quả mới.
+- Sửa một đề bằng `PUT` đánh dấu đề là do web quản lý, kể cả đề nạp từ `problems/` lúc đầu: `manage.py problems reimport` từ chối nó trừ khi có `--force`.
+
+##### `GET /api/admin/problems/{id}/tests`
+
+Siêu dữ liệu của bộ test hiện tại, để admin xem trước khi sửa. Không có body, không nhận tham số query (có thì 400).
+
+| Field | Kiểu | Ghi chú |
+| --- | --- | --- |
+| `problem_id` | string | |
+| `tests_hash` | string | Dấu vân tay của cả bộ test (sha256, hex) |
+| `tests` | array | Theo thứ tự chạy |
+
+Mỗi phần tử của `tests`: `position` (integer, từ 1), `is_sample` (boolean), `input_bytes` và `output_bytes` (integer, số byte UTF-8), `sha256` (string, dấu vân tay của cặp input và output của test đó), `input` và `output` (string với test mẫu; **`null` với test ẩn**).
+
+- Không bao giờ có nội dung `input` hay `output` của test ẩn trong bất kỳ endpoint nào (D11), kể cả với admin.
+- Hạn chế đã biết: `sha256` của một test ẩn về lý thuyết có thể bị đoán ngược nếu test đó rất nhỏ (thử mọi input/output ngắn rồi so hash). Chấp nhận vì chỉ admin gọi được endpoint này; client không được hiển thị hay chuyển tiếp `sha256` cho người không phải admin.
+- Id sai định dạng hoặc không tồn tại: 404 `PROBLEM_NOT_FOUND`. Người không phải admin nhận 403 trước khi id được kiểm tra.
 
 
 ### 4. WebSocket (server đẩy)
