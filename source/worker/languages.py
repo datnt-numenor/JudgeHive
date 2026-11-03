@@ -89,7 +89,7 @@ LANGUAGES = {
                        PY_CHECK_AS_BYTES, TIME_FACTORS["python"], "MemoryError", True, True),
     "cpp": Language("cpp", "Main.cpp", ("g++", "-O2", "-std=c++17", "-o", "main", "Main.cpp"), COMPILE_TIMEOUT_S,
                     COMPILE_AS_BYTES_CPP, TIME_FACTORS["cpp"], "std::bad_alloc", True, True),
-    "java": Language("java", "Main.java", ("javac", COMPILE_JAVAC_XMX, "Main.java"), COMPILE_TIMEOUT_S, None,
+    "java": Language("java", "Main.java", ("javac", COMPILE_JAVAC_XMX, "-d", ".", "Main.java"), COMPILE_TIMEOUT_S, None,
                      TIME_FACTORS["java"], "java.lang.OutOfMemoryError", False, False),
 }
 

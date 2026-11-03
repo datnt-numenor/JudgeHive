@@ -23,6 +23,8 @@ RSS_MLE_RATIO = 0.9  # D13
 
 RE_SIGNALS = {11: "SIGSEGV", 8: "SIGFPE", 6: "SIGABRT", 9: "SIGKILL"}
 SIGSEGV = 11
+JAVA_NO_MAIN_CLASS_MESSAGE = ("Main.java: class Main not found in the default package. "
+                              "Declare a class named Main and do not use a package declaration.")
 STATIC_IMAGE_SLACK_KIB = 12 * 1024  # D32 [ĐỀ XUẤT]
 
 
@@ -205,6 +207,10 @@ def _compile(job, wd, uid, cancel):
         return {"verdict": "CE", "ce_message": message}
     if lang.name == "cpp" and not os.path.exists(os.path.join(wd.path, "main")):
         raise ExecutorError("trình biên dịch không tạo file thực thi")
+    if lang.name == "java" and not os.path.exists(os.path.join(wd.path, "Main.class")):
+        # javac chạy với `-d .`: lớp trong gói `x` nằm ở x/Main.class, lớp khác tên Main nằm ở <Tên>.class; cả hai là lỗi
+        # của bài (`java Main` sẽ chết bằng NoClassDefFoundError), không phải của máy chấm (D34)
+        return {"verdict": "CE", "ce_message": JAVA_NO_MAIN_CLASS_MESSAGE}
     return None
 
 

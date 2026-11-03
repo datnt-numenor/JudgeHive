@@ -140,6 +140,13 @@ def test_python_has_a_compile_only_syntax_check_step_with_approved_limits():
     validate()  # timeout ≤ COMPILE_TIMEOUT_MAX
 
 
+def test_javac_writes_classes_under_the_work_dir_with_d_dot_so_packages_land_in_subdirectories():
+    """D34: `-d .` đặt lớp theo gói (x/Main.class), nên Main.class ở thư mục gốc chỉ có khi lớp Main nằm ở gói mặc định."""
+    cmd = LANGUAGES["java"].compile_cmd
+    i = cmd.index("-d")
+    assert cmd[i:i + 2] == ("-d", ".") and cmd[-1] == "Main.java" and cmd[0] == "javac"
+
+
 def test_python_and_cpp_use_address_space_limit_and_rss_rule():
     for name in ("python", "cpp"):
         lang = LANGUAGES[name]

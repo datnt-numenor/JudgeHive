@@ -99,6 +99,46 @@ def test_compile_timeout_is_ce(work_root):
     assert body["verdict"] == "CE" and "timed out" in body["ce_message"]
 
 
+# ------------------------------------------------------------ Java: lớp Main phải ở gói mặc định, nếu không là CE (D34)
+
+JAVA_HELLO = 'public class Main { public static void main(String[] a) { System.out.println("ok"); } }\n'
+
+
+@pytest.mark.parametrize("name,code", [
+    ("package", "package x;\n" + JAVA_HELLO),
+    ("nested_package", "package a.b.c;\n" + JAVA_HELLO),
+    ("non_public_class_with_another_name", 'class Foo { public static void main(String[] a) { System.out.println("ok"); } }\n'),
+    ("only_an_interface", "interface Foo { }\n"),
+])
+def test_java_without_a_class_main_in_the_default_package_is_ce_not_re(work_root, name, code):
+    """Biên dịch được nhưng `java Main` không chạy nổi (NoClassDefFoundError): trước D34 ra RE, nay là CE có thông báo rõ."""
+    body, progress = grade(work_root, "java", code, [case("", "ok\n")])
+    assert body["verdict"] == "CE" and progress == [], body  # CE gửi thẳng RESULT, không có tests_done = 0
+    msg = body["ce_message"]
+    assert "class Main" in msg and "default package" in msg, msg
+    assert work_root not in msg and "job-" not in msg
+
+
+def test_java_public_class_with_another_name_is_still_the_javac_error(work_root):
+    body, _ = grade(work_root, "java", 'public class Foo { public static void main(String[] a) { } }\n', [case("", "ok\n")])
+    assert body["verdict"] == "CE" and "Main.java" in body["ce_message"] and "public" in body["ce_message"]
+
+
+@pytest.mark.parametrize("name,code", [
+    ("two_classes", 'class A { static String s() { return "ok"; } }\n'
+                    'public class Main { public static void main(String[] a) { System.out.println(A.s()); } }\n'),
+    ("non_public_main_class", 'class Main { public static void main(String[] a) { System.out.println("ok"); } }\n'),
+    ("nested_lambda_anonymous", "import java.util.function.*;\n"
+                                "public class Main { static class N { int v = 2; } interface I { int f(); }\n"
+                                "  public static void main(String[] a) { I i = () -> new N().v; Function<Integer, Integer> g = x -> x + i.f();\n"
+                                "    Object o = new Object() { public String toString() { return g.apply(1) == 3 ? \"ok\" : \"bad\"; } };\n"
+                                "    System.out.println(o); } }\n"),
+])
+def test_java_programs_with_main_in_the_default_package_still_run(work_root, name, code):
+    body, progress = grade(work_root, "java", code, [case("", "ok\n")])
+    assert body["verdict"] == "AC" and progress == [0, 1], body
+
+
 # --------------------------------------------------------------------------- Python: bước kiểm cú pháp (D24)
 
 PY_SYNTAX_ERRORS = {  # tên -> (mã, loại lỗi phải xuất hiện trong thông báo)

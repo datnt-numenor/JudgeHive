@@ -335,7 +335,7 @@ Hạn chót từng bước: mỗi cửa sổ bắt đầu từ mốc gần nhấ
 | `failed_test` | integer | khi `WA`, `TLE`, `MLE`, `RE` | Số thứ tự test sai đầu tiên |
 | `failed_is_sample` | boolean | khi `WA`, `TLE`, `MLE`, `RE` | Test sai là test mẫu hay ẩn |
 | `re_kind` | string | khi `RE` | `SIGSEGV`, `SIGFPE`, `SIGABRT`, `SIGKILL`, `OTHER_SIGNAL` (signal ngoài danh sách) hoặc `EXIT_NONZERO` |
-| `ce_message` | string | khi `CE` | Lỗi biên dịch rút gọn: tối đa 50 dòng và 4 KB (giới hạn nào chạm trước), đường dẫn tạm thay bằng `Main.cpp`/`Main.java`/`Main.py`, cắt an toàn UTF-8. Với Python, `CE` là lỗi mà bước kiểm cú pháp bắt được (cú pháp, thụt lề, `return` ngoài hàm...) hoặc mã không biên dịch được |
+| `ce_message` | string | khi `CE` | Lỗi biên dịch rút gọn: tối đa 50 dòng và 4 KB (giới hạn nào chạm trước), đường dẫn tạm thay bằng `Main.cpp`/`Main.java`/`Main.py`, cắt an toàn UTF-8. Với Python, `CE` là lỗi mà bước kiểm cú pháp bắt được (cú pháp, thụt lề, `return` ngoài hàm...) hoặc mã không biên dịch được. Với Java, `CE` còn gồm bài biên dịch được nhưng không có lớp `Main` ở gói mặc định (có `package`, hoặc lớp có `main` mang tên khác `Main`); thông báo nói rõ cần lớp `Main` và không dùng `package` |
 | `sample_stdout` | string | khi `failed_is_sample = true` | stdout của chương trình trên test mẫu bị sai, tối đa 4 KB. Gửi với mọi verdict có `failed_test`; `AC` không gửi |
 | `se_detail` | string | không, chỉ khi `SE` | Chi tiết lỗi máy chấm, server chỉ ghi log, không chuyển cho client. Không chứa input/output của test |
 
