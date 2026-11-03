@@ -598,22 +598,41 @@ def flood_body(filler, size=17 * 2**20 - 1024):
     return PREFIX + filler * ((size - len(PREFIX)) // len(filler)) + b"]}"
 
 
+def never_parsed(monkeypatch):
+    """Thay `json` của `body.py` bằng bản ghi lại lời gọi `loads`: body bị chặn bởi bộ đếm token thì KHÔNG được parse
+    (nếu không, bộ nhớ đã bị khuếch đại rồi mới 400). Trả danh sách lời gọi."""
+    import types
+
+    from server.rest import body as body_module
+
+    calls, real = [], body_module.json.loads
+    monkeypatch.setattr(body_module, "json", types.SimpleNamespace(
+        loads=lambda *a, **k: (calls.append(1), real(*a, **k))[1]))
+    return calls
+
+
 @pytest.mark.parametrize("filler", FLOODS, ids=lambda f: f.decode())
-def test_a_17_mib_flood_of_small_tokens_is_400_before_it_is_parsed(web, filler):
+def test_a_17_mib_flood_of_small_tokens_is_400_before_it_is_parsed(web, filler, monkeypatch):
+    cookie = root_cookie(web)  # đăng nhập (parse JSON) trước khi bật bộ ghi
+    parsed = never_parsed(monkeypatch)
     before = (count_problems(web), problem_row(web, "sum"), stored_tests(web, "sum"))
-    r = web.request("POST", "/api/admin/problems", body=flood_body(filler), cookie=root_cookie(web))
+    r = web.request("POST", "/api/admin/problems", body=flood_body(filler), cookie=cookie)
     assert (r.status, r.error_code) == (400, "INVALID_REQUEST")
-    r = web.request("PUT", "/api/admin/problems/sum", body=flood_body(filler), cookie=root_cookie(web))
+    r = web.request("PUT", "/api/admin/problems/sum", body=flood_body(filler), cookie=cookie)
     assert (r.status, r.error_code) == (400, "INVALID_REQUEST")
     assert (count_problems(web), problem_row(web, "sum"), stored_tests(web, "sum")) == before
     assert web.app.state.rest.upload_gate._active == 0
+    assert parsed == []
 
 
-def test_deep_nesting_is_400_not_500(web):
+def test_deep_nesting_is_400_not_500(web, monkeypatch):
+    cookie = root_cookie(web)
+    parsed = never_parsed(monkeypatch)
     for opener, closer in ((b"[", b"]"), (b'{"a":', b"}")):
         body = (PREFIX[:-1] + opener * 100_000 + b"0" + closer * 100_000 + b"}")
-        r = web.request("POST", "/api/admin/problems", body=body, cookie=root_cookie(web))
+        r = web.request("POST", "/api/admin/problems", body=body, cookie=cookie)
         assert (r.status, r.error_code) == (400, "INVALID_REQUEST")
+    assert parsed == []
 
 
 def test_a_17_mib_integer_is_400_not_500(web):
@@ -662,3 +681,22 @@ def test_gate_slots_return_to_initial_after_mixed_requests(web):
     wait_until(lambda: gate._active == initial, timeout=10)
     assert gate._active == initial
     assert create(web, valid(id="after-all")).status == 201
+
+
+def test_the_gate_is_already_free_when_the_response_starts_to_be_sent(web, monkeypatch):
+    """Khẳng định tất định cho lỗi 429 oan: cổng phải nhả TRƯỚC khi response được gửi (không đợi phần thoát của dependency)."""
+    from server.rest import errors
+
+    gate, cookie, seen = web.app.state.rest.upload_gate, root_cookie(web), []
+    real_call = errors.ApiJSONResponse.__call__
+
+    async def spy(self, scope, receive, send):
+        seen.append(gate._active)
+        return await real_call(self, scope, receive, send)
+
+    monkeypatch.setattr(errors.ApiJSONResponse, "__call__", spy)
+    assert create(web, cookie=cookie).status == 201
+    assert create(web, cookie=cookie).status == 409
+    assert put(web, "new-problem", cookie=cookie).status == 200
+    assert put(web, "nope", cookie=cookie).status == 404
+    assert seen[-4:] == [0, 0, 0, 0], seen
