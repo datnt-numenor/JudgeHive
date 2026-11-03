@@ -45,6 +45,7 @@ function CreateUserForm({ onCreated }) {
       onCreated(created);
     } catch (e) {
       setError(errorText(e));
+      setPassword(""); // tạo lỗi thì không để mật khẩu nằm lại trong ô; tên đăng nhập và vai trò giữ để sửa rồi gửi lại
     } finally {
       setBusy(false);
     }
@@ -134,6 +135,7 @@ function UserRow({ user, isSelf, onUpdated, onGone, onSelfEnded }) {
       setPasswordError(problem);
       return;
     }
+    if (isSelf && !window.confirm("Đặt lại mật khẩu của chính bạn? Bạn sẽ bị đăng xuất khỏi mọi phiên.")) return;
     setBusy(true);
     setError(null);
     setPasswordError("");
