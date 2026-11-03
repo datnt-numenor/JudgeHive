@@ -62,6 +62,37 @@ const rowOf = (name) => screen.getByRole("cell", { name: new RegExp(`^${name}`) 
 const patches = (calls) => calls.filter((c) => c.method === "PATCH");
 
 describe("quyền truy cập trang", () => {
+  async function loginFromAdminLink(me) {
+    let loggedIn = false;
+    installFetch((method, path) => {
+      if (path === "/api/me") return loggedIn ? json(200, { user: me }) : apiError(401, "UNAUTHENTICATED");
+      if (path === "/api/login") {
+        loggedIn = true;
+        return json(200, { user: me });
+      }
+      if (path === "/api/problems") return json(200, { problems: [] });
+      if (path.startsWith("/api/admin/users")) return json(200, { users: [ROOT], next_before_id: null });
+    });
+    const user = userEvent.setup();
+    renderAt("/admin/users");
+    await screen.findByRole("heading", { name: "Đăng nhập" });
+    await user.type(screen.getByLabelText("Tên đăng nhập"), me.username);
+    await user.type(screen.getByLabelText("Mật khẩu"), "good-password");
+    await user.click(screen.getByRole("button", { name: "Đăng nhập" }));
+  }
+
+  it("đăng nhập từ đường dẫn /admin/* bằng người thường thì về trang chủ, không phải trang 'không tìm thấy'", async () => {
+    await loginFromAdminLink(USER);
+    expect(await screen.findByText("Chưa có đề bài nào.")).toBeInTheDocument(); // trang chủ (danh sách đề)
+    expect(screen.queryByText("Không tìm thấy trang.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Đăng nhập" })).not.toBeInTheDocument();
+  });
+
+  it("đăng nhập từ đường dẫn /admin/* bằng admin thì vào đúng trang admin", async () => {
+    await loginFromAdminLink(ADMIN);
+    expect(await screen.findByRole("cell", { name: /^root/ })).toBeInTheDocument();
+  });
+
   it("người thường không thấy link và đường dẫn giống trang không tồn tại, không gọi API admin", async () => {
     const calls = installFetch((method, path) => {
       if (path === "/api/me") return json(200, { user: USER });
@@ -148,6 +179,17 @@ describe("tạo tài khoản", () => {
     await fill(user, "alice", "matkhau-dai");
     expect(await screen.findByRole("alert")).toHaveTextContent("Tên đăng nhập đã tồn tại");
     expect(screen.getByLabelText("Tên đăng nhập")).toHaveValue("alice");
+    expect(screen.getByLabelText("Mật khẩu")).toHaveValue(""); // lỗi thì ô mật khẩu được xóa, tên giữ để sửa
+  });
+
+  it("lỗi mạng khi tạo cũng xóa ô mật khẩu", async () => {
+    usersServer({ handlers: { "POST /api/admin/users": () => Promise.reject(new TypeError("Failed to fetch")) } });
+    const user = userEvent.setup();
+    renderAt("/admin/users");
+    await fill(user, "carol", "matkhau-dai");
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tên đăng nhập")).toHaveValue("carol");
+    expect(screen.getByLabelText("Mật khẩu")).toHaveValue("");
   });
 
   it("tên hoặc mật khẩu sai quy tắc bị chặn trước khi gửi", async () => {
@@ -340,15 +382,45 @@ describe("admin tác động lên chính mình", () => {
     expect(await screen.findByRole("heading", { name: "Đăng nhập" })).toBeInTheDocument();
   });
 
-  it("tự đặt lại mật khẩu: về trang đăng nhập", async () => {
+  it("tự đặt lại mật khẩu: hỏi xác nhận 'bạn sẽ bị đăng xuất', đồng ý thì về trang đăng nhập", async () => {
     usersServer({ users: withSecondAdmin });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderAt("/admin/users");
     await screen.findByRole("cell", { name: "bob" });
     await user.click(within(rowOf("root")).getByRole("button", { name: "Đặt lại mật khẩu" }));
     await user.type(within(rowOf("root")).getByLabelText(/Mật khẩu mới/), "mat-khau-moi");
     await user.click(within(rowOf("root")).getByRole("button", { name: "Đặt mật khẩu" }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0][0]).toContain("đăng xuất");
     expect(await screen.findByRole("heading", { name: "Đăng nhập" })).toBeInTheDocument();
+  });
+
+  it("tự đặt lại mật khẩu: hủy xác nhận thì không gửi gì và vẫn ở lại với form", async () => {
+    const { calls } = usersServer({ users: withSecondAdmin });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    renderAt("/admin/users");
+    await screen.findByRole("cell", { name: "bob" });
+    await user.click(within(rowOf("root")).getByRole("button", { name: "Đặt lại mật khẩu" }));
+    await user.type(within(rowOf("root")).getByLabelText(/Mật khẩu mới/), "mat-khau-moi");
+    await user.click(within(rowOf("root")).getByRole("button", { name: "Đặt mật khẩu" }));
+    expect(calls.some((c) => c.path.endsWith("/password"))).toBe(false);
+    expect(screen.queryByRole("heading", { name: "Đăng nhập" })).not.toBeInTheDocument();
+    expect(within(rowOf("root")).getByLabelText(/Mật khẩu mới/)).toHaveValue("mat-khau-moi");
+  });
+
+  it("đặt lại mật khẩu của người khác không hỏi xác nhận đăng xuất", async () => {
+    usersServer({ users: withSecondAdmin });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    renderAt("/admin/users");
+    await screen.findByRole("cell", { name: "bob" });
+    await user.click(within(rowOf("bob")).getByRole("button", { name: "Đặt lại mật khẩu" }));
+    await user.type(within(rowOf("bob")).getByLabelText(/Mật khẩu mới/), "mat-khau-moi");
+    await user.click(within(rowOf("bob")).getByRole("button", { name: "Đặt mật khẩu" }));
+    expect(await within(rowOf("bob")).findByRole("status")).toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it("huỷ xác nhận thì ở lại", async () => {

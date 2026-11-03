@@ -3,8 +3,18 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth.jsx";
 import { errorText } from "../lib/format.js";
 
+/**
+ * Nơi đến sau đăng nhập. Đường dẫn `/admin/*` mà người đăng nhập không phải admin về trang chủ (nếu không họ thấy
+ * "Không tìm thấy trang." ngay sau khi đăng nhập). Đây chỉ là tiện dụng; quyền thật do server quyết.
+ */
+function destinationAfterLogin(from, user) {
+  if (typeof from !== "string") return "/";
+  const isAdminPath = from === "/admin" || from.startsWith("/admin/");
+  return isAdminPath && user?.role !== "admin" ? "/" : from;
+}
+
 export default function LoginPage() {
-  const { status, login } = useAuth();
+  const { status, user: currentUser, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [username, setUsername] = useState("");
@@ -20,7 +30,7 @@ export default function LoginPage() {
     return () => clearTimeout(t);
   }, [countdown]);
 
-  if (status === "user") return <Navigate to={location.state?.from ?? "/"} replace />;
+  if (status === "user") return <Navigate to={destinationAfterLogin(location.state?.from, currentUser)} replace />;
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -28,8 +38,8 @@ export default function LoginPage() {
     setBusy(true);
     setError("");
     try {
-      await login(username, password);
-      navigate(location.state?.from ?? "/", { replace: true });
+      const loggedIn = await login(username, password);
+      navigate(destinationAfterLogin(location.state?.from, loggedIn), { replace: true });
     } catch (err) {
       setError(errorText(err));
       if (err?.code === "RATE_LIMITED" && err.retryAfter) setCountdown(err.retryAfter);
