@@ -960,11 +960,11 @@ Tạo một đề mới cùng bộ test. Đề mới **luôn ẩn** (tạo xong,
 | `tests` | array | có | 1 đến 100 phần tử `{"input": string, "output": string, "is_sample": boolean}`, xem dưới |
 
 - Thứ tự chạy: test mẫu (`is_sample` là `true`) trước, rồi test ẩn, mỗi nhóm giữ nguyên thứ tự trong mảng. `input` và `output` là văn bản UTF-8 hợp lệ, có thể rỗng. Tổng `input` và `output` của mọi test tối đa 8 MB (thô, mục 1), và dòng `JOB` xấu nhất (mục 2.2) không được vượt 16 MB; vi phạm một trong hai thì 400.
-- Body tối đa 17 MB (mục 3.2); quá thì 413 `BODY_TOO_LARGE`. Mỗi lúc server chỉ nhận một lượt upload đề: đây là cổng đồng thời riêng của hai endpoint upload (`POST /api/admin/problems`, `PUT /api/admin/problems/{id}`), không phải giới hạn tốc độ và không liên quan tới rate limit của nộp bài hay đăng nhập. Request thứ hai đến trong lúc đó nhận 429 `RATE_LIMITED` kèm `Retry-After` (số giây nguyên ≥ 1) và không ghi gì; lượt đang chạy không bị ảnh hưởng.
+- Body tối đa 17 MB (mục 3.2); quá thì 413 `BODY_TOO_LARGE`. Mỗi lúc server chỉ nhận một lượt upload đề: đây là cổng đồng thời riêng của hai endpoint upload (`POST /api/admin/problems`, `PUT /api/admin/problems/{id}`), không phải giới hạn tốc độ và không liên quan tới rate limit của nộp bài hay đăng nhập. Request thứ hai đến trong lúc đó nhận 429 `RATE_LIMITED` kèm `Retry-After` (số giây nguyên ≥ 1) và không ghi gì; lượt đang chạy không bị ảnh hưởng. Cổng được giữ từ trước khi đọc body; server nhận hết body trong tối đa 120 giây, quá hạn thì 400 `INVALID_REQUEST` và nhả cổng (client gửi chậm hoặc treo không giữ cổng mãi).
 - Thành công: 201, thân là đối tượng đề như `GET /api/problems/{id}` (mục 3.3) với `hidden` là `true`; `samples` là các test mẫu vừa tạo.
 - Mã đề đã có (kể cả đề đang ẩn): 409 `PROBLEM_ID_TAKEN`. Thiếu field, field thừa, sai kiểu, giá trị ngoài khoảng, `input`/`output` không phải UTF-8 hợp lệ, bộ test vượt hai giới hạn trên: 400 `INVALID_REQUEST`; `message` không lặp lại giá trị đã gửi.
 - Việc ghi đề và bộ test là một lần ghi duy nhất: lỗi giữa chừng không để lại đề nửa vời.
-- Đề tạo ở đây là do web quản lý: lệnh `manage.py problems reimport` từ chối đề này trừ khi có `--force`, để không ghi đè im lặng chỉnh sửa trên web. Đề nạp từ thư mục `problems/` lúc khởi động không bao giờ bị ghi đè (chỉ nạp đề chưa có).
+- Đề tạo ở đây là do web quản lý: lệnh `manage.py problems reimport` từ chối đề này trừ khi có `--force`, để không ghi đè im lặng chỉnh sửa trên web. Dùng `--force` ghi đè nội dung bằng thư mục nhưng đề vẫn được coi là do web quản lý (lần reimport sau lại cần `--force`). Đề nạp từ thư mục `problems/` lúc khởi động không bao giờ bị ghi đè (chỉ nạp đề chưa có).
 
 ##### `PUT /api/admin/problems/{id}`
 

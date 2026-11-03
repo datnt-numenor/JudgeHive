@@ -252,3 +252,18 @@ def test_set_password_works_as_python_dash_m(env):
                           env={"PATH": os.environ["PATH"], "PYTHONPATH": os.getcwd(), **env})
     assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
     assert auth.verify_password("new-password-1", stored_hash(env, "alice"))
+
+
+def test_reimport_refuses_a_web_managed_problem_unless_forced(env, capsys):
+    """D35, D23(7): chỉnh sửa trên web không bị `reimport` ghi đè im lặng."""
+    make_dir(env["JH_PROBLEMS_DIR"], "p1")
+    assert call(env, "problems", "reimport", "p1") == 0
+    with db_of(env).write() as c:
+        c.execute("UPDATE problems SET source = 'web', title = 'sửa trên web' WHERE id = 'p1'")
+    capsys.readouterr()
+    assert call(env, "problems", "reimport", "p1") == 1
+    assert "do web quản lý" in capsys.readouterr().err
+    assert db_of(env).conn().execute("SELECT title FROM problems WHERE id = 'p1'").fetchone()[0] == "sửa trên web"
+    assert call(env, "problems", "reimport", "p1", "--force") == 0
+    row = db_of(env).conn().execute("SELECT title, source FROM problems WHERE id = 'p1'").fetchone()
+    assert row["title"] == "Tong"  # --force ghi đè bằng thư mục; nguồn vẫn là 'web' (reimport không đổi cờ nguồn)

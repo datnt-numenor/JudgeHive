@@ -223,3 +223,32 @@ def test_store_problem_is_one_transaction(db):
             raise RuntimeError("giữa chừng")
     assert db.conn().execute("SELECT COUNT(*) FROM problems").fetchone()[0] == 0
     assert db.conn().execute("SELECT COUNT(*) FROM tests").fetchone()[0] == 0
+
+
+def test_update_problem_keeps_tests_when_none_and_replaces_them_otherwise(tmp_path):
+    from _support import add_problem
+
+    db = Database(str(tmp_path / "p.db"))
+    db.migrate()
+    add_problem(db, "p")
+    before = db.conn().execute("SELECT tests_hash, hidden FROM problems WHERE id = 'p'").fetchone()
+    count_before = db.conn().execute("SELECT COUNT(*) FROM tests WHERE problem_id = 'p'").fetchone()[0]
+    with db.write() as c:
+        assert problems.update_problem(c, "p", title="mới", statement="s", time_limit_ms=200, memory_limit_kib=65536)
+    row = db.conn().execute("SELECT * FROM problems WHERE id = 'p'").fetchone()
+    assert (row["title"], row["time_limit_ms"], row["source"]) == ("mới", 200, "web")
+    assert row["tests_hash"] == before["tests_hash"] and row["hidden"] == before["hidden"]
+    assert db.conn().execute("SELECT COUNT(*) FROM tests WHERE problem_id = 'p'").fetchone()[0] == count_before
+    new = (TestCase(True, b"1\n", b"1\n"),)
+    with db.write() as c:
+        problems.update_problem(c, "p", title="mới", statement="s", time_limit_ms=200, memory_limit_kib=65536, tests=new)
+    assert db.conn().execute("SELECT tests_hash FROM problems WHERE id = 'p'").fetchone()[0] == compute_tests_hash(new)
+    assert db.conn().execute("SELECT COUNT(*) FROM tests WHERE problem_id = 'p'").fetchone()[0] == 1
+    with db.write() as c:
+        assert problems.update_problem(c, "nope", title="t", statement="s", time_limit_ms=200,
+                                       memory_limit_kib=65536) is False
+
+
+def test_test_fingerprint_depends_on_the_split_between_input_and_output():
+    assert problems.test_fingerprint(b"ab", b"c") != problems.test_fingerprint(b"a", b"bc")
+    assert problems.test_fingerprint(b"a", b"b") == problems.test_fingerprint(b"a", b"b")

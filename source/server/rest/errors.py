@@ -64,6 +64,10 @@ def username_taken():
     return ApiError(409, "USERNAME_TAKEN", "username is already taken")
 
 
+def problem_id_taken():
+    return ApiError(409, "PROBLEM_ID_TAKEN", "problem id is already taken")
+
+
 def last_admin():
     return ApiError(409, "LAST_ADMIN", "cannot disable or demote the last active admin")
 

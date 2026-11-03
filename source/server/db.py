@@ -113,6 +113,11 @@ MIGRATIONS = [
     """
     ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1));
     """,
+    # D35 (D23(7)): nguồn của đề. 'seed' là đề nạp từ `problems/` (mọi đề đã có), 'web' là đề tạo hoặc sửa qua giao diện admin;
+    # `manage.py problems reimport` từ chối đề 'web' trừ khi có --force.
+    """
+    ALTER TABLE problems ADD COLUMN source TEXT NOT NULL DEFAULT 'seed' CHECK (source IN ('seed', 'web'));
+    """,
 ]
 
 

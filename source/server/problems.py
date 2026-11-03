@@ -22,6 +22,13 @@ log = logging.getLogger("judgehive.problems")
 SLUG = re.compile(r"^[a-z0-9_-]{1,64}$")  # [ĐỀ XUẤT]
 MAX_INT = 2**31 - 1
 
+# D35 (chốt D23(9)): giới hạn cho đề tạo hoặc sửa qua web. Đề seed từ thư mục chỉ bị chặn bởi `check_limits` và MAX_INT.
+WEB_TIME_LIMIT_MS = (100, 5000)
+WEB_MEMORY_LIMIT_KIB = (65536, 524288)  # 64 đến 512 MiB
+WEB_MAX_TESTS = 100
+WEB_MAX_STATEMENT_BYTES = 65536
+WEB_MAX_TITLE_CHARS = 200
+
 
 class ProblemError(Exception):
     """Thư mục đề hoặc bộ test không hợp lệ."""
@@ -133,9 +140,18 @@ def _now_ms():
     return int(time.time() * 1000)
 
 
-def store_problem(conn, data, *, replace):
-    """Ghi đề và bộ test (gọi trong `db.write()`). `replace=False`: chỉ thêm đề chưa có, trả False nếu đã có.
-    `replace=True`: ghi đè nội dung đề và test, giữ nguyên cờ ẩn. Trả True nếu đã ghi."""
+def test_fingerprint(input_bytes, output_bytes):
+    """sha256 hex của một cặp input/output (tiền tố độ dài nên không mơ hồ khi nối). Dùng cho siêu dữ liệu admin (D35)."""
+    h = hashlib.sha256()
+    for blob in (input_bytes, output_bytes):
+        h.update(len(blob).to_bytes(8, "big"))
+        h.update(blob)
+    return h.hexdigest()
+
+
+def store_problem(conn, data, *, replace, hidden=0, source="seed"):
+    """Ghi đề và bộ test (gọi trong `db.write()`). `replace=False`: chỉ thêm đề chưa có, trả False nếu đã có (đề mới có
+    cờ ẩn và nguồn theo tham số). `replace=True`: ghi đè nội dung đề và test, giữ nguyên cờ ẩn và nguồn. Trả True nếu đã ghi."""
     exists = conn.execute("SELECT 1 FROM problems WHERE id = ?", (data.id,)).fetchone() is not None
     if exists and not replace:
         return False
@@ -148,8 +164,9 @@ def store_problem(conn, data, *, replace):
         conn.execute("DELETE FROM tests WHERE problem_id = ?", (data.id,))
     else:
         conn.execute("INSERT INTO problems (id, title, statement, time_limit_ms, memory_limit_kib, hidden, "
-                     "tests_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
-                     (data.id, data.title, data.statement, data.time_limit_ms, data.memory_limit_kib, digest, now, now))
+                     "tests_hash, created_at, updated_at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (data.id, data.title, data.statement, data.time_limit_ms, data.memory_limit_kib, hidden, digest, now,
+                      now, source))
     conn.executemany("INSERT INTO tests (problem_id, position, is_sample, input, output) VALUES (?, ?, ?, ?, ?)",
                      [(data.id, pos, int(t.is_sample), t.input, t.output) for pos, t in enumerate(data.tests, 1)])
     return True
@@ -180,8 +197,25 @@ def seed_problems(db, directory):
     return inserted
 
 
-def reimport_problem(db, directory, problem_id):
-    """D5: nạp lại cưỡng bức một đề từ thư mục (đổi hash test; không tự rejudge, không đổi cờ ẩn)."""
+def update_problem(conn, problem_id, *, title, statement, time_limit_ms, memory_limit_kib, tests=None):
+    """D35: thay nội dung một đề qua web (gọi trong `db.write()`). `tests=None` giữ nguyên bộ test và hash; có `tests`
+    thì thay toàn bộ. Đánh dấu nguồn 'web'; không đổi cờ ẩn. Trả False nếu đề không tồn tại."""
+    if conn.execute("SELECT 1 FROM problems WHERE id = ?", (problem_id,)).fetchone() is None:
+        return False
+    now = _now_ms()
+    conn.execute("UPDATE problems SET title=?, statement=?, time_limit_ms=?, memory_limit_kib=?, source='web', "
+                 "updated_at=? WHERE id=?", (title, statement, time_limit_ms, memory_limit_kib, now, problem_id))
+    if tests is not None:
+        conn.execute("UPDATE problems SET tests_hash=? WHERE id=?", (compute_tests_hash(tests), problem_id))
+        conn.execute("DELETE FROM tests WHERE problem_id = ?", (problem_id,))
+        conn.executemany("INSERT INTO tests (problem_id, position, is_sample, input, output) VALUES (?, ?, ?, ?, ?)",
+                         [(problem_id, pos, int(t.is_sample), t.input, t.output) for pos, t in enumerate(tests, 1)])
+    return True
+
+
+def reimport_problem(db, directory, problem_id, *, force=False):
+    """D5: nạp lại cưỡng bức một đề từ thư mục (đổi hash test; không tự rejudge, không đổi cờ ẩn). D35: đề do web quản lý
+    (`source = 'web'`) bị từ chối trừ khi `force`, để không ghi đè im lặng chỉnh sửa trên web."""
     if not SLUG.match(problem_id):
         raise ProblemError(f"id đề không hợp lệ: {problem_id!r}")
     path = os.path.join(directory, problem_id)
@@ -189,5 +223,9 @@ def reimport_problem(db, directory, problem_id):
         raise ProblemError(f"không có thư mục đề: {path}")
     data = load_problem_dir(path)
     with db.write() as conn:
-        store_problem(conn, data, replace=True)
+        # Kiểm nguồn TRONG transaction ghi: một `PUT` chen vào giữa lúc kiểm và lúc ghi không bị ghi đè im lặng.
+        row = conn.execute("SELECT source FROM problems WHERE id = ?", (problem_id,)).fetchone()
+        if row is not None and row["source"] == "web" and not force:
+            raise ProblemError(f"đề {problem_id} do web quản lý; thêm --force để ghi đè bằng thư mục")
+        store_problem(conn, data, replace=True)  # không đổi cờ nguồn: đề web vẫn là đề web sau --force
     return data

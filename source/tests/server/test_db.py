@@ -236,3 +236,34 @@ def test_the_disabled_migration_keeps_existing_users_enabled(tmp_path):
     old.migrate()
     assert old.conn().execute("SELECT disabled FROM users WHERE username = 'old'").fetchone()[0] == 0
     assert old.conn().execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
+
+
+def test_problems_get_a_source_column_that_defaults_to_seed_and_only_takes_seed_or_web(db):
+    from _support import add_problem
+
+    add_problem(db)
+    assert db.conn().execute("SELECT source FROM problems WHERE id = 'sum'").fetchone()[0] == "seed"
+    with db.write() as c:
+        c.execute("UPDATE problems SET source = 'web' WHERE id = 'sum'")
+    with pytest.raises(sqlite3.IntegrityError):
+        with db.write() as c:
+            c.execute("UPDATE problems SET source = 'other' WHERE id = 'sum'")
+
+
+def test_the_source_migration_marks_every_existing_problem_as_seed(tmp_path):
+    """Nâng cấp tại chỗ (D35): đề đã có trước migration đều là đề seed, nên `reimport` vẫn chạy được với chúng."""
+    from server.db import MIGRATIONS
+
+    index = [i for i, script in enumerate(MIGRATIONS) if "ADD COLUMN source" in script]
+    assert len(index) == 1, index
+    old = Database(str(tmp_path / "old.db"))
+    with old.write() as c:
+        for script in MIGRATIONS[:index[0]]:
+            for statement in db_module._split_statements(script):
+                c.execute(statement)
+        c.execute("PRAGMA user_version = %d" % index[0])
+        c.execute("INSERT INTO problems (id, title, statement, time_limit_ms, memory_limit_kib, hidden, tests_hash, "
+                  "created_at, updated_at) VALUES ('old', 't', 's', 1000, 65536, 0, 'h', 1, 1)")
+    old.migrate()
+    assert old.conn().execute("SELECT source FROM problems WHERE id = 'old'").fetchone()[0] == "seed"
+    assert old.conn().execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)

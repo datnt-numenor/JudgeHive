@@ -41,9 +41,15 @@ def get_problem(problem_id: str, request: Request, user: sessions.SessionUser = 
     is_admin = user.role == "admin"
     if row is None or (row["hidden"] and not is_admin):
         raise problem_not_found()
+    return ApiJSONResponse(problem_detail(conn, row, is_admin))
+
+
+def problem_detail(conn, row, is_admin):
+    """Đối tượng đề của `GET /api/problems/{id}` (cũng là kết quả của `POST`/`PUT /api/admin/problems`). `row` gồm
+    `PROBLEM_COLUMNS` và `statement`. Chỉ test mẫu, không bao giờ test ẩn."""
     samples = conn.execute("SELECT input, output FROM tests WHERE problem_id = ? AND is_sample = 1 ORDER BY position",
-                           (problem_id,)).fetchall()
+                           (row["id"],)).fetchall()
     view = summary(row, is_admin)
     view["statement"] = row["statement"]
     view["samples"] = [{"input": _text(s["input"]), "output": _text(s["output"])} for s in samples]
-    return ApiJSONResponse(view)
+    return view

@@ -3,16 +3,20 @@
 Là dependency `async` chỉ đọc stream của request, không đụng SQLite (event loop không gọi SQLite, PLAN 2.1). Giới hạn tính
 theo byte nhận từ mạng, kể cả body chunked (không có `Content-Length`)."""
 
+import asyncio
 import json
 
 from fastapi import Request
 from starlette.requests import ClientDisconnect
 
+from common import protocol
 from server.rest.errors import ApiError, invalid
 from server.rest.parse import is_ascii_digits, parse_uint
 
 BODY_LIMIT_SUBMIT = 512 * 1024
 BODY_LIMIT_DEFAULT = 128 * 1024
+BODY_LIMIT_PROBLEM = protocol.MAX_LINE_SERVER_TO_WORKER + 1024 * 1024  # D35: 17 MiB, upload đề cùng bộ test
+UPLOAD_READ_TIMEOUT_S = 120  # D35 [ĐỀ XUẤT]: thời gian tối đa để nhận hết body upload đề
 
 
 def _too_large():
@@ -34,7 +38,10 @@ def _reject_constant(name):
     raise ValueError(name)  # NaN, Infinity, -Infinity không phải JSON hợp lệ
 
 
-def json_object_dependency(limit):
+def json_object_dependency(limit, timeout_name=None):
+    """`timeout_name`: tên hằng số của module này giữ số giây tối đa để đọc hết body (đọc lại ở mỗi request); quá hạn thì
+    400 `INVALID_REQUEST`. Dùng cho upload lớn, nơi dependency đứng sau một cổng đồng thời: client gửi chậm hoặc đứng im
+    không được giữ cổng mãi (D35)."""
     async def read_json_object(request: Request):
         _check_content_type(request.headers.get("content-type"))
         declared = request.headers.get("content-length")
@@ -46,11 +53,14 @@ def json_object_dependency(limit):
                 raise _too_large()
         chunks, total = [], 0
         try:
-            async for chunk in request.stream():
-                total += len(chunk)
-                if total > limit:
-                    raise _too_large()
-                chunks.append(chunk)
+            async with asyncio.timeout(globals()[timeout_name] if timeout_name else None):
+                async for chunk in request.stream():
+                    total += len(chunk)
+                    if total > limit:
+                        raise _too_large()
+                    chunks.append(chunk)
+        except TimeoutError:
+            raise invalid() from None  # đọc body quá hạn: nhả cổng, báo 400
         except ClientDisconnect:
             # Client ngắt giữa chừng: không còn ai nhận response, và đây không phải lỗi server (không 500, không traceback).
             raise invalid() from None
@@ -67,6 +77,7 @@ def json_object_dependency(limit):
 
 body_default = json_object_dependency(BODY_LIMIT_DEFAULT)
 body_submit = json_object_dependency(BODY_LIMIT_SUBMIT)
+body_problem = json_object_dependency(BODY_LIMIT_PROBLEM, "UPLOAD_READ_TIMEOUT_S")
 
 
 def utf8_size(text, field):

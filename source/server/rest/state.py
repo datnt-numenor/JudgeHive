@@ -21,11 +21,12 @@ class RestState:
     clock: Callable[[], int]
     login_limiter: SlidingWindow
     login_gate: ConcurrencyGate
+    upload_gate: ConcurrencyGate  # D35: một lượt upload đề tại một lúc (body tới 17 MiB), riêng với login_gate
     dummy_hash: str  # băm cùng tham số với mật khẩu thật, để username không tồn tại tốn thời gian như username có thật
 
 
 def build_state(cfg, db, dispatcher, hooks, clock):
     return RestState(cfg=cfg, db=db, dispatcher=dispatcher, hooks=hooks, clock=clock,
                      login_limiter=SlidingWindow(cfg.login_rate_limit, int(cfg.login_rate_window_s * 1000)),
-                     login_gate=ConcurrencyGate(cfg.login_max_concurrent),
+                     login_gate=ConcurrencyGate(cfg.login_max_concurrent), upload_gate=ConcurrencyGate(1),
                      dummy_hash=auth.hash_password("dummy-password-for-timing"))

@@ -2,7 +2,7 @@
 
     docker compose exec server python -m server.manage users create NAME [--role admin] [--password-stdin]
     docker compose exec server python -m server.manage users set-password NAME [--password-stdin]
-    docker compose exec server python -m server.manage problems reimport ID
+    docker compose exec server python -m server.manage problems reimport ID [--force]
     docker compose exec server python -m server.manage submissions show ID
 
 Nộp bài qua REST (`POST /api/submissions`); `submissions show` chỉ để xem một dòng khi gỡ lỗi. Mật khẩu không bao giờ
@@ -41,7 +41,9 @@ def build_parser():
     setpw.add_argument("--password-stdin", action="store_true", help="đọc mật khẩu từ dòng đầu của stdin")
 
     probs = groups.add_parser("problems").add_subparsers(dest="command", required=True)
-    probs.add_parser("reimport").add_argument("problem_id")
+    reimport = probs.add_parser("reimport")
+    reimport.add_argument("problem_id")
+    reimport.add_argument("--force", action="store_true", help="ghi đè cả đề do web quản lý (D35)")
 
     subs = groups.add_parser("submissions").add_subparsers(dest="command", required=True)
     subs.add_parser("show").add_argument("submission_id", type=int)
@@ -99,7 +101,7 @@ def cmd_users_set_password(db, args, stdin):
 
 def cmd_problems_reimport(db, args, env):
     try:
-        data = problems.reimport_problem(db, problems_dir_from_env(env), args.problem_id)
+        data = problems.reimport_problem(db, problems_dir_from_env(env), args.problem_id, force=args.force)
     except problems.ProblemError as e:
         raise CommandError(str(e)) from e
     print(f"đã nạp lại {data.id}: {len(data.tests)} test, hash {problems.compute_tests_hash(data.tests)}")
