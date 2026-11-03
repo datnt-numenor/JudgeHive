@@ -6,7 +6,7 @@ worker, để `ru_maxrss` không bị cộng đỉnh RSS của worker. Hạ quy�
 test mọi tiến trình của uid thí sinh bị kill (kể cả tiến trình thoát nhóm bằng setsid).
 
 Ba lớp chống bộ nhớ ngoài RSS của thí sinh (D28): (1) `oom_score_adj` +1000 do root có CAP_SYS_RESOURCE đặt trước
-`setpriv`, nên thí sinh không hạ lại được và OOM killer luôn chọn thí sinh; (2) seccomp chặn `memfd_create`, `shmget`
+`setpriv`, nên thí sinh không hạ lại được và OOM killer luôn chọn thí sinh; (2) seccomp chặn `memfd_create`, `shmget`, `io_uring_*`, mọi `socket()` ngoài `AF_UNIX` (thí sinh không có mạng, D33)
 và ABI lạ (`worker/seccomp.py`); (3) sysctl `shm_rmid_forced`, `shmmax` ở compose. Cả biên dịch lẫn chạy đều qua `_wrap`.
 """
 
@@ -221,6 +221,16 @@ def verify_guard():
                                    capture_output=True, timeout=10)
         if effective.returncode == 0:
             raise seccomp.GuardError(f"thí sinh vẫn làm được: {what} (bảo vệ D28 không có hiệu lực)")
+    # D33: mạng. Khác hai ca trên, ca này in dấu hiệu rõ ràng và có đối chứng dương (socket Unix phải tạo được), để
+    # "python không chạy được" hay "chặn cả mọi socket" không bị nhầm là bộ lọc đúng.
+    net = subprocess.run(_wrap(["python3", "-I", "-S", "-c", _NET_PROBE], {"nofile": 32}, JUDGE_UID),
+                         capture_output=True, text=True, timeout=10)
+    got = net.stdout.split()
+    if "INET_OPEN" in got:
+        raise seccomp.GuardError("thí sinh vẫn tạo được socket AF_INET (bảo vệ D33 không có hiệu lực)")
+    if got != ["INET_EPERM", "UNIX_OK"]:
+        raise seccomp.GuardError("không đo được chặn mạng của thí sinh (cần socket AF_INET bị EPERM và AF_UNIX tạo được): "
+                                 f"stdout={net.stdout[:100]!r} stderr={net.stderr[:100]!r}")
     # Ngược chiều hai ca trên: ở đây phải THÀNH CÔNG. no_new_privs là điều kiện để nạp seccomp không cần cap và để
     # thí sinh không lấy lại quyền qua setuid/file capability; đọc từ chính tiến trình thí sinh.
     if not _candidate_no_new_privs():
@@ -228,6 +238,10 @@ def verify_guard():
     return path
 
 
+_NET_PROBE = ("import socket, errno\n"
+              "try:\n    socket.socket(socket.AF_INET)\n    print('INET_OPEN')\n"
+              "except OSError as e:\n    print('INET_EPERM' if e.errno == errno.EPERM else 'INET_OTHER')\n"
+              "socket.socket(socket.AF_UNIX)\nprint('UNIX_OK')\n")
 _NNP_PROBE = ("import sys; sys.exit(0 if any(l.split()[:2] == ['NoNewPrivs:', '1'] "
               "for l in open('/proc/self/status')) else 1)")
 
