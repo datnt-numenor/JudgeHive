@@ -5,6 +5,7 @@ theo byte nhận từ mạng, kể cả body chunked (không có `Content-Length
 
 import asyncio
 import json
+import re
 
 from fastapi import Request
 from starlette.requests import ClientDisconnect
@@ -38,10 +39,34 @@ def _reject_constant(name):
     raise ValueError(name)  # NaN, Infinity, -Infinity không phải JSON hợp lệ
 
 
-def json_object_dependency(limit, timeout_name=None):
+# Một mẫu cho mọi token cấu trúc của JSON: chuỗi hoặc một ký tự `{ } [ ] , :`. Chuỗi dùng lượng từ chiếm hữu (Python >= 3.11)
+# và luôn khớp được từ dấu `"` mở (tới `"` đóng hoặc hết body, kể cả `\` lẻ ở cuối), nên không có lần thử thất bại nào để
+# quét lại từ đầu: thời gian tuyến tính theo độ dài body, kể cả với chuỗi không đóng. Quét ở mức byte là an toàn với UTF-8
+# (byte nhiều-byte đều >= 0x80, không trùng `"` hay `\`).
+_TOKEN = re.compile(rb'"[^"\\]*+(?:\\(?:.|\Z)[^"\\]*+)*+(?:"|\Z)|[{}\[\],:]', re.DOTALL)
+_TOKEN_BYTES = (b'"', b"{", b"}", b"[", b"]", b",", b":")
+
+
+def token_budget_exceeded(raw, max_tokens):
+    """True nếu `raw` có hơn `max_tokens` token cấu trúc ngoài nội dung chuỗi (mỗi chuỗi tính một token).
+
+    Chặn khuếch đại bộ nhớ của `json.loads`: `{},` dài 3 byte thành một dict ~64 byte. Chạy trước `json.loads`.
+    Đường nhanh: tổng số lần xuất hiện thô của các ký tự token (chặn trên của số token thật) không quá `max_tokens` thì
+    qua luôn. Ngược lại đếm token thật và dừng ngay khi vượt, nên body xấu bị từ chối sau vài nghìn token."""
+    if sum(raw.count(c) for c in _TOKEN_BYTES) <= max_tokens:
+        return False
+    count = 0
+    for _ in _TOKEN.finditer(raw):
+        count += 1
+        if count > max_tokens:
+            return True
+    return False
+
+
+def json_object_dependency(limit, timeout_name=None, max_tokens=None):
     """`timeout_name`: tên hằng số của module này giữ số giây tối đa để đọc hết body (đọc lại ở mỗi request); quá hạn thì
     400 `INVALID_REQUEST`. Dùng cho upload lớn, nơi dependency đứng sau một cổng đồng thời: client gửi chậm hoặc đứng im
-    không được giữ cổng mãi (D35)."""
+    không được giữ cổng mãi (D35). `max_tokens`: số token cấu trúc tối đa của body (xem `token_budget_exceeded`); vượt thì 400."""
     async def read_json_object(request: Request):
         _check_content_type(request.headers.get("content-type"))
         declared = request.headers.get("content-length")
@@ -64,8 +89,12 @@ def json_object_dependency(limit, timeout_name=None):
         except ClientDisconnect:
             # Client ngắt giữa chừng: không còn ai nhận response, và đây không phải lỗi server (không 500, không traceback).
             raise invalid() from None
+        raw = b"".join(chunks)
+        del chunks
+        if max_tokens is not None and token_budget_exceeded(raw, max_tokens):
+            raise invalid()
         try:
-            value = json.loads(b"".join(chunks).decode("utf-8"), parse_constant=_reject_constant)
+            value = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant)
         except (ValueError, RecursionError):  # UnicodeDecodeError là ValueError
             raise invalid() from None
         if not isinstance(value, dict):
@@ -77,7 +106,6 @@ def json_object_dependency(limit, timeout_name=None):
 
 body_default = json_object_dependency(BODY_LIMIT_DEFAULT)
 body_submit = json_object_dependency(BODY_LIMIT_SUBMIT)
-body_problem = json_object_dependency(BODY_LIMIT_PROBLEM, "UPLOAD_READ_TIMEOUT_S")
 
 
 def utf8_size(text, field):

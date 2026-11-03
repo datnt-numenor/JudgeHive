@@ -14,7 +14,7 @@ from server import problems
 from server.rest import sessions
 from server.rest.admin_routes import _strict_query
 from server.rest.admin_user_routes import _require_active_admin
-from server.rest.body import body_problem, utf8_size
+from server.rest.body import BODY_LIMIT_PROBLEM, json_object_dependency, utf8_size
 from server.rest.errors import ApiJSONResponse, invalid, log, problem_id_taken, problem_not_found, rate_limited
 from server.rest.problem_routes import PROBLEM_COLUMNS, PROBLEM_ID, _text, problem_detail
 
@@ -22,6 +22,25 @@ router = APIRouter()
 
 CONTENT_FIELDS = ("title", "statement", "time_limit_ms", "memory_limit_kib")
 TEST_KEYS = {"input", "output", "is_sample"}
+ROOT_STRING_FIELDS = ("id", "title", "statement")  # các field gốc có giá trị chuỗi (còn lại là số hoặc `tests`)
+TEST_STRING_FIELDS = ("input", "output")
+
+
+def max_body_tokens(tests=problems.WEB_MAX_TESTS):
+    """Số token cấu trúc JSON tối đa của một body hợp lệ (README.md:957, bảng `POST /api/admin/problems`): mỗi chuỗi,
+    và mỗi ký tự `{ } [ ] , :` ngoài nội dung chuỗi, là một token. Body hợp lệ lớn nhất gồm object gốc (`id`, bốn field của
+    `CONTENT_FIELDS`, `tests`) và mảng `tests` có `WEB_MAX_TESTS` phần tử, mỗi phần tử là object ba key. Vượt con số này
+    thì chắc chắn sai contract nên bị từ chối trước `json.loads` (chặn khuếch đại bộ nhớ: `{},` dài 3 byte thành dict
+    ~64 byte). Độ sâu không cần chặn riêng: số ngoặc đã bị chặn, nên độ sâu cũng nhỏ và validator từ chối cấu trúc sai."""
+    root_fields = len(CONTENT_FIELDS) + 2  # + `id`, `tests`
+    root = 2 + (root_fields - 1) + root_fields + root_fields + len(ROOT_STRING_FIELDS)  # {} , : khóa, giá trị chuỗi
+    array = 2 + (tests - 1)  # [] và dấu phẩy giữa các phần tử
+    keys = len(TEST_KEYS)
+    per_test = 2 + (keys - 1) + keys + keys + len(TEST_STRING_FIELDS)
+    return root + array + tests * per_test
+
+
+body_problem = json_object_dependency(BODY_LIMIT_PROBLEM, "UPLOAD_READ_TIMEOUT_S", max_tokens=max_body_tokens())
 
 
 class UploadSlot:

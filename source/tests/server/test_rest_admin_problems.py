@@ -524,3 +524,141 @@ def test_methods_not_allowed_on_the_problem_paths(web):
     assert web.get("/api/admin/problems", cookie=cookie).status == 405
     assert web.request("DELETE", "/api/admin/problems/sum", cookie=cookie).status == 405
     assert web.post("/api/admin/problems/sum/tests", {}, cookie=cookie).status == 405
+
+
+# ---- giới hạn cấu trúc body (chặn khuếch đại bộ nhớ của json.loads) ---------------------------------------------------
+
+def _tokens(raw):
+    from server.rest.body import _TOKEN
+    return sum(1 for _ in _TOKEN.finditer(raw))
+
+
+def _max_valid_body():
+    tests = [{"input": f"{i} {i}\n", "output": f"{2 * i}\n", "is_sample": i == 0} for i in range(problems.WEB_MAX_TESTS)]
+    return json.dumps(valid(tests=tests)).encode()
+
+
+def test_max_body_tokens_equals_the_token_count_of_a_maximal_valid_body():
+    from server.rest.admin_problem_routes import max_body_tokens
+    from server.rest.body import token_budget_exceeded
+
+    raw = _max_valid_body()
+    assert _tokens(raw) == max_body_tokens()  # công thức khớp body hợp lệ lớn nhất, không thừa không thiếu
+    assert not token_budget_exceeded(raw, max_body_tokens())
+    assert token_budget_exceeded(raw, max_body_tokens() - 1)  # ngưỡng - 1 thì body hợp lệ lớn nhất bị chặn: ngưỡng chặt
+    assert max_body_tokens(tests=1) < max_body_tokens(tests=2)  # tính từ số test, không ghi cứng
+
+
+@pytest.mark.parametrize("filler", [b"{", b"}", b"[", b"]", b",", b":", b'"a" ', b'""', b'"\\"', b'"\\\\"'],
+                         ids=lambda f: f.decode())
+def test_every_token_kind_counts_toward_the_budget(filler):
+    from server.rest.body import token_budget_exceeded
+
+    raw = filler * 200_000
+    assert token_budget_exceeded(raw, 1000)
+
+
+def test_characters_inside_strings_are_not_tokens():
+    from server.rest.body import token_budget_exceeded
+
+    body = json.dumps({"a": ('{[,:"}]' + chr(92)) * 300_000}).encode()  # 5 token dù có hàng triệu ký tự cấu trúc
+    assert _tokens(body) == 5
+    assert not token_budget_exceeded(body, 5) and token_budget_exceeded(body, 4)
+
+
+@pytest.mark.parametrize("raw", [b'"abc' + bytes([92]), b'"abc',b'"' + b'\\"' * 50_000 + b"\\", b'"' + b"a" * 100_000,
+                                 b'" " " " " " " '], ids=["lone-backslash-end", "unterminated", "escaped-quotes-unclosed",
+                                                          "long-unterminated", "alternating"])
+def test_unterminated_strings_are_a_few_tokens_not_a_hang(raw):
+    from server.rest.body import token_budget_exceeded
+
+    n = _tokens(raw)
+    assert n <= 8
+    assert not token_budget_exceeded(raw, 8)
+
+
+def test_scan_time_is_not_quadratic_on_unterminated_strings():
+    """Ca bậc hai cũ: mỗi `\\"` là một lần thử khớp mới quét tới cuối body (32 KB mất khoảng 4,5 giây); bản tuyến tính xong
+    trong vài mili-giây. Biên hơn 100 lần so với ngân sách 1 giây nên không nhạy với máy chậm."""
+    import time
+
+    from server.rest.body import token_budget_exceeded
+
+    raw = b'"' + b'\\"' * 16_000
+    start = time.perf_counter()
+    token_budget_exceeded(raw, 1)
+    assert time.perf_counter() - start < 1.0
+
+
+FLOODS = [b"{},", b"[],", b"0.5,", b'"",', b'"a" ', b":,"]
+PREFIX = b'{"id":"flood","title":"t","statement":"s","time_limit_ms":1000,"memory_limit_kib":65536,"tests":['
+
+
+def flood_body(filler, size=17 * 2**20 - 1024):
+    return PREFIX + filler * ((size - len(PREFIX)) // len(filler)) + b"]}"
+
+
+@pytest.mark.parametrize("filler", FLOODS, ids=lambda f: f.decode())
+def test_a_17_mib_flood_of_small_tokens_is_400_before_it_is_parsed(web, filler):
+    before = (count_problems(web), problem_row(web, "sum"), stored_tests(web, "sum"))
+    r = web.request("POST", "/api/admin/problems", body=flood_body(filler), cookie=root_cookie(web))
+    assert (r.status, r.error_code) == (400, "INVALID_REQUEST")
+    r = web.request("PUT", "/api/admin/problems/sum", body=flood_body(filler), cookie=root_cookie(web))
+    assert (r.status, r.error_code) == (400, "INVALID_REQUEST")
+    assert (count_problems(web), problem_row(web, "sum"), stored_tests(web, "sum")) == before
+    assert web.app.state.rest.upload_gate._active == 0
+
+
+def test_deep_nesting_is_400_not_500(web):
+    for opener, closer in ((b"[", b"]"), (b'{"a":', b"}")):
+        body = (PREFIX[:-1] + opener * 100_000 + b"0" + closer * 100_000 + b"}")
+        r = web.request("POST", "/api/admin/problems", body=body, cookie=root_cookie(web))
+        assert (r.status, r.error_code) == (400, "INVALID_REQUEST")
+
+
+def test_a_17_mib_integer_is_400_not_500(web):
+    body = b'{"id":"flood","title":"t","statement":"s","time_limit_ms":' + b"1" * (17 * 2**20 - 1024) \
+        + b',"memory_limit_kib":65536,"tests":[]}'
+    r = web.request("POST", "/api/admin/problems", body=body, cookie=root_cookie(web))
+    assert (r.status, r.error_code) == (400, "INVALID_REQUEST")
+
+
+def test_structure_characters_inside_test_text_are_fine(web):
+    """Hàng triệu ký tự `{ [ , : "` và dấu gạch chéo ngược nằm trong chuỗi của một test hợp lệ vượt xa số token cho phép nếu
+    đếm thô, nhưng chỉ là một token mỗi chuỗi: 201 và dữ liệu lưu nguyên vẹn."""
+    text = ('{[,:"' + chr(92) + '}]') * 200_000  # 1,6 triệu ký tự
+    r = create(web, valid(tests=[{"input": text, "output": "x\n", "is_sample": True},
+                                 {"input": text, "output": text, "is_sample": False}]))
+    assert r.status == 201
+    assert [t[2].decode() for t in stored_tests(web, "new-problem")] == [text, text]
+
+
+def test_exactly_the_maximum_number_of_tests_still_passes(web):
+    tests = [{"input": f"{i} {i}\n", "output": f"{2 * i}\n", "is_sample": i == 0} for i in range(problems.WEB_MAX_TESTS)]
+    assert create(web, valid(tests=tests)).status == 201
+
+
+def test_gate_slots_return_to_initial_after_mixed_requests(web):
+    """Sau thành công, các loại lỗi, client ngắt giữa chừng: số chỗ đang giữ của cổng upload về đúng giá trị ban đầu."""
+    import socket
+
+    from _support import wait_until
+
+    gate = web.app.state.rest.upload_gate
+    initial, cookie = gate._active, root_cookie(web)
+    assert create(web).status == 201
+    assert create(web).status == 409
+    assert create(web, valid(tests=[])).status == 400
+    assert put(web, "nope").status == 404
+    assert put(web, "new-problem").status == 200
+    assert web.request("POST", "/api/admin/problems", body=flood_body(b"{},"), cookie=cookie).status == 400
+    assert web.request("POST", "/api/admin/problems", body=b"x" * 10, cookie=cookie, content_type="text/plain").status == 415
+    assert web.post("/api/admin/problems", valid(), cookie=web.login("alice")).status == 403
+    head = (f"POST /api/admin/problems HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nConnection: close\r\n"
+            f"Cookie: jh_session={cookie}\r\nContent-Length: 5000\r\n\r\n").encode()
+    for sent in (b"", b'{"id":"half', b"x" * 4999):  # ngắt trước khi gửi body, giữa chừng, thiếu đúng một byte
+        with socket.create_connection(("127.0.0.1", web.port), timeout=10) as sock:
+            sock.sendall(head + sent)
+    wait_until(lambda: gate._active == initial, timeout=10)
+    assert gate._active == initial
+    assert create(web, valid(id="after-all")).status == 201
