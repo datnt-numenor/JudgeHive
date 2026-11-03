@@ -252,3 +252,27 @@ def test_update_problem_keeps_tests_when_none_and_replaces_them_otherwise(tmp_pa
 def test_test_fingerprint_depends_on_the_split_between_input_and_output():
     assert problems.test_fingerprint(b"ab", b"c") != problems.test_fingerprint(b"a", b"bc")
     assert problems.test_fingerprint(b"a", b"b") == problems.test_fingerprint(b"a", b"b")
+
+
+def test_reimport_checks_the_source_inside_the_write_transaction(tmp_path, monkeypatch):
+    """Một `PUT` trên web chen vào SAU khi thư mục đã được đọc nhưng TRƯỚC khi ghi: `reimport` phải thấy nó và từ chối,
+    không ghi đè im lặng (D35). Nếu kiểm nguồn nằm ngoài transaction ghi (trước khi đọc thư mục) thì test này hỏng."""
+    root = tmp_path / "problems"
+    root.mkdir()
+    make_dir(str(root), "p1")
+    db = Database(str(tmp_path / "r.db"))
+    db.migrate()
+    problems.reimport_problem(db, str(root), "p1")  # nạp lần đầu: đề seed
+    real_load = problems.load_problem_dir
+
+    def load_then_web_edit(path):
+        data = real_load(path)
+        with db.write() as c:  # request PUT đến đúng lúc này
+            problems.update_problem(c, "p1", title="sửa trên web", statement="s", time_limit_ms=500,
+                                    memory_limit_kib=65536)
+        return data
+
+    monkeypatch.setattr(problems, "load_problem_dir", load_then_web_edit)
+    with pytest.raises(ProblemError, match="do web quản lý"):
+        problems.reimport_problem(db, str(root), "p1")
+    assert db.conn().execute("SELECT title FROM problems WHERE id = 'p1'").fetchone()[0] == "sửa trên web"

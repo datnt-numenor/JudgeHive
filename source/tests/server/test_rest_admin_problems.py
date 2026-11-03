@@ -283,6 +283,69 @@ def test_a_stalled_upload_holds_the_gate_before_reading_the_body_but_only_until_
     assert create(web).status == 201
 
 
+def test_chunked_body_over_17_mib_is_413_while_streaming_and_the_gate_is_released(web):
+    """Không có Content-Length: giới hạn phải chặn được ngay khi đang nhận stream (cổng đã giữ từ trước khi đọc body).
+    Một thread đọc liên tục để không mất response 413 khi server đóng kết nối lúc client còn đang gửi."""
+    import socket
+    import threading
+
+    limit = 17 * 1024 * 1024
+    piece = b"a" * (1024 * 1024)
+    head = (f"POST /api/admin/problems HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nConnection: close\r\n"
+            f"Cookie: jh_session={root_cookie(web)}\r\nTransfer-Encoding: chunked\r\n\r\n").encode()
+    received = []
+    with socket.create_connection(("127.0.0.1", web.port), timeout=30) as sock:
+        def drain():
+            try:
+                while data := sock.recv(65536):
+                    received.append(data)
+            except OSError:
+                pass
+
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
+        try:
+            sock.sendall(head)
+            for _ in range(limit // len(piece) + 1):  # 18 MiB > 17 MiB, mỗi mảnh là một chunk 1 MiB
+                sock.sendall(f"{len(piece):x}\r\n".encode() + piece + b"\r\n")
+            sock.sendall(b"0\r\n\r\n")
+        except OSError:
+            pass  # server đã trả lời 413 và đóng khi ta còn đang gửi
+        reader.join(timeout=30)
+    out = b"".join(received)
+    assert out.startswith(b"HTTP/1.1 413") and b"BODY_TOO_LARGE" in out, out[:200]
+    assert problem_row(web, "new-problem") is None
+    assert web.app.state.rest.upload_gate._active == 0
+    assert create(web).status == 201
+
+
+@pytest.mark.parametrize("action", ["create", "put"])
+def test_an_admin_demoted_between_authorization_and_the_write_gets_403_and_nothing_is_written(web, monkeypatch, action):
+    """`require_admin` đã cho qua, rồi trước khi vào transaction ghi, admin bị hạ quyền (request khác): transaction ghi
+    kiểm lại (`_require_active_admin`) và trả 403, không ghi gì, và cổng upload vẫn được nhả. Giả lập khoảng hở bằng cách
+    hạ quyền ngay trong `try_enter` của cổng (chạy sau `require_admin`, trước khi đọc body và ghi)."""
+    cookie = root_cookie(web)
+    gate = web.app.state.rest.upload_gate
+    real_try_enter = gate.try_enter
+
+    def demote_then_enter():
+        with web.db.write() as c:
+            c.execute("UPDATE users SET role = 'user' WHERE username = 'root'")
+        return real_try_enter()
+
+    before = (problem_row(web, "sum"), stored_tests(web, "sum"), count_problems(web))
+    monkeypatch.setattr(gate, "try_enter", demote_then_enter)
+    if action == "create":
+        r = create(web, cookie=cookie)
+    else:
+        r = put(web, "sum", cookie=cookie)
+    monkeypatch.undo()
+    assert (r.status, r.error_code) == (403, "FORBIDDEN")
+    assert (problem_row(web, "sum"), stored_tests(web, "sum"), count_problems(web)) == before
+    assert problem_row(web, "new-problem") is None
+    assert gate._active == 0
+
+
 def test_the_gate_is_released_after_every_outcome(web):
     assert create(web, valid(tests=[])).status == 400
     assert create(web).status == 201
