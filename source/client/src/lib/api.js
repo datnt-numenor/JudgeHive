@@ -151,4 +151,19 @@ export const api = {
     return request("GET", `/api/admin/submissions${qs ? `?${qs}` : ""}`, opts).then((r) => r.data);
   },
   adminSubmission: (id, opts) => request("GET", `/api/admin/submissions/${enc(id)}`, opts).then((r) => r.data),
+
+  // Quản lý tài khoản (README 3.6). Server quyết định quyền và luật "admin hoạt động cuối cùng".
+  adminUsers: ({ beforeId, limit } = {}, opts) => {
+    const q = new URLSearchParams();
+    if (limit != null) q.set("limit", String(limit));
+    if (beforeId != null) q.set("before_id", String(beforeId));
+    const qs = q.toString();
+    return request("GET", `/api/admin/users${qs ? `?${qs}` : ""}`, opts).then((r) => r.data);
+  },
+  createUser: ({ username, password, role }, opts) =>
+    request("POST", "/api/admin/users", { ...opts, body: { username, password, role } }).then((r) => r.data),
+  /** `changes`: `{disabled?, role?}`, ít nhất một field. */
+  updateUser: (id, changes, opts) => request("PATCH", `/api/admin/users/${enc(id)}`, { ...opts, body: changes }).then((r) => r.data),
+  resetUserPassword: (id, password, opts) =>
+    request("POST", `/api/admin/users/${enc(id)}/password`, { ...opts, body: { password } }).then(() => undefined),
 };

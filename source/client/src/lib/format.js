@@ -85,6 +85,12 @@ export function errorText(err) {
       return "Không tìm thấy đề bài.";
     case "SUBMISSION_NOT_FOUND":
       return "Không tìm thấy bài nộp.";
+    case "USERNAME_TAKEN":
+      return "Tên đăng nhập đã tồn tại.";
+    case "LAST_ADMIN":
+      return "Không thể khóa hoặc hạ quyền admin hoạt động cuối cùng. Hãy tạo hoặc mở khóa một admin khác trước.";
+    case "USER_NOT_FOUND":
+      return "Không tìm thấy tài khoản.";
     case "FORBIDDEN":
       return "Bạn không đủ quyền thực hiện thao tác này.";
     case "INVALID_REQUEST":

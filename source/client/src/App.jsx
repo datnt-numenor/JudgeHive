@@ -5,6 +5,7 @@ import { RealtimeProvider, useRealtime } from "./realtime.jsx";
 import AdminRoute from "./admin/AdminRoute.jsx";
 import AdminSubmissionDetailPage from "./admin/SubmissionDetailPage.jsx";
 import AdminSubmissionsPage from "./admin/SubmissionsPage.jsx";
+import UsersPage from "./admin/UsersPage.jsx";
 import WorkersPage from "./admin/WorkersPage.jsx";
 import { errorText } from "./lib/format.js";
 import LoginPage from "./pages/LoginPage.jsx";
@@ -54,6 +55,7 @@ function Layout() {
           <>
             <Link to="/admin/workers">Worker</Link>
             <Link to="/admin/submissions">Bài nộp (admin)</Link>
+            <Link to="/admin/users">Người dùng</Link>
           </>
         )}
         <span className="spacer" />
@@ -95,6 +97,7 @@ export default function App() {
               <Route path="/admin/workers" element={<WorkersPage />} />
               <Route path="/admin/submissions" element={<AdminSubmissionsPage />} />
               <Route path="/admin/submissions/:id" element={<AdminSubmissionDetailPage />} />
+              <Route path="/admin/users" element={<UsersPage />} />
             </Route>
             <Route path="*" element={<p>Không tìm thấy trang.</p>} />
           </Route>
