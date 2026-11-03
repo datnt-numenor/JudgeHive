@@ -135,11 +135,15 @@ def test_routing_errors_come_before_the_session_check(admin_web):
         assert (r.status, r.error_code) == (404, "NOT_FOUND"), cookie
 
 
-def test_only_patch_is_allowed_on_the_problem_route(admin_web):
+def test_only_patch_and_put_are_allowed_on_the_problem_route(admin_web):
+    """PATCH ẩn/hiện; PUT sửa đề (D35, test_rest_admin_problems.py). Mọi phương thức khác vẫn 405."""
     cookie = admin_web.login("root")
-    for method in ("GET", "POST", "PUT", "DELETE"):
+    for method in ("GET", "POST", "DELETE"):
         r = admin_web.request(method, PATH.format("sum"), obj={"hidden": True} if method != "GET" else None, cookie=cookie)
         assert r.status == 405, method
+        assert {"PATCH", "PUT"} <= set(x.strip() for x in r.headers["allow"].split(",")), method
+    # PUT là route sửa đề: body chỉ có `hidden` thiếu trường bắt buộc nên bị từ chối và không đổi gì.
+    assert admin_web.request("PUT", PATH.format("sum"), obj={"hidden": True}, cookie=cookie).status == 400
     assert hidden_in_db(admin_web, "sum") == 0
 
 
