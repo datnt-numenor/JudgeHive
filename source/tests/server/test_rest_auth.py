@@ -260,6 +260,20 @@ def test_other_usernames_are_not_affected(limited):
     assert limited.post("/api/login", {"username": "bob", "password": PASSWORD}).status == 200
 
 
+def test_two_usernames_from_the_same_address_have_separate_budgets(limited):
+    """Giới hạn đăng nhập tính theo `username`, không theo IP (D26 nhánh 2: mọi client có thể cùng một địa chỉ nguồn).
+    Mọi request của test đến từ cùng một địa chỉ (127.0.0.1). Alice dùng hết hạn mức (3), bob dùng 2: tổng 5 > 3 mà không
+    ai bị 429; khi alice vượt hạn mức thì chỉ alice bị chặn, bob vẫn đăng nhập được."""
+    for _ in range(2):
+        assert limited.post("/api/login", {"username": "alice", "password": "bad"}).status == 401
+        assert limited.post("/api/login", {"username": "bob", "password": "bad"}).status == 401
+    assert limited.post("/api/login", {"username": "alice", "password": "bad"}).status == 401  # lần thứ 3 của alice
+    r = limited.post("/api/login", {"username": "alice", "password": PASSWORD})  # lần thứ 4: vượt
+    assert r.status == 429 and r.error_code == "RATE_LIMITED"
+    r = limited.post("/api/login", {"username": "bob", "password": PASSWORD})  # lần thứ 3 của bob: còn trong hạn mức
+    assert r.status == 200 and "set-cookie" in r.headers
+
+
 def test_unknown_usernames_are_limited_too(limited):
     for _ in range(3):
         assert limited.post("/api/login", {"username": "ghost", "password": "x"}).status == 401
