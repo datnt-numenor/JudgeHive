@@ -6,6 +6,8 @@ TRƯỚC khi đọc body, để server 512 MB không phải giữ hai body 17 Mi
 
 D11: không endpoint nào ở đây trả `input`/`output` của test ẩn; log chỉ ghi admin, hành động, mã đề và số test."""
 
+import threading
+
 from fastapi import APIRouter, Depends, Request
 
 from server import problems
@@ -22,15 +24,35 @@ CONTENT_FIELDS = ("title", "statement", "time_limit_ms", "memory_limit_kib")
 TEST_KEYS = {"input", "output", "is_sample"}
 
 
+class UploadSlot:
+    """Một lượt giữ cổng upload; `release` idempotent."""
+
+    def __init__(self, gate):
+        self._gate = gate
+        self._held = True
+        self._lock = threading.Lock()
+
+    def release(self):
+        with self._lock:
+            held, self._held = self._held, False
+        if held:
+            self._gate.leave()
+
+
 async def upload_slot(request: Request):
-    """Cổng đồng thời của hai endpoint upload: giữ từ trước khi đọc body tới khi handler xong (kể cả khi lỗi)."""
+    """Cổng đồng thời của hai endpoint upload: giữ từ trước khi đọc body tới khi handler xong (kể cả khi lỗi).
+
+    Handler tự `release` trong `finally` của nó, TRƯỚC khi response được gửi: phần thoát của dependency chạy sau khi
+    response đã rời server, nên chỉ dựa vào nó thì client gửi lượt kế tiếp ngay sẽ nhận 429 oan. Phần `finally` ở đây là
+    lưới an toàn cho các đường lỗi trước khi handler chạy (body hỏng, quá hạn đọc, 413)."""
     gate = request.app.state.rest.upload_gate
     if not gate.try_enter():
         raise rate_limited(1)
+    slot = UploadSlot(gate)
     try:
-        yield
+        yield slot
     finally:
-        gate.leave()
+        slot.release()
 
 
 def _int_in(body, field, bounds):
@@ -82,7 +104,14 @@ def _detail(conn, problem_id):
 
 @router.post("/api/admin/problems")
 def create_problem(request: Request, admin: sessions.SessionUser = Depends(sessions.require_admin),
-                   _slot: None = Depends(upload_slot), body: dict = Depends(body_problem)):
+                   slot: UploadSlot = Depends(upload_slot), body: dict = Depends(body_problem)):
+    try:
+        return _create(request, admin, body)
+    finally:
+        slot.release()
+
+
+def _create(request, admin, body):
     state = request.app.state.rest
     if set(body) != {"id", *CONTENT_FIELDS, "tests"}:
         raise invalid()
@@ -104,7 +133,14 @@ def create_problem(request: Request, admin: sessions.SessionUser = Depends(sessi
 
 @router.put("/api/admin/problems/{problem_id}")
 def replace_problem(problem_id: str, request: Request, admin: sessions.SessionUser = Depends(sessions.require_admin),
-                    _slot: None = Depends(upload_slot), body: dict = Depends(body_problem)):
+                    slot: UploadSlot = Depends(upload_slot), body: dict = Depends(body_problem)):
+    try:
+        return _replace(problem_id, request, admin, body)
+    finally:
+        slot.release()
+
+
+def _replace(problem_id, request, admin, body):
     state = request.app.state.rest
     if not {*CONTENT_FIELDS} <= set(body) <= {*CONTENT_FIELDS, "tests"}:
         raise invalid()

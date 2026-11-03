@@ -356,6 +356,14 @@ def test_the_gate_is_released_after_every_outcome(web):
     web.app.state.rest.upload_gate.leave()
 
 
+def test_back_to_back_uploads_never_get_a_spurious_429(web):
+    """Cổng nhả TRƯỚC khi response rời server: client gửi lượt kế tiếp ngay sau khi nhận response không bị 429 oan."""
+    cookie = root_cookie(web)
+    for i in range(60):
+        r = put(web, "sum", cookie=cookie)
+        assert r.status == 200, (i, r.status, r.error_code)
+
+
 # ---- sửa đề -------------------------------------------------------------------------------------------------------
 
 def test_put_without_tests_keeps_the_test_set_and_its_hash_and_marks_the_problem_as_web(web):
