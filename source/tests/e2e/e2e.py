@@ -508,6 +508,24 @@ def main():
             check(f"{name}: MLE chỉ ra test sai đầu tiên, không có thông báo biên dịch",
                   mle["failed_test"] == 1 and mle["ce_message"] is None)
 
+        # Rejudge (D6, D36): bài AC của alice được chấm lại qua stack thật mà không restart server; người thường bị 403.
+        check("rejudge: người thường nhận 403",
+              http_call("POST", f"/api/admin/submissions/{ids['py-ac']}/rejudge", {}, cookie=cookie)[0] == 403)
+        status, _, body = http_call("POST", f"/api/admin/submissions/{ids['py-ac']}/rejudge", {}, cookie=root_cookie)
+        check("rejudge: admin nhận outcome queued", status == 200 and body == {"submission_id": ids["py-ac"], "outcome": "queued"},
+              f"{status} {body}")
+        again = http_call("POST", f"/api/admin/submissions/{ids['py-ac']}/rejudge", {}, cookie=root_cookie)
+        check("rejudge: bấm lại khi đang chờ hoặc đang chấm vô hại (already_queued hoặc after_current)",
+              again[0] == 200 and again[2]["outcome"] in ("already_queued", "after_current"), f"{again[0]} {again[2]}")
+        redone = wait_for(lambda: (d := detail(cookie, ids["py-ac"]))["state"] == "judged" and d["rejudged_at"] and d, 180,
+                          "bài rejudge chấm xong")
+        check("rejudge: chấm xong không cần restart, vẫn AC, có rejudged_at", redone["verdict"] == "AC", str(redone))
+        admin_view = http_call("GET", f"/api/admin/submissions/{ids['py-ac']}", cookie=root_cookie)[2]
+        check("rejudge: bài không còn cờ chấm lại và không lỗi", admin_view["is_rejudge"] is False
+              and admin_view["rejudge_failed"] is False, str(admin_view))
+        check("rejudge: đề không tồn tại là 404",
+              http_call("POST", "/api/admin/problems/khong-co/rejudge", {}, cookie=root_cookie)[0] == 404)
+
         # không endpoint nào của REST trả test ẩn hay secret
         blob = b"".join(rest_output)
         leaked = [t for t in hidden_test_files() if t in blob]

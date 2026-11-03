@@ -467,7 +467,7 @@ Khi đó:
 
 ### 3. Cổng web: REST (JSON), tập tối thiểu cho M2
 
-Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có tám endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
+Phần này mô tả mười endpoint đủ để đăng nhập, xem đề, nộp bài, xem kết quả và xem bảng xếp hạng (mục 3.1 đến 3.5), và nhóm endpoint của admin dưới `/api/admin/` (mục 3.6; hiện có mười endpoint, các endpoint admin còn lại sẽ thêm ở các PR sau). WebSocket `/ws` ở mục 4. Message `WORKERS` của admin chưa có.
 
 #### 3.1. Bảng tóm tắt
 
@@ -935,7 +935,7 @@ Cho một bài nộp được chấm lại bằng bộ test và giới hạn hi�
 
 Cho mọi bài nộp của một đề (của mọi người, kể cả admin, mọi verdict kể cả `SE`) được chấm lại; đề ẩn cũng được. Body là `{}`; field nào khác thì 400. Mỗi bài xử lý như `POST /api/admin/submissions/{id}/rejudge`.
 
-- Mỗi request xử lý tối đa **1000** bài, theo thứ tự `id` tăng dần, chia lô 100 bài. Thành công: 200 `{"problem_id": …, "queued": n, "after_current": n, "already_queued": n, "remaining": n}`: `queued` là số bài vừa vào hàng đợi, `after_current` là số bài đang chấm được đánh dấu chấm lại, `already_queued` là số bài đang chờ (bỏ qua), `remaining` là số bài chưa được xử lý vì vượt 1000. `remaining` lớn hơn 0 thì gọi lại để tiếp tục; các bài đã xếp hàng được bỏ qua nên mỗi lần gọi tiến thêm.
+- Mỗi request xử lý tối đa **1000** bài, theo thứ tự `id` tăng dần, chia lô 100 bài. Thành công: 200 `{"problem_id": …, "queued": n, "after_current": n, "already_queued": n, "remaining": n}`: `queued` là số bài vừa vào hàng đợi, `after_current` là số bài đang chấm được đánh dấu chấm lại, `already_queued` là số bài đang chờ (bỏ qua), `remaining` là số bài chưa được xử lý vì vượt 1000. Các số đếm đọc lúc bắt đầu request nên chỉ gần đúng nếu worker đang giao hoặc chấm xong bài cùng lúc. `remaining` lớn hơn 0 thì gọi lại để tiếp tục; các bài đã xếp hàng được bỏ qua nên mỗi lần gọi tiến thêm.
 - Request có thể dừng giữa chừng (server khởi động lại): bài đã vào hàng đợi vẫn được chấm (chúng được nạp lại khi khởi động), bài chưa xử lý vẫn giữ kết quả cũ; gọi lại để tiếp tục.
 - Rejudge một đề không đổi bộ test hay giới hạn của đề; đổi chúng không tự chấm lại bài nào. Số bài còn chờ chấm lại xem ở `queue.rejudge_queued` của `GET /api/admin/workers`.
 - Rủi ro quan sát được: trong lúc chấm lại một đề dài, bảng xếp hạng mang verdict cũ của các bài chưa chấm xong, rồi đổi dần khi kết quả đến.
