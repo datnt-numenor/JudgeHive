@@ -1113,12 +1113,12 @@ Hai điều cần đọc cùng bảng này:
 
 ### 4. Chặn tài nguyên của thí sinh: trước và sau khi sửa
 
-Mỗi dòng là một rủi ro được đo trên cấu hình compose thật (hoặc image test với cờ tương đương) rồi sửa; "trước" và "sau" do cùng người đo trên cùng máy, mỗi trường hợp ít nhất một lần chạy.
+Mỗi dòng là một rủi ro được đo trên cấu hình compose thật (hoặc image test với cờ tương đương) rồi sửa; "trước" và "sau" do cùng người đo trên cùng máy. Ngày đo: D27 trước sửa 30/10, sau sửa 1/11; D28 1 đến 2/11; D33 2/11. Biên bản đo không ghi số lần lặp, nên mỗi số coi là một lượt đo, chưa lặp lại.
 
 | Rủi ro | Trước | Sau |
 | --- | --- | --- |
 | Ghi file liên tục vào `/tmp`, `/dev/shm`, `/work` (D27) | tmpfs không có trần: cgroup (`mem_limit` 1g) hết bộ nhớ, OOM killer giết **chính worker** (container thoát mã 137), bài mất kết nối rồi bị giao lại cho tới khi báo lỗi hệ thống | tmpfs `/tmp` 16m, `/dev/shm` 16m, `/work` 64m, mỗi cái `nr_inodes=2048`: ghi đầy ra `ENOSPC`, ngập inode dừng ở 2047 file, `oom_kill` = 0 ở mọi ca, worker sống |
-| Input test lớn làm đầy `/work` | input 2 MiB ra lỗi hệ thống `OSError 28` khi thí sinh làm đầy `/work` | input ghi vào `memfd` và truyền qua stdin, không còn phụ thuộc chỗ trống của `/work` |
+| Input test lớn làm đầy `/work` | input 2 MiB khi `/work` đầy: lỗi hệ thống `OSError 28` | input ghi vào `memfd` và truyền qua stdin, không còn phụ thuộc chỗ trống của `/work` |
 | `memfd_create` hàng loạt, `shmget`, socket pair nhiều tiến trình (D28) | OOM killer giết worker (container thoát 137, `OOMKilled=true`); đã đo thêm: gọi `int 0x80` (i386) và syscall x32 tới được kernel, x32 gọi `memfd_create` thành công | `memfd_create` và `shmget` trả `EPERM`; ABI lạ bị `SIGSYS`; OOM killer luôn chọn tiến trình thí sinh (`oom_score_adj` +1000 do worker đặt) nên worker sống; cấu hình `kernel.shmmax=0` và `shm_rmid_forced=1` cho SysV |
 | Mạng của thí sinh (D33) | trong container worker, thí sinh kết nối được `server:8000` và `server:9000`, ra Internet (TCP `1.1.1.1:53`, `8.8.8.8:443`, `example.com:80`) và phân giải DNS; hệ quả: có thể gửi input test ẩn ra ngoài | `socket()` chỉ cho `AF_UNIX`, `io_uring` bị chặn: mọi kết nối loopback, Internet và DNS của cả ba ngôn ngữ nhận `EPERM`; worker không khởi động nếu thí sinh vẫn mở được socket `AF_INET` |
 
