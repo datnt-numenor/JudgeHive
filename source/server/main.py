@@ -1,127 +1,272 @@
-"""FastAPI app. Mọi thứ khởi động trong lifespan (PLAN mục 2.1), không phải lúc import.
-
-Thứ tự: lưu event loop; migrate DB; nạp seed `problems/` (D5); nạp lại hàng đợi từ DB; tính bảng xếp hạng đầu tiên; rồi
-mới mở cổng worker và dispatcher. Teardown: dừng cổng worker (đóng listener và socket), dispatcher, rồi bảng xếp hạng;
-bảng xếp hạng luôn được dừng, kể cả khi khởi động lỗi sau bước tính bản đầu hoặc khi dừng cổng worker/dispatcher lỗi.
-Chạy đúng một process uvicorn (`--workers 1`): hàng đợi và danh sách worker nằm trong bộ nhớ."""
-
+"""App FastAPI: REST, WebSocket /ws, mở cổng TCP cho worker trong lifespan, phục vụ client đã build."""
 import asyncio
-import logging
 import os
+import re
+import secrets
+import sqlite3
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import Field
+from common.protocol import MAX_LINE_TO_SERVER
+from server.auth import hash_password, verify_password, token_hash
+from server.db import Database, now
+from server.dispatch import Engine
+from server.problems import Model
+from server.realtime import Hub
 
-from server import config as config_module
-from server import problems, rest, static
-from server.db import Database
-from server.dispatcher import Dispatcher
-from server.hooks import LoopHooks
-from server.rest.state import build_state, system_clock_ms
-from server import ws
-from server.scoreboard.service import ScoreboardService
-from server.ws import WsHub
-from server.worker_server import WorkerServer
-
-log = logging.getLogger("judgehive.main")
-
-
-def _setup_logging():
-    logging.basicConfig(level=os.environ.get("JH_LOG_LEVEL", "INFO"),
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+MAX_PENDING_PER_USER = 3
 
 
-def create_app(cfg=None, clock=None):
-    """`cfg`: ServerConfig có sẵn (test); None thì đọc từ biến môi trường lúc lifespan chạy. `clock`: hàm trả thời
-    gian hiện tại (ms) cho phiên và rate limit của REST; test truyền đồng hồ giả, mặc định là đồng hồ hệ thống."""
+class Login(Model):
+    username: str = Field(min_length=1, max_length=32)
+    password: str = Field(max_length=128)
 
+
+class NewUser(Login):
+    role: str = "user"
+
+
+class EditUser(Model):
+    disabled: bool | None = None
+    password: str | None = Field(default=None, max_length=128)
+
+
+class Visibility(Model):
+    hidden: bool
+
+
+class Submission(Model):
+    problem_id: int
+    language: str
+    code: str = Field(min_length=1, max_length=65536)
+
+
+async def current_user(request: Request):
+    # Quyền lấy từ DB theo token phiên, không tin role/user_id do client gửi.
+    hashed = token_hash(request.cookies.get("session", ""))
+    user = request.app.state.db.user_for_token(hashed)
+    if not user:
+        raise HTTPException(401, "Cần đăng nhập")
+    return user
+
+
+async def admin_user(user=Depends(current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Cần quyền admin")
+    return user
+
+
+def create_app(db_path=None, secret=None, worker_port=None):
     @asynccontextmanager
     async def lifespan(app):
-        _setup_logging()
-        config = cfg if cfg is not None else config_module.load_config()
-        steps = app.state.startup_steps = []  # thứ tự khởi động thật, để test kiểm chứng
-        app.state.cfg = config
-        loop = app.state.loop = asyncio.get_running_loop()
-        steps.append("loop")
-
-        db = Database(config.db_path)
-
-        async def in_thread(fn, *args):
-            def run():
-                try:
-                    return fn(*args)
-                finally:
-                    db.close_thread()  # thread của executor sống lâu hơn lời gọi, không giữ kết nối
-
-            return await asyncio.to_thread(run)
-
-        await in_thread(db.migrate)
-        steps.append("migrate")
-        await in_thread(problems.seed_problems, db, config.problems_dir)
-        steps.append("seed")
-        hooks = LoopHooks(loop)
-        server = WorkerServer(config, db, hooks)
-        dispatcher = Dispatcher(config, db, server, hooks)
-        server.set_handler(dispatcher)
-        await in_thread(dispatcher.load_pending)
-        steps.append("reload_queue")
-        # Bản bảng xếp hạng đầu tiên (phiên bản 1) tính xong trước khi mở cổng worker (PLAN 2.1, D12); lỗi thì server
-        # không khởi động. Truy vấn chạy trong thread riêng của dịch vụ, không trên event loop.
-        scoreboard = ScoreboardService(db, loop=loop, clock=clock or system_clock_ms,
-                                       min_interval_s=config.scoreboard_min_interval_s)
+        shared = secret if secret is not None else os.environ.get("JH_WORKER_SECRET", "")
+        if len(shared) < 16:
+            raise RuntimeError("JH_WORKER_SECRET cần ít nhất 16 ký tự")
+        db = Database(db_path or os.environ.get("JH_DB", "/data/judgehive.sqlite3"))
+        hub = Hub(db)
+        engine = Engine(db, hub, shared)
+        engine.recover()
+        app.state.db, app.state.hub, app.state.engine = db, hub, engine
+        # Cổng worker chạy chung event loop với web. limit = giới hạn dòng chiều vào server,
+        # nên buffer của mỗi kết nối không vượt 64 KiB kể cả trước khi worker xác thực.
+        listener = await asyncio.start_server(engine.handle, os.environ.get("JH_TCP_HOST", "0.0.0.0"),
+                                              worker_port if worker_port is not None else int(os.environ.get("JH_WORKER_PORT", "9000")),
+                                              limit=MAX_LINE_TO_SERVER)
+        app.state.worker_port = listener.sockets[0].getsockname()[1]
         try:
-            await scoreboard.start()
-        except BaseException:
-            await scoreboard.stop()
-            raise
-        hooks.bind_scoreboard(scoreboard)
-        app.state.scoreboard = scoreboard
-        steps.append("scoreboard")
-        hub = None
-        try:
-            server.start()
-            steps.append("worker_port")
-            dispatcher.start()
-            steps.append("dispatcher")
-            app.state.db, app.state.worker_server, app.state.dispatcher = db, server, dispatcher
-            app.state.hooks = hooks
-            # Băm mật khẩu giả (tốn khoảng chục mili giây) nên chạy trong thread, không chặn event loop.
-            app.state.rest = await asyncio.to_thread(build_state, config, db, dispatcher, hooks,
-                                                     clock or system_clock_ms)
-            steps.append("rest")
-            # WebSocket: sau khi REST và hooks sẵn sàng. Từ đây STATUS (hooks) và SCOREBOARD (subscriber) chảy xuống kết nối.
-            hub = WsHub(config, db, scoreboard, loop=loop, clock=clock or system_clock_ms)
-            await hub.start()
-            app.state.ws = hub
-            hooks.bind_status(hub.consumer)
-            steps.append("ws")
             yield
         finally:
-            def shutdown():
-                # Dừng một thành phần chưa khởi động (khởi động lỗi giữa chừng) là vô hại.
-                server.stop()  # trước: đánh thức dispatcher đang chờ worker rảnh
-                dispatcher.stop()
+            listener.close()
+            # Dừng các kết nối worker trước: từ Python 3.12.1 wait_closed chờ mọi kết nối đóng.
+            await engine.stop()
+            await listener.wait_closed()
+            for ws in list(hub.clients):
+                await ws.close(code=1001)
+            db.conn.close()
 
-            # Thứ tự tắt: WebSocket (đóng kết nối, hủy task) rồi cổng worker và dispatcher rồi bảng xếp hạng. Mỗi bước nằm trong
-            # try/finally riêng để một bước lỗi không làm bỏ qua các bước sau.
+    app = FastAPI(lifespan=lifespan)
+
+    @app.middleware("http")
+    async def same_origin_writes(request, call_next):
+        # Request ghi từ trang web khác (CSRF) bị chặn; cookie SameSite=strict là lớp thứ hai.
+        origin = request.headers.get("origin")
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and origin and origin != f"{request.url.scheme}://{request.url.netloc}":
+            return JSONResponse({"detail": "Origin không hợp lệ"}, status_code=403)
+        return await call_next(request)
+
+    @app.post("/api/auth/login")
+    async def login(body: Login, request: Request, response: Response):
+        db = app.state.db
+        user = db.one("SELECT * FROM users WHERE username=?", (body.username,))
+        # scrypt tốn vài chục ms CPU: chạy ở thread để không chặn event loop (và cổng worker).
+        if not user or user["disabled"] or not await asyncio.to_thread(verify_password, body.password, user["password_hash"]):
+            raise HTTPException(401, "Sai tên đăng nhập hoặc mật khẩu")
+        token = secrets.token_urlsafe(32)
+        db.execute("DELETE FROM sessions WHERE expires_at<=?", (now(),))
+        # DB chỉ lưu SHA-256 của token: lộ DB cũng không dùng được phiên.
+        db.execute("INSERT INTO sessions VALUES(?,?,?)", (token_hash(token), user["id"], now() + 86400000))
+        response.set_cookie("session", token, httponly=True, samesite="strict", max_age=86400,
+                            secure=request.url.scheme == "https")
+        return {k: user[k] for k in ("id", "username", "role")}
+
+    @app.post("/api/auth/logout")
+    async def logout(request: Request, response: Response):
+        hashed = token_hash(request.cookies.get("session", ""))
+        app.state.db.execute("DELETE FROM sessions WHERE token_hash=?", (hashed,))
+        response.delete_cookie("session")
+        return {"ok": True}
+
+    @app.get("/api/auth/me")
+    async def me(user=Depends(current_user)):
+        return user
+
+    def get_problem(pid, user):
+        row = app.state.db.one("SELECT * FROM problems WHERE id=?", (pid,))
+        if not row or (row["hidden"] and user["role"] != "admin"):
+            raise HTTPException(404, "Không tìm thấy đề")
+        return row
+
+    @app.get("/api/problems")
+    async def problems(user=Depends(current_user)):
+        return app.state.db.all("SELECT * FROM problems" + ("" if user["role"] == "admin" else " WHERE hidden=0") + " ORDER BY id")
+
+    @app.get("/api/problems/{pid}")
+    async def problem(pid: int, user=Depends(current_user)):
+        row = get_problem(pid, user)
+        # Chỉ test mẫu; test ẩn không bao giờ rời server ngoài JOB gửi worker.
+        row["samples"] = app.state.db.all("SELECT input,output FROM tests WHERE problem_id=? AND is_sample=1 ORDER BY position", (pid,))
+        return row
+
+    @app.post("/api/submissions", status_code=201)
+    async def submit(body: Submission, user=Depends(current_user)):
+        get_problem(body.problem_id, user)
+        if body.language not in {"python", "cpp", "java"} or len(body.code.encode()) > 65536:
+            raise HTTPException(400, "Ngôn ngữ không hợp lệ hoặc code quá 64 KiB")
+        pending = app.state.db.one("SELECT COUNT(*) AS n FROM submissions WHERE user_id=? AND state IN ('queued','judging')",
+                                   (user["id"],))["n"]
+        if pending >= MAX_PENDING_PER_USER:
+            raise HTTPException(429, f"Bạn đang có {pending} bài chờ chấm; hãy đợi có kết quả rồi nộp tiếp")
+        sid = app.state.db.execute("INSERT INTO submissions(user_id,problem_id,language,code,submitted_at) VALUES(?,?,?,?,?)",
+                                   (user["id"], body.problem_id, body.language, body.code, now()))
+        app.state.engine.queue.put_nowait(sid)
+        await app.state.hub.publish(sid)
+        return {"id": sid}
+
+    @app.get("/api/submissions")
+    async def submissions(user=Depends(current_user)):
+        return app.state.db.all("SELECT id,problem_id,language,state,verdict,submitted_at FROM submissions "
+                                "WHERE user_id=? ORDER BY id DESC LIMIT 100", (user["id"],))
+
+    @app.get("/api/submissions/{sid}")
+    async def submission(sid: int, user=Depends(current_user)):
+        row = app.state.db.one("SELECT * FROM submissions WHERE id=?", (sid,))
+        if not row or (row["user_id"] != user["id"] and user["role"] != "admin"):
+            raise HTTPException(404, "Không tìm thấy bài nộp")
+        return row
+
+    @app.get("/api/scoreboard")
+    async def scoreboard(user=Depends(current_user)):
+        return app.state.db.scoreboard()
+
+    @app.patch("/api/admin/problems/{pid}")
+    async def visibility(pid: int, body: Visibility, user=Depends(admin_user)):
+        get_problem(pid, user)
+        app.state.db.execute("UPDATE problems SET hidden=? WHERE id=?", (body.hidden, pid))
+        await app.state.hub.publish()
+        return {"ok": True}
+
+    @app.get("/api/admin/users")
+    async def users(user=Depends(admin_user)):
+        return app.state.db.all("SELECT id,username,role,disabled FROM users ORDER BY id")
+
+    @app.post("/api/admin/users", status_code=201)
+    async def add_user(body: NewUser, user=Depends(admin_user)):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", body.username) or body.role not in {"user", "admin"}:
+            raise HTTPException(400, "Tên tài khoản hoặc vai trò không hợp lệ")
+        try:
+            hashed = await asyncio.to_thread(hash_password, body.password)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        try:
+            # Cột username là UNIQUE: hai request cùng tên thì request sau nhận 409.
+            uid = app.state.db.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", (body.username, hashed, body.role))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "Tên tài khoản đã tồn tại")
+        return {"id": uid}
+
+    @app.patch("/api/admin/users/{uid}")
+    async def edit_user(uid: int, body: EditUser, user=Depends(admin_user)):
+        if not app.state.db.one("SELECT id FROM users WHERE id=?", (uid,)):
+            raise HTTPException(404, "Không tìm thấy tài khoản")
+        if body.disabled and uid == user["id"]:
+            raise HTTPException(400, "Không tự khóa tài khoản đang dùng")
+        hashed = None
+        if body.password is not None:
             try:
-                if hub is not None:
-                    await hub.stop()
-            finally:
-                try:
-                    await asyncio.to_thread(shutdown)
-                finally:
-                    await scoreboard.stop()  # sau cổng worker và dispatcher: hết nguồn gọi mark_dirty
-                    steps.append("stopped")
+                hashed = await asyncio.to_thread(hash_password, body.password)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+        with app.state.db.conn:
+            if hashed:
+                app.state.db.conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hashed, uid))
+            if body.disabled is not None:
+                app.state.db.conn.execute("UPDATE users SET disabled=? WHERE id=?", (body.disabled, uid))
+            if hashed or body.disabled:
+                app.state.db.conn.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+        # publish kiểm lại token của mọi WebSocket nên phiên vừa bị hủy cũng bị đóng tại đây.
+        await app.state.hub.publish()
+        return {"ok": True}
 
-    # Không có /docs, /redoc, /openapi.json (công khai, lộ danh sách route) và không tự chuyển hướng dấu "/" cuối
-    # (README 3.2: đường dẫn không tồn tại là 404 JSON).
-    app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False)
-    rest.install(app)
-    ws.install(app)  # route /ws; phải đứng trước static.install (fallback SPA không áp cho /ws)
-    # Giao diện web (nếu có thư mục build): `/assets` và fallback SPA trong bộ xử lý 404 của REST; không route nào khớp "/".
-    static.install(app, cfg.static_dir if cfg is not None else config_module.static_dir_from_env(os.environ))
+    @app.get("/api/admin/workers")
+    async def workers(user=Depends(admin_user)):
+        return {"workers": app.state.engine.view(), "queue": app.state.engine.queue.qsize()}
+
+    @app.get("/api/admin/submissions")
+    async def admin_submissions(user=Depends(admin_user)):
+        return app.state.db.all("SELECT s.id,s.user_id,u.username,s.problem_id,s.language,s.state,s.verdict,s.submitted_at "
+                                "FROM submissions s JOIN users u ON u.id=s.user_id ORDER BY s.id DESC LIMIT 100")
+
+    @app.websocket("/ws")
+    async def websocket(ws: WebSocket):
+        # Trình duyệt luôn gửi Origin khi mở WebSocket; trang web khác không được mở bằng cookie của người dùng.
+        origin = ws.headers.get("origin")
+        expected = ("https" if ws.url.scheme == "wss" else "http") + "://" + ws.url.netloc
+        hashed = token_hash(ws.cookies.get("session", ""))
+        if (origin and origin != expected) or not app.state.db.user_for_token(hashed):
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        app.state.hub.clients[ws] = hashed
+        try:
+            # Chỉ chờ EOF. Client không cần gửi bất kỳ message định kỳ nào.
+            while True:
+                await ws.receive_text()
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            app.state.hub.clients.pop(ws, None)
+
+    static = Path(os.environ.get("JH_STATIC", str(Path(__file__).parents[1] / "client" / "dist")))
+    if (static / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=static / "assets"), name="assets")
+
+    @app.get("/{path:path}")
+    async def frontend(path: str):
+        # React Router xử lý đường dẫn ở trình duyệt: F5 ở /submissions/3 vẫn phải trả index.html.
+        if path.startswith(("api/", "ws", "assets/")) or not (static / "index.html").is_file():
+            raise HTTPException(404, "Không tìm thấy")
+        return FileResponse(static / "index.html")
+
     return app
 
 
-app = create_app()
+if __name__ == "__main__":
+    import uvicorn
+    # Một process uvicorn (hàng đợi và kết nối worker nằm trong bộ nhớ). websockets backend;
+    # None tắt ping tự động của thư viện: hệ thống không có heartbeat.
+    uvicorn.run(create_app(), host="0.0.0.0", port=8000, workers=1,
+                ws="websockets", ws_ping_interval=None, ws_ping_timeout=None)

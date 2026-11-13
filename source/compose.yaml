@@ -1,0 +1,37 @@
+name: judgehive-v2  # khác project "judgehive" của bản cũ để không dùng chung volume db
+services:
+  # Service này chỉ để build image runner rồi thoát. Worker gọi `docker create` với tên image này;
+  # Compose không tự build image không thuộc service nào.
+  runner-image:
+    image: judgehive-runner:local
+    build:
+      context: .
+      dockerfile: runner.Dockerfile
+    command: ["true"]
+    network_mode: none
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    environment:
+      JH_WORKER_SECRET: ${JH_WORKER_SECRET:?Hãy tạo .env theo README}
+    ports: ["8000:8000", "9000:9000"]
+    volumes: ["db:/data"]
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      JH_WORKER_SECRET: ${JH_WORKER_SECRET:?Hãy tạo .env theo README}
+      JH_SERVER_HOST: server
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    depends_on:
+      server:
+        condition: service_started
+      runner-image:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 2
+    stop_grace_period: 60s  # đủ để worker kill container chấm bài và xóa volume khi dừng
+volumes:
+  db:

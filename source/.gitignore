@@ -1,9 +1,9 @@
-__pycache__/
-.venv/
-*.db
 .env
-tmp_judge/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
 node_modules/
-dist/
-secrets/*
-!secrets/worker.env.example
+client/dist/
+*.sqlite3*
+evidence/
