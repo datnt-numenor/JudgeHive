@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 VERDICTS = {"AC", "WA", "TLE", "MLE", "RE", "CE", "SE"}
 # Số kết nối TCP đang chờ REGISTER; vượt trần thì đóng ngay, không đọc byte nào.
 MAX_UNREGISTERED = 16
+REGISTER_TIMEOUT = 10  # giây chờ REGISTER sau khi mở TCP
 MAX_TIME_MS = 10**9  # time_ms lớn hơn là sai; tránh tràn INTEGER của SQLite
 
 
@@ -49,7 +50,7 @@ class Engine:
         try:
             self.unregistered += 1
             try:
-                registration = await asyncio.wait_for(receive(reader, MAX_LINE_TO_SERVER), 10)
+                registration = await asyncio.wait_for(receive(reader, MAX_LINE_TO_SERVER), REGISTER_TIMEOUT)
             finally:
                 self.unregistered -= 1
             secret = registration.get("secret")
