@@ -3,10 +3,12 @@
 Runner chạy ở một thread. Event cancel được vòng đọc TCP đặt khi mất server.
 Mỗi test một container: Docker cung cấp giới hạn bộ nhớ và bằng chứng OOM.
 """
+from datetime import datetime, timedelta
 import json
 import logging
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import threading
@@ -18,6 +20,10 @@ OUTPUT_CAP = 1024 * 1024
 SOURCES = {"python": "main.py", "cpp": "main.cpp", "java": "Main.java"}
 # JVM in chữ ký này ở cuối stderr khi OutOfMemoryError không được bắt.
 JAVA_OOM = "java.lang.OutOfMemoryError"
+# Thời gian chương trình lấy theo mốc StartedAt/FinishedAt của Docker, không theo wall của
+# `docker start --attach`. Watchdog cho thêm khoảng này để bù CLI attach và khởi động container.
+START_SLACK = 1.0
+DOCKER_TIME = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)")
 
 
 class Cancelled(Exception):
@@ -26,6 +32,24 @@ class Cancelled(Exception):
 
 class DockerError(Exception):
     pass
+
+
+def docker_time(text):
+    """RFC 3339 của Docker có tới 9 chữ số thập phân; datetime chỉ giữ micro giây."""
+    match = DOCKER_TIME.fullmatch(text) if isinstance(text, str) else None
+    if not match:
+        raise DockerError(f"Mốc thời gian Docker không hợp lệ: {text!r}")
+    fraction = (match.group(2) or "").ljust(6, "0")[:6]
+    zone = "+00:00" if match.group(3) == "Z" else match.group(3)
+    return datetime.fromisoformat(f"{match.group(1)}.{fraction}{zone}")
+
+
+def container_ms(state):
+    """Thời gian chạy của tiến trình trong container, do daemon Docker ghi."""
+    started, finished = docker_time(state.get("StartedAt")), docker_time(state.get("FinishedAt"))
+    if started.year < 2000 or finished < started:
+        raise DockerError("Container chưa chạy xong hoặc mốc thời gian sai")
+    return (finished - started) // timedelta(milliseconds=1)
 
 
 class Runner:
@@ -78,7 +102,7 @@ class Runner:
                         if output_path.stat().st_size + error_path.stat().st_size > OUTPUT_CAP:
                             reason = "output"
                             break
-                        if elapsed >= timeout:
+                        if elapsed >= timeout + START_SLACK:
                             reason = "timeout"
                             break
                         # Đây là giám sát tiến trình cục bộ, không phát gói mạng cho server.
@@ -88,18 +112,23 @@ class Runner:
                         # Đóng cả container và CLI attach, tránh để chương trình mồ côi.
                         try:
                             self.command("kill", name, check=False)
+                            # Chờ container dừng hẳn để FinishedAt có giá trị.
+                            self.command("wait", name, check=False)
                         finally:
                             proc.kill()
                             proc.wait()
-                elapsed_ms = int((time.monotonic() - started) * 1000)
             state = json.loads(self.command("inspect", "--format", "{{json .State}}", name))
+            if state.get("Running"):
+                self.command("wait", name, check=False)
+                state = json.loads(self.command("inspect", "--format", "{{json .State}}", name))
             if not state.get("StartedAt") or state["StartedAt"].startswith("0001-") or state.get("Error"):
                 raise DockerError("Docker không khởi động được container: " + str(state.get("Error")))
             if self.cancel.is_set():
                 raise Cancelled()
+            time_ms = container_ms(state)
             if output_path.stat().st_size + error_path.stat().st_size > OUTPUT_CAP:
                 reason = "output"
-            if reason is None and elapsed_ms > timeout * 1000:
+            if reason is None and time_ms > timeout * 1000:
                 reason = "timeout"
             with output_path.open("rb") as stream:
                 stdout = stream.read(OUTPUT_CAP).decode("utf-8", errors="replace")
@@ -109,7 +138,7 @@ class Runner:
                 stream.seek(max(0, error_path.stat().st_size - 4096))
                 stderr_tail = stream.read(4096).decode("utf-8", errors="replace")
             return {"reason": reason, "oom": state.get("OOMKilled", False), "exit": state["ExitCode"],
-                    "stdout": stdout, "stderr": stderr, "stderr_tail": stderr_tail, "time_ms": elapsed_ms}
+                    "stdout": stdout, "stderr": stderr, "stderr_tail": stderr_tail, "time_ms": time_ms}
 
     def remove(self, name):
         self.command("rm", "--force", name)

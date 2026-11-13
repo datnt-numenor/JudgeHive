@@ -1,10 +1,11 @@
 import asyncio
+import json
 import threading
 
 import pytest
 from common.protocol import MAX_LINE, receive, send
 from worker.main import connection
-from worker.runner import Runner, grade
+from worker.runner import DockerError, Runner, container_ms, grade
 
 
 def test_worker_cancels_running_work_before_reconnect(monkeypatch):
@@ -82,3 +83,46 @@ def test_java_nonzero_without_signature_is_re(monkeypatch):
 def test_java_signature_with_zero_exit_is_not_mle(monkeypatch):
     # Chương trình tự bắt OutOfMemoryError, in ra stderr rồi thoát 0: chấm theo output.
     assert grade_with(monkeypatch, "java", outcome(exit=0, stderr_tail=JAVA_HEAP))["verdict"] == "AC"
+
+
+def docker_state(started, finished, **changes):
+    return {"Running": False, "OOMKilled": False, "ExitCode": 0, "Error": "",
+            "StartedAt": started, "FinishedAt": finished, **changes}
+
+
+def test_container_ms_from_docker_timestamps():
+    assert container_ms(docker_state("2026-11-13T01:02:03.123456789Z", "2026-11-13T01:02:03.373456789Z")) == 250
+    assert container_ms(docker_state("2026-11-13T23:59:59.9Z", "2026-11-14T00:00:01.1Z")) == 1200
+    assert container_ms(docker_state("2026-11-13T08:00:00+07:00", "2026-11-13T01:00:00.5Z")) == 500
+    for bad in (docker_state("2026-11-13T01:02:03Z", "0001-01-01T00:00:00Z"),
+                docker_state("2026-11-13T01:02:03Z", None), docker_state("hôm qua", "2026-11-13T01:02:03Z")):
+        with pytest.raises(DockerError):
+            container_ms(bad)
+
+
+class FinishedProcess:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def poll(self):
+        return 0
+
+
+def run_with_state(monkeypatch, state, timeout=2):
+    """Runner.run thật; Docker CLI giả trả `state`, còn wall time phía CLI bị đẩy lên rất lớn."""
+    clock = iter(range(0, 10**6, 100))
+    monkeypatch.setattr("worker.runner.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("worker.runner.subprocess.Popen", FinishedProcess)
+    monkeypatch.setattr(Runner, "command", lambda self, *args, check=True:
+                        json.dumps(state).encode() if args[0] == "inspect" else b"")
+    return Runner(threading.Event()).run("container", "", timeout)
+
+
+def test_time_uses_container_timestamps_not_cli_wall(monkeypatch):
+    result = run_with_state(monkeypatch, docker_state("2026-11-13T01:00:00Z", "2026-11-13T01:00:01.9Z"))
+    assert result["reason"] is None and result["time_ms"] == 1900
+
+
+def test_tle_decided_by_container_time(monkeypatch):
+    result = run_with_state(monkeypatch, docker_state("2026-11-13T01:00:00Z", "2026-11-13T01:00:02.1Z"))
+    assert result["reason"] == "timeout" and result["time_ms"] == 2100
