@@ -1,5 +1,5 @@
 {
-  "name": "judgehive-simple-client",
+  "name": "judgehive-client",
   "private": true,
   "version": "1.0.0",
   "type": "module",

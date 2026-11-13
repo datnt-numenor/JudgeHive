@@ -1,7 +1,7 @@
-name: judgehive-simple
+name: judgehive-v2  # khác project "judgehive" của bản cũ để không dùng chung volume db
 services:
   runner-image:
-    image: judgehive-simple-runner:local
+    image: judgehive-runner:local
     build:
       context: .
       dockerfile: runner.Dockerfile

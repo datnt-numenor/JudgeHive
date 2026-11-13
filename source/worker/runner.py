@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 
-IMAGE = os.environ.get("JH_RUNNER_IMAGE", "judgehive-simple-runner:local")
+IMAGE = os.environ.get("JH_RUNNER_IMAGE", "judgehive-runner:local")
 OUTPUT_CAP = 1024 * 1024
 SOURCES = {"python": "main.py", "cpp": "main.cpp", "java": "Main.java"}
 # JVM in chữ ký này ở cuối stderr khi OutOfMemoryError không được bắt.
@@ -55,7 +55,7 @@ def container_ms(state):
 class Runner:
     def __init__(self, cancel):
         self.cancel = cancel
-        self.prefix = "jhs-" + uuid.uuid4().hex
+        self.prefix = "judgehive-run-" + uuid.uuid4().hex
         self.volume = self.prefix + "-files"
         self.containers = set()
 
@@ -85,7 +85,7 @@ class Runner:
         return name
 
     def run(self, name, stdin, timeout):
-        with tempfile.TemporaryDirectory(prefix="jhs-io-") as directory:
+        with tempfile.TemporaryDirectory(prefix="judgehive-io-") as directory:
             root = Path(directory)
             input_path, output_path, error_path = root / "in", root / "out", root / "err"
             input_path.write_bytes(stdin.encode())
@@ -170,7 +170,7 @@ class Runner:
         # Docker copy-up từ /work của image tạo volume với owner 1000.
         self.command("volume", "create", self.volume)
         compiler = self.create("compile", 524288, compile_command)
-        with tempfile.TemporaryDirectory(prefix="jhs-source-") as directory:
+        with tempfile.TemporaryDirectory(prefix="judgehive-source-") as directory:
             path = Path(directory) / source
             path.write_text(job["code"], encoding="utf-8")
             self.command("cp", str(path), f"{compiler}:/work/{source}")
