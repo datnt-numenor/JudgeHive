@@ -126,6 +126,10 @@ class Runner:
             if self.cancel.is_set():
                 raise Cancelled()
             time_ms = container_ms(state)
+            if reason == "timeout" and time_ms <= timeout * 1000:
+                # Watchdog phải kill theo đồng hồ CLI trước khi chương trình hết giờ thật:
+                # Docker khởi động quá chậm, không đủ căn cứ để xếp TLE.
+                raise DockerError("Docker khởi động container quá chậm so với START_SLACK")
             if output_path.stat().st_size + error_path.stat().st_size > OUTPUT_CAP:
                 reason = "output"
             if reason is None and time_ms > timeout * 1000:
@@ -199,7 +203,8 @@ class Runner:
                 return result("MLE", f"Test {index}: Java hết bộ nhớ heap")
             if outcome["exit"] != 0:
                 # Không gửi stderr của test ẩn: chương trình có thể echo input vào stderr.
-                return result("RE", f"Test {index}: chương trình thoát mã {outcome['exit']}")
+                # Không gửi giá trị mã thoát: exit(byte của input) sẽ rò dữ liệu test ẩn.
+                return result("RE", f"Test {index}: chương trình thoát bất thường")
             if outcome["stdout"].split() != case["output"].split():
                 return result("WA", f"Test {index}: sai kết quả")
             progress(index)

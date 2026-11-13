@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 VERDICTS = {"AC", "WA", "TLE", "MLE", "RE", "CE", "SE"}
 # Số kết nối TCP đang chờ REGISTER; vượt trần thì đóng ngay, không đọc byte nào.
 MAX_UNREGISTERED = 16
+MAX_TIME_MS = 10**9  # time_ms lớn hơn là sai; tránh tràn INTEGER của SQLite
 
 
 class Engine:
@@ -89,8 +90,9 @@ class Engine:
                        "language": row["language"], "code": row["code"], "tests": tests,
                        "time_limit_ms": row["time_limit_ms"], "memory_limit_kib": row["memory_limit_kib"]}
                 worker.update(state="judging", submission_id=sid)
-                deadline = asyncio.get_running_loop().time() + job_timeout(job)
                 await send(writer, job)
+                # Hạn công việc tính từ lúc gửi JOB xong.
+                deadline = asyncio.get_running_loop().time() + job_timeout(job)
                 await self.hub.publish(sid)
                 while True:
                     # PROGRESS không thay đổi deadline. Đây là timeout công việc, không heartbeat.
@@ -111,7 +113,7 @@ class Engine:
                     verdict, elapsed = message.get("verdict"), message.get("time_ms")
                     detail = message.get("message", "")
                     if (message["type"] != "RESULT" or verdict not in VERDICTS
-                            or type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed < 0
+                            or type(elapsed) not in (int, float) or not math.isfinite(elapsed) or not 0 <= elapsed <= MAX_TIME_MS
                             or not isinstance(detail, str) or len(detail.encode()) > 8192):
                         raise ValueError("Kết quả không hợp lệ")
                     # Chỉ kết nối giữ job này mới được ghi kết quả của attempt hiện tại.

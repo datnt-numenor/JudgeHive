@@ -97,13 +97,20 @@ def docker_state(started, finished, **changes):
             "StartedAt": started, "FinishedAt": finished, **changes}
 
 
-def fake_run(monkeypatch, state, timeout=2):
-    """Runner.run thật với Docker CLI giả trả `state`; đồng hồ phía CLI bị đẩy lên rất lớn."""
+def fake_run(monkeypatch, state, timeout=2, still_running=False):
+    """Runner.run thật với Docker CLI giả trả `state`; đồng hồ phía CLI bị đẩy lên rất lớn.
+    still_running=True: tiến trình `docker start` chưa xong, watchdog phải kill."""
     class Finished:
         def __init__(self, *args, **kwargs):
-            pass
+            self.killed = False
 
         def poll(self):
+            return 0 if self.killed or not still_running else None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self):
             return 0
 
     clock = iter(range(0, 10**6, 100))

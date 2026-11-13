@@ -169,3 +169,33 @@ def test_pending_submissions_capped_at_three_per_user(tmp_path):
         assert client.post("/api/submissions", json={"problem_id": 1, "language": "python", "code": "pass"}).status_code == 429
         login(client, "bob")
         submit(client)
+
+
+@pytest.mark.parametrize("tests_done", [0, 1, 99, True, "1"])
+def test_invalid_progress_closes_and_requeues(tmp_path, tests_done):
+    with system(tmp_path) as (client, app):
+        login(client)
+        sid = submit(client)
+
+        async def scenario():
+            reader, writer, _ = await register(app)
+            job = await asyncio.wait_for(receive(reader), 3)
+            ids = {"submission_id": sid, "attempt_id": job["attempt_id"]}
+            if tests_done == 1:
+                # Lần đầu 1 là hợp lệ; gửi lại 1 (không tăng) phải bị từ chối.
+                await send(writer, {"type": "PROGRESS", **ids, "tests_done": 1})
+            await send(writer, {"type": "PROGRESS", **ids, "tests_done": tests_done})
+            assert await closed_by_server(reader)
+            await eventually(lambda: db_row(app, sid)["state"] == "queued")
+        client.portal.call(scenario)
+
+
+@pytest.mark.parametrize("message_type", ["RESULT", "PROGRESS"])
+def test_idle_worker_sending_result_or_progress_is_closed(tmp_path, message_type):
+    with system(tmp_path) as (client, app):
+        async def scenario():
+            reader, writer, _ = await register(app)
+            await send(writer, {"type": message_type, "submission_id": 1, "attempt_id": 1,
+                                "verdict": "AC", "time_ms": 1, "message": "", "tests_done": 1})
+            assert await closed_by_server(reader)
+        client.portal.call(scenario)

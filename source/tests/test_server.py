@@ -349,3 +349,20 @@ def test_pending_submissions_capped_per_user(tmp_path):
         assert client.portal.call(lambda: app.state.db.one("SELECT COUNT(*) AS n FROM submissions"))["n"] == 3
         login(client, "bob")
         submit(client)
+
+
+def test_result_with_absurd_time_is_rejected_without_crash(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    with system(tmp_path) as (client, app):
+        login(client)
+        sid = submit(client)
+
+        async def scenario():
+            r, w, _ = await worker(app)
+            job = await receive(r)
+            await send(w, {"type": "RESULT", "submission_id": sid, "attempt_id": job["attempt_id"],
+                           "verdict": "AC", "time_ms": 1e300, "message": ""})
+            assert await closed_by_server(r)
+            await until(lambda: app.state.db.one("SELECT state FROM submissions WHERE id=?", (sid,))["state"] == "queued")
+        client.portal.call(scenario)
+    assert not [rec for rec in caplog.records if rec.levelno >= logging.ERROR]

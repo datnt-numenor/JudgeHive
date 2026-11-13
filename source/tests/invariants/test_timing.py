@@ -29,3 +29,14 @@ def test_tle_is_container_time_over_limit(monkeypatch):
 
 def test_start_slack_is_bounded():
     assert 0 < START_SLACK <= 2
+
+
+def test_watchdog_kill_after_slack_is_tle_when_container_time_over_limit(monkeypatch):
+    result = fake_run(monkeypatch, docker_state("2026-11-13T01:00:00Z", "2026-11-13T01:00:02.900Z"), still_running=True)
+    assert result["reason"] == "timeout"
+
+
+def test_watchdog_kill_before_program_used_its_limit_is_not_tle(monkeypatch):
+    # Docker khởi động chậm hơn START_SLACK: chương trình mới chạy 1,5 giây khi bị kill.
+    with pytest.raises(DockerError):
+        fake_run(monkeypatch, docker_state("2026-11-13T01:00:00Z", "2026-11-13T01:00:01.500Z"), still_running=True)

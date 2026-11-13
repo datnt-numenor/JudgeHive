@@ -138,3 +138,37 @@ def test_time_ms_is_slowest_test(monkeypatch):
            "tests": [{"input": "", "output": "5\n"}] * 3}
     result = grade(job, threading.Event(), lambda count: None)
     assert result == {"verdict": "AC", "message": "", "time_ms": 70}
+
+
+@pytest.mark.parametrize("payload", ["too_long", "bad_job"])
+def test_worker_closes_on_oversized_line_or_invalid_job(monkeypatch, payload):
+    graded = []
+    monkeypatch.setattr("worker.main.grade", lambda *args: graded.append(args))
+
+    async def scenario():
+        closed = asyncio.Event()
+
+        async def server(reader, writer):
+            await receive(reader)
+            await send(writer, {"type": "REGISTER_OK", "worker_id": 1})
+            if payload == "too_long":
+                writer.write(b"x" * (MAX_LINE + 10))
+            else:
+                await send(writer, {"type": "JOB", "submission_id": 1, "attempt_id": 1, "language": "ruby", "code": "",
+                                    "tests": [], "time_limit_ms": 1, "memory_limit_kib": 1})
+            try:
+                await writer.drain()
+                assert await asyncio.wait_for(reader.read(), 5) == b""
+            except ConnectionError:
+                pass
+            closed.set()
+        listener = await asyncio.start_server(server, "127.0.0.1", 0, limit=MAX_LINE)
+        try:
+            with pytest.raises(ValueError):
+                await asyncio.wait_for(connection("127.0.0.1", listener.sockets[0].getsockname()[1], "secret", "w",
+                                                  asyncio.Event()), 10)
+            await asyncio.wait_for(closed.wait(), 5)
+        finally:
+            listener.close(); await listener.wait_closed()
+    asyncio.run(scenario())
+    assert not graded

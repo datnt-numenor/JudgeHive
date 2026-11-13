@@ -52,3 +52,9 @@ def test_no_problem_editing_endpoints(tmp_path):
         draft = {"title": "T", "statement": "S", "tests": [{"input": "1", "output": "1"}]}
         assert client.post("/api/admin/problems", json=draft).status_code == 405
         assert client.put("/api/admin/problems/1", json=draft).status_code == 405
+
+
+def test_runtime_error_message_has_no_exit_code(monkeypatch):
+    for code in (97, 113, 200):
+        result = fake_grade(monkeypatch, "cpp", outcome(exit=code))
+        assert result["verdict"] == "RE" and str(code) not in result["message"], result
