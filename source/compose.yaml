@@ -1,5 +1,7 @@
 name: judgehive-v2  # khác project "judgehive" của bản cũ để không dùng chung volume db
 services:
+  # Service này chỉ để build image runner rồi thoát. Worker gọi `docker create` với tên image này;
+  # Compose không tự build image không thuộc service nào.
   runner-image:
     image: judgehive-runner:local
     build:
@@ -30,6 +32,6 @@ services:
         condition: service_completed_successfully
     deploy:
       replicas: 2
-    stop_grace_period: 60s
+    stop_grace_period: 60s  # đủ để worker kill container chấm bài và xóa volume khi dừng
 volumes:
   db:

@@ -23,7 +23,7 @@ JudgeHive cho phép thí sinh đọc đề, nộp bài bằng Python, C++ hoặc
 
 Thành phần:
 
-- **Server** (FastAPI + SQLite): REST API cho web, WebSocket đẩy kết quả, cổng TCP cho worker, hàng đợi bài nộp.
+- **Server** (FastAPI + SQLite): REST API cho web, WebSocket báo có thay đổi, cổng TCP cho worker, hàng đợi bài nộp.
 - **Worker** (Python asyncio): đăng ký với server, nhận bài, biên dịch và chạy từng test trong container Docker cô lập, gửi tiến độ và kết quả.
 - **Client** (React + Vite): giao diện web cho USER và ADMIN.
 
@@ -41,7 +41,7 @@ Chức năng:
 - **Giao lại khi mất kết nối**: worker mất kết nối hoặc quá hạn công việc thì bài được giao cho worker khác; tối đa 3 lần giao, quá thì kết quả là SE.
 - **Kết quả**: 6 verdict của bài làm `AC`, `WA`, `TLE`, `MLE`, `RE`, `CE`, cộng `SE` khi lỗi hệ thống.
 - **Realtime**: trạng thái bài nộp, tiến độ từng test và bảng xếp hạng cập nhật qua WebSocket, không cần tải lại trang.
-- **ADMIN**: quản lý đề (xem test, ẩn/hiện; thêm đề bằng lệnh nạp file JSON), quản lý người dùng (tạo, khóa, đặt lại mật khẩu), theo dõi máy chấm và hàng đợi, xem mọi bài nộp.
+- **ADMIN**: quản lý đề (ẩn/hiện trên web; thêm đề bằng lệnh nạp file JSON), quản lý người dùng (tạo, khóa, đặt lại mật khẩu), theo dõi máy chấm và hàng đợi, xem mọi bài nộp.
 
 ---
 
@@ -200,11 +200,11 @@ Ví dụ:
 |---|---|
 | AC | Qua mọi test |
 | WA | Output khác đáp án (so theo token, bỏ qua khoảng trắng) hoặc output vượt 1 MiB |
-| TLE | Thời gian chạy một test vượt giới hạn của đề |
+| TLE | Thời gian chạy một test vượt giới hạn của đề (quá giới hạn + 1 giây mà chưa xong thì worker dừng container) |
 | MLE | Docker báo container bị OOM-kill, hoặc Java thoát lỗi với `java.lang.OutOfMemoryError` |
 | RE | Chương trình thoát mã khác 0 mà không phải MLE |
 | CE | Biên dịch C++/Java lỗi |
-| SE | Lỗi hệ thống: lỗi Docker (kể cả Docker khởi động container quá chậm nên không xác định được TLE), hoặc hết 3 lần giao |
+| SE | Lỗi hệ thống: lỗi Docker, hoặc hết 3 lần giao |
 
 Mỗi test chạy trong container mới: không mạng, RAM theo đề (không swap), 1 CPU, tối đa 128 tiến trình, user thường, hệ thống file chỉ đọc. Thời gian một test lấy theo mốc bắt đầu/kết thúc của container do Docker ghi, nên không gồm thời gian Docker chuẩn bị container nhưng vẫn gồm thời gian khởi động trình thông dịch/JVM.
 
@@ -215,26 +215,26 @@ Mỗi test chạy trong container mới: không mạng, RAM theo đề (không s
 | POST `/api/auth/login` · POST `/api/auth/logout` · GET `/api/auth/me` | — | Đăng nhập, đăng xuất, thông tin phiên |
 | GET `/api/problems` · GET `/api/problems/{id}` | Đăng nhập | Danh sách đề, đề + test mẫu |
 | POST `/api/submissions` | Đăng nhập | Nộp `{problem_id, language, code}`; 429 nếu đã có 3 bài chờ chấm |
-| GET `/api/submissions` · GET `/api/submissions/{id}` | Đăng nhập | Lịch sử và chi tiết bài của mình |
+| GET `/api/submissions` · GET `/api/submissions/{id}` | Đăng nhập | 100 bài mới nhất và chi tiết bài của mình |
 | GET `/api/scoreboard` | Đăng nhập | Bảng xếp hạng |
-| GET `/api/admin/problems/{id}` · PATCH `/api/admin/problems/{id}` | Admin | Xem đề kèm mọi test; ẩn/hiện `{hidden}` |
+| PATCH `/api/admin/problems/{id}` | Admin | Ẩn/hiện đề `{hidden}` |
 | GET/POST `/api/admin/users` · PATCH `/api/admin/users/{id}` | Admin | Quản lý người dùng |
 | GET `/api/admin/workers` | Admin | Worker đang kết nối và độ dài hàng đợi |
-| GET `/api/admin/submissions` | Admin | Mọi bài nộp |
+| GET `/api/admin/submissions` | Admin | 100 bài nộp mới nhất của mọi người |
 
 Lỗi trả `{"detail": "..."}`. Giới hạn: code 64 KiB; ngôn ngữ `python`, `cpp`, `java`.
 
 ### 5. WebSocket `/ws`
 
-Xác thực bằng cookie phiên. Server đẩy:
+Xác thực bằng cookie phiên; server kiểm tra `Origin`. WebSocket chỉ **báo có thay đổi**, không mang dữ liệu; client nhận rồi tự tải lại bằng REST (REST đã xét quyền):
 
 ```json
-{"type":"submission","data":{"id":10,"state":"done","tests_done":2,"verdict":"AC","time_ms":45}}
-{"type":"scoreboard","data":[{"username":"alice","solved":1,"last_ac":1790000000000}]}
+{"type":"submission","id":10}
+{"type":"scoreboard"}
 {"type":"workers_changed"}
 ```
 
-`submission` chỉ gửi cho chủ bài và admin; `workers_changed` chỉ gửi admin. Client không gửi message định kỳ; mất kết nối thì tự nối lại sau 3 giây và tải lại dữ liệu qua REST.
+`submission` (bài nộp đổi trạng thái/tiến độ/kết quả) chỉ gửi cho chủ bài và admin; `scoreboard` gửi mọi phiên; `workers_changed` chỉ gửi admin. Phiên đã đăng xuất hoặc bị khóa sẽ bị đóng WebSocket ở lần gửi kế tiếp. Client không gửi message định kỳ; mất kết nối thì tự nối lại sau 3 giây và tải lại dữ liệu qua REST.
 
 Bảng xếp hạng: số đề AC giảm dần, rồi thời điểm nộp lần AC đầu của đề giải sau cùng tăng dần.
 
@@ -245,7 +245,7 @@ Bảng xếp hạng: số đề AC giảm dần, rồi thời điểm nộp lầ
 - Không HTTPS và TCP không mã hóa: chỉ dùng trong LAN được kiểm soát.
 - Worker rảnh mất mạng im lặng có thể chưa bị phát hiện ngay (không heartbeat); bài đang chấm vẫn được giao lại nhờ hạn công việc.
 - Kẻ lạ chiếm đủ 16 kết nối chưa đăng ký có thể làm worker thật phải chờ tới 10 giây mới đăng ký được.
-- Thời gian đo gồm cả thời gian khởi động trình thông dịch/JVM trong container; không phải CPU time.
+- Thời gian đo gồm cả thời gian khởi động trình thông dịch/JVM trong container; không phải CPU time. Nếu Docker trên máy chấm mất hơn 1 giây để chạy container, bài đúng chạy sát giới hạn có thể bị TLE.
 - Máy chấm quá chậm (mỗi lệnh Docker có thể chờ tới 10 giây) có thể làm bài vượt hạn công việc, bị giao lại và cuối cùng thành SE.
 - Java dùng heap bằng một nửa giới hạn bộ nhớ của đề để chừa chỗ cho JVM; một mảng đơn chỉ dùng được khoảng 30% giới hạn (đo ở 64 MiB và 256 MiB).
 - Worker có quyền điều khiển Docker trên máy nó chạy; không chạy hệ thống trên máy có dữ liệu quan trọng.

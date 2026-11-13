@@ -84,9 +84,10 @@ def test_time_and_tle_come_from_container(monkeypatch, finished, still_running, 
     assert result["time_ms"] == container_ms(docker_state("2026-11-13T01:00:00Z", f"2026-11-13T{finished}Z"))
 
 
-def test_watchdog_kill_before_program_used_its_limit_is_se(monkeypatch):
-    with pytest.raises(DockerError):
-        fake_run(monkeypatch, docker_state("2026-11-13T01:00:00Z", "2026-11-13T01:00:01.5Z"), still_running=True)
+def test_watchdog_kill_is_always_tle(monkeypatch):
+    # Docker khởi động chậm: chương trình mới chạy 1,5 giây khi bị kill, vẫn xếp TLE (README: hạn chế).
+    result = fake_run(monkeypatch, docker_state("2026-11-13T01:00:00Z", "2026-11-13T01:00:01.5Z"), still_running=True)
+    assert result["reason"] == "timeout" and result["time_ms"] == 1500
 
 
 # ---------- Kết nối của worker ----------

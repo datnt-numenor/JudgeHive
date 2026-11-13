@@ -1,23 +1,24 @@
+"""App FastAPI: REST, WebSocket /ws, mở cổng TCP cho worker trong lifespan, phục vụ client đã build."""
 import asyncio
 import os
 import re
 import secrets
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import Field
 from common.protocol import MAX_LINE_TO_SERVER
 from server.auth import hash_password, verify_password, token_hash
 from server.db import Database, now
 from server.dispatch import Engine
+from server.problems import Model
 from server.realtime import Hub
 
-
-class Model(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+MAX_PENDING_PER_USER = 3
 
 
 class Login(Model):
@@ -34,9 +35,6 @@ class EditUser(Model):
     password: str | None = Field(default=None, max_length=128)
 
 
-MAX_PENDING_PER_USER = 3
-
-
 class Visibility(Model):
     hidden: bool
 
@@ -48,6 +46,7 @@ class Submission(Model):
 
 
 async def current_user(request: Request):
+    # Quyền lấy từ DB theo token phiên, không tin role/user_id do client gửi.
     hashed = token_hash(request.cookies.get("session", ""))
     user = request.app.state.db.user_for_token(hashed)
     if not user:
@@ -72,6 +71,8 @@ def create_app(db_path=None, secret=None, worker_port=None):
         engine = Engine(db, hub, shared)
         engine.recover()
         app.state.db, app.state.hub, app.state.engine = db, hub, engine
+        # Cổng worker chạy chung event loop với web. limit = giới hạn dòng chiều vào server,
+        # nên buffer của mỗi kết nối không vượt 64 KiB kể cả trước khi worker xác thực.
         listener = await asyncio.start_server(engine.handle, os.environ.get("JH_TCP_HOST", "0.0.0.0"),
                                               worker_port if worker_port is not None else int(os.environ.get("JH_WORKER_PORT", "9000")),
                                               limit=MAX_LINE_TO_SERVER)
@@ -89,35 +90,23 @@ def create_app(db_path=None, secret=None, worker_port=None):
     app = FastAPI(lifespan=lifespan)
 
     @app.middleware("http")
-    async def body_and_origin(request, call_next):
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-            origin = request.headers.get("origin")
-            if origin and origin != f"{request.url.scheme}://{request.url.netloc}":
-                return JSONResponse({"detail": "Origin không hợp lệ"}, status_code=403)
-            data = bytearray()
-            async for chunk in request.stream():
-                data.extend(chunk)
-                if len(data) > 8 * 1024 * 1024:
-                    return JSONResponse({"detail": "Request quá lớn"}, status_code=413)
-            request._body = bytes(data)
+    async def same_origin_writes(request, call_next):
+        # Request ghi từ trang web khác (CSRF) bị chặn; cookie SameSite=strict là lớp thứ hai.
+        origin = request.headers.get("origin")
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and origin and origin != f"{request.url.scheme}://{request.url.netloc}":
+            return JSONResponse({"detail": "Origin không hợp lệ"}, status_code=403)
         return await call_next(request)
-
-    @app.get("/api/health")
-    async def health():
-        return {"ok": True}
 
     @app.post("/api/auth/login")
     async def login(body: Login, request: Request, response: Response):
         db = app.state.db
         user = db.one("SELECT * FROM users WHERE username=?", (body.username,))
-        if not user or not await asyncio.to_thread(verify_password, body.password, user["password_hash"]):
+        # scrypt tốn vài chục ms CPU: chạy ở thread để không chặn event loop (và cổng worker).
+        if not user or user["disabled"] or not await asyncio.to_thread(verify_password, body.password, user["password_hash"]):
             raise HTTPException(401, "Sai tên đăng nhập hoặc mật khẩu")
-        # Trong lúc băm mật khẩu, admin có thể khóa/đổi mật khẩu tài khoản.
-        fresh = db.one("SELECT * FROM users WHERE id=?", (user["id"],))
-        if fresh["disabled"] or fresh["password_hash"] != user["password_hash"]:
-            raise HTTPException(401, "Tài khoản không khả dụng")
         token = secrets.token_urlsafe(32)
         db.execute("DELETE FROM sessions WHERE expires_at<=?", (now(),))
+        # DB chỉ lưu SHA-256 của token: lộ DB cũng không dùng được phiên.
         db.execute("INSERT INTO sessions VALUES(?,?,?)", (token_hash(token), user["id"], now() + 86400000))
         response.set_cookie("session", token, httponly=True, samesite="strict", max_age=86400,
                             secure=request.url.scheme == "https")
@@ -128,7 +117,6 @@ def create_app(db_path=None, secret=None, worker_port=None):
         hashed = token_hash(request.cookies.get("session", ""))
         app.state.db.execute("DELETE FROM sessions WHERE token_hash=?", (hashed,))
         response.delete_cookie("session")
-        await app.state.hub.revoke(-1)
         return {"ok": True}
 
     @app.get("/api/auth/me")
@@ -148,6 +136,7 @@ def create_app(db_path=None, secret=None, worker_port=None):
     @app.get("/api/problems/{pid}")
     async def problem(pid: int, user=Depends(current_user)):
         row = get_problem(pid, user)
+        # Chỉ test mẫu; test ẩn không bao giờ rời server ngoài JOB gửi worker.
         row["samples"] = app.state.db.all("SELECT input,output FROM tests WHERE problem_id=? AND is_sample=1 ORDER BY position", (pid,))
         return row
 
@@ -167,9 +156,9 @@ def create_app(db_path=None, secret=None, worker_port=None):
         return {"id": sid}
 
     @app.get("/api/submissions")
-    async def submissions(user=Depends(current_user), before: int = 9223372036854775807):
+    async def submissions(user=Depends(current_user)):
         return app.state.db.all("SELECT id,problem_id,language,state,verdict,submitted_at FROM submissions "
-                                "WHERE user_id=? AND id<? ORDER BY id DESC LIMIT 100", (user["id"], before))
+                                "WHERE user_id=? ORDER BY id DESC LIMIT 100", (user["id"],))
 
     @app.get("/api/submissions/{sid}")
     async def submission(sid: int, user=Depends(current_user)):
@@ -181,14 +170,6 @@ def create_app(db_path=None, secret=None, worker_port=None):
     @app.get("/api/scoreboard")
     async def scoreboard(user=Depends(current_user)):
         return app.state.db.scoreboard()
-
-    @app.get("/api/admin/problems/{pid}")
-    async def admin_problem(pid: int, user=Depends(admin_user)):
-        row = get_problem(pid, user)
-        row["tests"] = app.state.db.all("SELECT input,output,is_sample FROM tests WHERE problem_id=? ORDER BY position", (pid,))
-        for case in row["tests"]:
-            case["is_sample"] = bool(case["is_sample"])
-        return row
 
     @app.patch("/api/admin/problems/{pid}")
     async def visibility(pid: int, body: Visibility, user=Depends(admin_user)):
@@ -205,16 +186,15 @@ def create_app(db_path=None, secret=None, worker_port=None):
     async def add_user(body: NewUser, user=Depends(admin_user)):
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", body.username) or body.role not in {"user", "admin"}:
             raise HTTPException(400, "Tên tài khoản hoặc vai trò không hợp lệ")
-        if app.state.db.one("SELECT id FROM users WHERE username=?", (body.username,)):
-            raise HTTPException(409, "Tên tài khoản đã tồn tại")
         try:
             hashed = await asyncio.to_thread(hash_password, body.password)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-        # Kiểm tra lại sau await, tránh hai request tạo cùng tên.
-        if app.state.db.one("SELECT id FROM users WHERE username=?", (body.username,)):
+        try:
+            # Cột username là UNIQUE: hai request cùng tên thì request sau nhận 409.
+            uid = app.state.db.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", (body.username, hashed, body.role))
+        except sqlite3.IntegrityError:
             raise HTTPException(409, "Tên tài khoản đã tồn tại")
-        uid = app.state.db.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", (body.username, hashed, body.role))
         return {"id": uid}
 
     @app.patch("/api/admin/users/{uid}")
@@ -236,8 +216,7 @@ def create_app(db_path=None, secret=None, worker_port=None):
                 app.state.db.conn.execute("UPDATE users SET disabled=? WHERE id=?", (body.disabled, uid))
             if hashed or body.disabled:
                 app.state.db.conn.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
-        if hashed or body.disabled:
-            await app.state.hub.revoke(uid)
+        # publish kiểm lại token của mọi WebSocket nên phiên vừa bị hủy cũng bị đóng tại đây.
         await app.state.hub.publish()
         return {"ok": True}
 
@@ -246,12 +225,13 @@ def create_app(db_path=None, secret=None, worker_port=None):
         return {"workers": app.state.engine.view(), "queue": app.state.engine.queue.qsize()}
 
     @app.get("/api/admin/submissions")
-    async def admin_submissions(user=Depends(admin_user), before: int = 9223372036854775807):
+    async def admin_submissions(user=Depends(admin_user)):
         return app.state.db.all("SELECT s.id,s.user_id,u.username,s.problem_id,s.language,s.state,s.verdict,s.submitted_at "
-                                "FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id<? ORDER BY s.id DESC LIMIT 100", (before,))
+                                "FROM submissions s JOIN users u ON u.id=s.user_id ORDER BY s.id DESC LIMIT 100")
 
     @app.websocket("/ws")
     async def websocket(ws: WebSocket):
+        # Trình duyệt luôn gửi Origin khi mở WebSocket; trang web khác không được mở bằng cookie của người dùng.
         origin = ws.headers.get("origin")
         expected = ("https" if ws.url.scheme == "wss" else "http") + "://" + ws.url.netloc
         hashed = token_hash(ws.cookies.get("session", ""))
@@ -275,6 +255,7 @@ def create_app(db_path=None, secret=None, worker_port=None):
 
     @app.get("/{path:path}")
     async def frontend(path: str):
+        # React Router xử lý đường dẫn ở trình duyệt: F5 ở /submissions/3 vẫn phải trả index.html.
         if path.startswith(("api/", "ws", "assets/")) or not (static / "index.html").is_file():
             raise HTTPException(404, "Không tìm thấy")
         return FileResponse(static / "index.html")
@@ -284,6 +265,7 @@ def create_app(db_path=None, secret=None, worker_port=None):
 
 if __name__ == "__main__":
     import uvicorn
-    # websockets backend; None tắt ping tự động của thư viện.
+    # Một process uvicorn (hàng đợi và kết nối worker nằm trong bộ nhớ). websockets backend;
+    # None tắt ping tự động của thư viện: hệ thống không có heartbeat.
     uvicorn.run(create_app(), host="0.0.0.0", port=8000, workers=1,
                 ws="websockets", ws_ping_interval=None, ws_ping_timeout=None)

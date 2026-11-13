@@ -8,7 +8,6 @@ import json
 import logging
 import os
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 import threading
@@ -21,9 +20,8 @@ SOURCES = {"python": "main.py", "cpp": "main.cpp", "java": "Main.java"}
 # JVM in chữ ký này ở cuối stderr khi OutOfMemoryError không được bắt.
 JAVA_OOM = "java.lang.OutOfMemoryError"
 # Thời gian chương trình lấy theo mốc StartedAt/FinishedAt của Docker, không theo wall của
-# `docker start --attach`. Watchdog cho thêm khoảng này để bù CLI attach và khởi động container.
+# `docker start --attach`. Watchdog cho thêm khoảng này (đo: CLI attach tốn khoảng 80–100 ms) rồi mới kill.
 START_SLACK = 1.0
-DOCKER_TIME = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)")
 
 
 class Cancelled(Exception):
@@ -34,19 +32,13 @@ class DockerError(Exception):
     pass
 
 
-def docker_time(text):
-    """RFC 3339 của Docker có tới 9 chữ số thập phân; datetime chỉ giữ micro giây."""
-    match = DOCKER_TIME.fullmatch(text) if isinstance(text, str) else None
-    if not match:
-        raise DockerError(f"Mốc thời gian Docker không hợp lệ: {text!r}")
-    fraction = (match.group(2) or "").ljust(6, "0")[:6]
-    zone = "+00:00" if match.group(3) == "Z" else match.group(3)
-    return datetime.fromisoformat(f"{match.group(1)}.{fraction}{zone}")
-
-
 def container_ms(state):
-    """Thời gian chạy của tiến trình trong container, do daemon Docker ghi."""
-    started, finished = docker_time(state.get("StartedAt")), docker_time(state.get("FinishedAt"))
+    """Thời gian chạy của tiến trình trong container, do daemon Docker ghi (RFC 3339, 9 chữ số
+    thập phân; Python 3.11 fromisoformat đọc được và giữ tới micro giây)."""
+    try:
+        started, finished = datetime.fromisoformat(state["StartedAt"]), datetime.fromisoformat(state["FinishedAt"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DockerError("Mốc thời gian Docker không hợp lệ") from exc
     if started.year < 2000 or finished < started:
         raise DockerError("Container chưa chạy xong hoặc mốc thời gian sai")
     return (finished - started) // timedelta(milliseconds=1)
@@ -126,23 +118,17 @@ class Runner:
             if self.cancel.is_set():
                 raise Cancelled()
             time_ms = container_ms(state)
-            if reason == "timeout" and time_ms <= timeout * 1000:
-                # Watchdog phải kill theo đồng hồ CLI trước khi chương trình hết giờ thật:
-                # Docker khởi động quá chậm, không đủ căn cứ để xếp TLE.
-                raise DockerError("Docker khởi động container quá chậm so với START_SLACK")
             if output_path.stat().st_size + error_path.stat().st_size > OUTPUT_CAP:
                 reason = "output"
+            # Bị watchdog kill (giới hạn + START_SLACK theo đồng hồ CLI) cũng là TLE.
             if reason is None and time_ms > timeout * 1000:
                 reason = "timeout"
             with output_path.open("rb") as stream:
                 stdout = stream.read(OUTPUT_CAP).decode("utf-8", errors="replace")
             with error_path.open("rb") as stream:
-                stderr = stream.read(4096).decode("utf-8", errors="replace")
-                # Lỗi biên dịch đọc ở đầu; chữ ký lỗi lúc chạy nằm ở cuối.
-                stream.seek(max(0, error_path.stat().st_size - 4096))
-                stderr_tail = stream.read(4096).decode("utf-8", errors="replace")
+                stderr = stream.read(OUTPUT_CAP).decode("utf-8", errors="replace")
             return {"reason": reason, "oom": state.get("OOMKilled", False), "exit": state["ExitCode"],
-                    "stdout": stdout, "stderr": stderr, "stderr_tail": stderr_tail, "time_ms": time_ms}
+                    "stdout": stdout, "stderr": stderr, "time_ms": time_ms}
 
     def remove(self, name):
         self.command("rm", "--force", name)
@@ -171,7 +157,8 @@ class Runner:
         def result(verdict, message=""):
             return {"verdict": verdict, "message": message[:2000], "time_ms": max_ms}
 
-        # Docker copy-up từ /work của image tạo volume với owner 1000.
+        # Volume mới được Docker copy-up từ /work của image (owner 1000, xem runner.Dockerfile),
+        # nên user 1000 trong container biên dịch ghi được file vào volume.
         self.command("volume", "create", self.volume)
         compiler = self.create("compile", 524288, compile_command)
         with tempfile.TemporaryDirectory(prefix="judgehive-source-") as directory:
@@ -185,9 +172,14 @@ class Runner:
         self.remove(compiler)
         memory_mib = job["memory_limit_kib"] // 1024
         run_command = {"python": ["python3", "-B", "main.py"], "cpp": ["./main"],
-                       "java": ["java", "-XX:ActiveProcessorCount=1", "-XX:+UseSerialGC",
-                                f"-Xmx{max(16, memory_mib // 2)}m", "-Xss512k",
-                                "-XX:MaxMetaspaceSize=48m", "-XX:ReservedCodeCacheSize=16m", "Main"]}[language]
+                       "java": ["java",
+                                "-XX:ActiveProcessorCount=1",  # khớp --cpus 1, JVM không tạo thừa luồng
+                                "-XX:+UseSerialGC",  # GC một luồng, tốn ít bộ nhớ nhất
+                                # Heap = 1/2 RAM của đề; nửa còn lại cho metaspace, code cache, stack của JVM.
+                                f"-Xmx{max(16, memory_mib // 2)}m",
+                                # Ba cờ dưới giữ phần ngoài heap nhỏ để JVM khởi động được ở đề 64 MiB.
+                                "-Xss512k", "-XX:MaxMetaspaceSize=48m", "-XX:ReservedCodeCacheSize=16m",
+                                "Main"]}[language]
         for index, case in enumerate(job["tests"], 1):
             container = self.create(f"test-{index}", job["memory_limit_kib"], run_command, readonly=True)
             outcome = self.run(container, case["input"], job["time_limit_ms"] / 1000)
@@ -199,7 +191,7 @@ class Runner:
                 return result("TLE", f"Test {index}: quá thời gian")
             if outcome["reason"] == "output":
                 return result("WA", f"Test {index}: output vượt 1 MiB")
-            if language == "java" and outcome["exit"] != 0 and JAVA_OOM in outcome["stderr_tail"]:
+            if language == "java" and outcome["exit"] != 0 and JAVA_OOM in outcome["stderr"]:
                 return result("MLE", f"Test {index}: Java hết bộ nhớ heap")
             if outcome["exit"] != 0:
                 # Không gửi stderr của test ẩn: chương trình có thể echo input vào stderr.

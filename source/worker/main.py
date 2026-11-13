@@ -6,25 +6,19 @@ import os
 import signal
 import socket
 import threading
-from common.protocol import MAX_LINE, receive, send
+from common.protocol import MAX_LINE, encode, receive, send
 from worker.runner import grade
 
 log = logging.getLogger(__name__)
 
 
 def validate_job(job):
+    # Worker tin server (server giữ đề và đã kiểm tra); chỉ kiểm những gì cần để không chạy sai bài.
+    # JOB sai kiểu ở chỗ khác sẽ làm grade ném lỗi và được báo SE.
     if (job.get("type") != "JOB" or job.get("language") not in {"python", "cpp", "java"}
             or type(job.get("submission_id")) is not int or type(job.get("attempt_id")) is not int
-            or not isinstance(job.get("code"), str) or len(job["code"].encode()) > 65536
-            or type(job.get("time_limit_ms")) is not int or not 100 <= job["time_limit_ms"] <= 10000
-            or type(job.get("memory_limit_kib")) is not int or not 65536 <= job["memory_limit_kib"] <= 524288
-            or not isinstance(job.get("tests"), list) or not 1 <= len(job["tests"]) <= 20):
+            or not isinstance(job.get("tests"), list)):
         raise ValueError("JOB không hợp lệ")
-    for test in job["tests"]:
-        if not isinstance(test, dict) or not isinstance(test.get("input"), str) or not isinstance(test.get("output"), str):
-            raise ValueError("Test không hợp lệ")
-    if sum(len(t["input"].encode()) + len(t["output"].encode()) for t in job["tests"]) > 1024 * 1024:
-        raise ValueError("Test quá lớn")
 
 
 async def connection(host, port, secret, name, stop):
@@ -37,6 +31,7 @@ async def connection(host, port, secret, name, stop):
             raise ValueError("Server từ chối đăng ký")
         log.info("Đã đăng ký với %s:%s", host, port)
         reading = asyncio.create_task(receive(reader))
+        # stopping: SIGTERM phải đi qua finally để kill container, không để process chết ngang.
         stopping = asyncio.create_task(stop.wait())
         loop = asyncio.get_running_loop()
         while not stop.is_set():
@@ -46,36 +41,27 @@ async def connection(host, port, secret, name, stop):
             job = reading.result()
             validate_job(job)
             cancel = threading.Event()
-            updates = asyncio.Queue()
+            ids = {"submission_id": job["submission_id"], "attempt_id": job["attempt_id"]}
 
             def progress(n):
-                loop.call_soon_threadsafe(updates.put_nowait, n)
+                # Thread chấm không được gọi thẳng writer (StreamWriter không an toàn giữa các thread):
+                # nhờ event loop ghi hộ. PROGRESS nhỏ, tối đa 20 cái mỗi bài nên không cần drain.
+                loop.call_soon_threadsafe(writer.write, encode({"type": "PROGRESS", **ids, "tests_done": n}))
 
+            # grade gọi Docker CLI (chặn) nên chạy ở thread; vòng đọc TCP vẫn chạy để phát hiện mất server.
             running = asyncio.create_task(asyncio.to_thread(grade, job, cancel, progress))
             reading = asyncio.create_task(receive(reader))
-            while True:
-                update = asyncio.create_task(updates.get())
-                try:
-                    done, _ = await asyncio.wait([reading, running, stopping, update], return_when=asyncio.FIRST_COMPLETED)
-                    if stopping in done:
-                        return
-                    if reading in done:
-                        # EOF đặt cancel ở finally và đợi dọn Docker trước khi nối lại.
-                        reading.result()
-                        raise ValueError("Server gửi bài mới khi worker đang bận")
-                    ids = {"submission_id": job["submission_id"], "attempt_id": job["attempt_id"]}
-                    if update in done:
-                        await send(writer, {"type": "PROGRESS", **ids, "tests_done": update.result()})
-                    if running in done:
-                        result = running.result()
-                        running = None
-                        if result is not None:
-                            await send(writer, {"type": "RESULT", **ids, **result})
-                        break
-                finally:
-                    update.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await update
+            done, _ = await asyncio.wait([reading, running, stopping], return_when=asyncio.FIRST_COMPLETED)
+            if stopping in done:
+                return
+            if reading in done:
+                # EOF: finally đặt cancel và đợi dọn Docker trước khi nối lại.
+                reading.result()
+                raise ValueError("Server gửi bài mới khi worker đang bận")
+            result = running.result()
+            running = None
+            if result is not None:
+                await send(writer, {"type": "RESULT", **ids, **result})
     finally:
         cancel.set()
         writer.close()
@@ -85,7 +71,8 @@ async def connection(host, port, secret, name, stop):
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
         if running:
-            # Không cancel to_thread: chờ runner thực sự kill container và dọn volume.
+            # Không cancel được một thread. Nếu bỏ đi mà không chờ thì container vẫn chạy trong lúc
+            # worker đã nối lại; shield để chờ runner thật sự kill container và xóa volume.
             await asyncio.shield(running)
         with contextlib.suppress(Exception):
             await writer.wait_closed()

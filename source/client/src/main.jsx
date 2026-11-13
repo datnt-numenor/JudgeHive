@@ -6,7 +6,7 @@ import "./styles.css";
 
 const AppContext = createContext(null);
 const useApp = () => useContext(AppContext);
-const stateName = { queued: "Đang chờ", judging: "Đang chấm", done: "Hoàn tất", idle: "Rảnh", disconnected: "Đã ngắt" };
+const stateName = { queued: "Đang chờ", judging: "Đang chấm", done: "Hoàn tất", idle: "Rảnh" };
 const date = (value) => value ? new Date(value).toLocaleString("vi-VN") : "—";
 
 // Một hook tải REST, chạy lại khi có sự kiện dữ liệu hoặc người dùng bấm tải lại.
@@ -81,13 +81,12 @@ function ProblemDetail() {
 }
 
 function Submissions({ admin = false }) {
-  const [before, setBefore] = useState(null);
-  const result = useData(`${admin ? "/admin" : ""}/submissions${before ? `?before=${before}` : ""}`);
+  // Server trả 100 bài mới nhất.
+  const result = useData(`${admin ? "/admin" : ""}/submissions`);
   return <><h1>{admin ? "Tất cả bài nộp" : "Bài nộp của tôi"}</h1><Loading result={result}>{rows => <>
     <div className="table-wrap"><table><thead><tr><th>ID</th>{admin && <th>Người nộp</th>}<th>Đề</th><th>Ngôn ngữ</th><th>Trạng thái</th><th>Kết quả</th><th>Thời điểm</th></tr></thead>
       <tbody>{rows.map(s => <tr key={s.id}><td><Link to={`/submissions/${s.id}`}>#{s.id}</Link></td>{admin && <td>{s.username}</td>}<td>{s.problem_id}</td><td>{s.language}</td><td>{stateName[s.state]}</td><td><Verdict value={s.verdict} /></td><td>{date(s.submitted_at)}</td></tr>)}</tbody></table></div>
-    {!rows.length && <p>Chưa có bài nộp.</p>}<div className="actions"><button onClick={() => setBefore(null)} disabled={!before}>Mới nhất</button>
-    <button disabled={rows.length < 100} onClick={() => setBefore(rows.at(-1).id)}>100 bài cũ hơn</button></div></>}</Loading></>;
+    {!rows.length && <p>Chưa có bài nộp.</p>}</>}</Loading></>;
 }
 
 function SubmissionDetail() {
@@ -133,6 +132,7 @@ function Users() {
   return <><h1>Người dùng</h1><ErrorText message={error} /><form className="card" onSubmit={create}><h2>Tạo tài khoản</h2><div className="grid">
     <label>Tên đăng nhập<input name="username" pattern="[A-Za-z0-9_.\-]{1,32}" required /></label><label>Mật khẩu<input name="password" type="password" minLength="8" required autoComplete="new-password" /></label>
     <label>Vai trò<select name="role"><option value="user">USER</option><option value="admin">ADMIN</option></select></label></div><button disabled={busy}>Tạo tài khoản</button></form>
+    {/* key gồm cả disabled để React tạo lại form khi dữ liệu đổi: defaultChecked chỉ được đọc lúc tạo. */}
     <Loading result={result}>{rows => rows.map(u => <form className="card" key={`${u.id}-${u.disabled}`} onSubmit={e => edit(e, u.id)}><h3>{u.username} · {u.role.toUpperCase()}</h3><div className="grid">
       <label>Mật khẩu mới (bỏ trống để giữ)<input name="password" type="password" autoComplete="new-password" /></label><label className="check"><input name="disabled" type="checkbox" defaultChecked={!!u.disabled} disabled={u.id === user.id} />Khóa tài khoản</label></div><button disabled={busy}>Lưu tài khoản</button></form>)}</Loading></>;
 }
@@ -141,21 +141,15 @@ function Users() {
 function AdminProblems() {
   const { refresh } = useApp();
   const result = useData("/problems");
-  const [viewing, setViewing] = useState(null);
   const [error, setError] = useState("");
-  async function load(id) {
-    setError("");
-    try { setViewing(await api(`/admin/problems/${id}`)); } catch (e) { setError(e.message); }
-  }
   async function hide(p) {
     setError("");
     try { await api(`/admin/problems/${p.id}`, "PATCH", { hidden: !p.hidden }); refresh(); }
     catch (e) { setError(e.message); }
   }
   return <><h1>Quản lý đề bài</h1><p className="muted">Thêm đề bằng lệnh nạp file JSON ở server (xem README). Đề đang ẩn không hiện với USER và không tính vào bảng xếp hạng.</p><ErrorText message={error} />
-    <Loading result={result}>{rows => <div className="table-wrap"><table><thead><tr><th>Đề</th><th>Giới hạn</th><th>Hiển thị</th><th>Thao tác</th></tr></thead><tbody>{rows.map(p => <tr key={p.id}><td>#{p.id} {p.title}</td><td>{p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB</td><td>{p.hidden ? "Ẩn" : "Hiện"}</td><td className="actions"><button onClick={() => load(p.id)}>Xem test</button><button onClick={() => hide(p)}>{p.hidden ? "Hiện đề" : "Ẩn đề"}</button></td></tr>)}</tbody></table></div>}</Loading>
-    {viewing && <section className="card"><div className="actions"><h2>Đề #{viewing.id}: {viewing.title}</h2><button onClick={() => setViewing(null)}>Đóng</button></div>
-      {viewing.tests.map((t, i) => <div className="grid" key={i}><div><h3>Test {i + 1}{t.is_sample ? " (mẫu)" : ""} · input</h3><pre>{t.input}</pre></div><div><h3>Output</h3><pre>{t.output}</pre></div></div>)}</section>}</>;
+    <Loading result={result}>{rows => <div className="table-wrap"><table><thead><tr><th>Đề</th><th>Giới hạn</th><th>Hiển thị</th><th>Thao tác</th></tr></thead><tbody>{rows.map(p => <tr key={p.id}><td>#{p.id} {p.title}</td><td>{p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB</td><td>{p.hidden ? "Ẩn" : "Hiện"}</td><td className="actions"><button onClick={() => hide(p)}>{p.hidden ? "Hiện đề" : "Ẩn đề"}</button></td></tr>)}</tbody></table></div>}</Loading>
+  </>;
 }
 
 function App() {
@@ -177,6 +171,7 @@ function App() {
     function connect() {
       socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws`);
       socket.onopen = () => { if (active) { setConnection("Đã kết nối"); refresh(); } };
+      // Server chỉ báo "có thay đổi" (submission/scoreboard/workers_changed); mọi trang tải lại bằng REST.
       socket.onmessage = () => { if (active) refresh(); };
       socket.onerror = () => socket.close();
       socket.onclose = () => {

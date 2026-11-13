@@ -68,11 +68,13 @@ def test_real_rest_tcp_docker_and_websocket():
                 done = set()
                 deadline = time.monotonic() + 120
                 while len(done) < len(jobs):
+                    # WebSocket chỉ báo có thay đổi; trạng thái lấy bằng REST.
                     message = json.loads(ws.recv(timeout=max(0.1, deadline - time.monotonic())))
-                    if message["type"] == "submission" and message["data"]["state"] == "done":
-                        result = message["data"]
-                        assert result["verdict"] == "AC", result["message"]
-                        done.add(result["id"])
+                    if message["type"] == "submission" and message["id"] in jobs:
+                        result = user.get(f"/api/submissions/{message['id']}").json()
+                        if result["state"] == "done":
+                            assert result["verdict"] == "AC", result["message"]
+                            done.add(result["id"])
                 for sid in jobs:
                     assert user.get(f"/api/submissions/{sid}").json()["verdict"] == "AC"
                 board = user.get("/api/scoreboard").json()

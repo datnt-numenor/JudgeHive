@@ -78,9 +78,7 @@ async def eventually(predicate, timeout=3):
 
 def outcome(**changes):
     base = {"reason": None, "oom": False, "exit": 0, "stdout": "5\n", "stderr": "", "time_ms": 10}
-    result = {**base, **changes}
-    result["stderr_tail"] = result["stderr"]
-    return result
+    return {**base, **changes}
 
 
 def fake_grade(monkeypatch, language, results, compile_outcome=None, tests=None):

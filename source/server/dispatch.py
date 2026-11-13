@@ -14,6 +14,7 @@ VERDICTS = {"AC", "WA", "TLE", "MLE", "RE", "CE", "SE"}
 MAX_UNREGISTERED = 16
 REGISTER_TIMEOUT = 10  # giây chờ REGISTER sau khi mở TCP
 MAX_TIME_MS = 10**9  # time_ms lớn hơn là sai; tránh tràn INTEGER của SQLite
+MAX_ATTEMPTS = 3  # số lần giao tối đa một bài; quá thì SE
 
 
 class Engine:
@@ -30,7 +31,7 @@ class Engine:
         with self.db.conn:
             self.db.conn.execute("UPDATE submissions SET state='done',verdict='SE',finished_at=?,"
                                  "message='Server khởi động lại sau lần giao cuối' "
-                                 "WHERE state='judging' AND attempt_id>=3", (now(),))
+                                 "WHERE state='judging' AND attempt_id>=?", (now(), MAX_ATTEMPTS))
             self.db.conn.execute("UPDATE submissions SET state='queued',tests_done=0 WHERE state='judging'")
         for row in self.db.all("SELECT id FROM submissions WHERE state='queued' ORDER BY id"):
             self.queue.put_nowait(row["id"])
@@ -54,7 +55,8 @@ class Engine:
             finally:
                 self.unregistered -= 1
             secret = registration.get("secret")
-            # So bytes: compare_digest với str ném TypeError khi có ký tự ngoài ASCII.
+            # compare_digest: thời gian so không lộ secret đúng được bao nhiêu ký tự. So bytes vì compare_digest
+            # với str ném TypeError khi có ký tự ngoài ASCII; surrogatepass vì JSON cho phép surrogate lẻ (U+D800).
             if (registration.get("type") != "REGISTER" or not isinstance(secret, str)
                     or not hmac.compare_digest(secret.encode("utf-8", "surrogatepass"), self.secret.encode())
                     or not isinstance(registration.get("name"), str) or not 1 <= len(registration["name"]) <= 64):
@@ -70,6 +72,8 @@ class Engine:
             while not self.stopping:
                 taking = asyncio.create_task(self.queue.get())
                 done, _ = await asyncio.wait([reading, taking], return_when=asyncio.FIRST_COMPLETED)
+                # Worker rảnh vẫn được đọc song song để phát hiện EOF ngay và gỡ khỏi danh sách; nếu không,
+                # bài sẽ bị giao vào kết nối đã chết và mất một lượt giao.
                 if reading in done:
                     # EOF và queue.get có thể hoàn tất cùng lúc: không làm mất bài đã lấy.
                     if taking.done() and not taking.cancelled():
@@ -99,6 +103,7 @@ class Engine:
                     # PROGRESS không thay đổi deadline. Đây là timeout công việc, không heartbeat.
                     remaining = deadline - asyncio.get_running_loop().time()
                     message = await asyncio.wait_for(reading, max(0, remaining))
+                    # type(x) is int (không dùng isinstance) vì True cũng là int.
                     if (type(message.get("submission_id")) is not int or type(message.get("attempt_id")) is not int
                             or message["submission_id"] != sid or message["attempt_id"] != attempt):
                         raise ValueError("Kết quả sai lần giao")
@@ -117,7 +122,8 @@ class Engine:
                             or type(elapsed) not in (int, float) or not math.isfinite(elapsed) or not 0 <= elapsed <= MAX_TIME_MS
                             or not isinstance(detail, str) or len(detail.encode()) > 8192):
                         raise ValueError("Kết quả không hợp lệ")
-                    # Chỉ kết nối giữ job này mới được ghi kết quả của attempt hiện tại.
+                    # Chỉ kết nối giữ job này mới được ghi kết quả. Điều kiện attempt_id=? AND state='judging'
+                    # là chốt chặn thứ hai, phòng lần giao cũ ghi đè lần giao mới.
                     self.db.execute("UPDATE submissions SET state='done',verdict=?,time_ms=?,message=?,finished_at=?,"
                                     "tests_done=CASE WHEN ?='AC' THEN ? ELSE tests_done END "
                                     "WHERE id=? AND attempt_id=? AND state='judging'",
@@ -143,9 +149,9 @@ class Engine:
                 self.workers.pop(worker["id"], None)
             if job and not self.stopping:
                 sid, attempt = job["submission_id"], job["attempt_id"]
-                if attempt >= 3:
+                if attempt >= MAX_ATTEMPTS:
                     self.db.execute("UPDATE submissions SET state='done',verdict='SE',finished_at=?,"
-                                    "message='Không nhận được kết quả sau 3 lần giao' WHERE id=? AND attempt_id=?",
+                                    "message='Không nhận được kết quả sau số lần giao tối đa' WHERE id=? AND attempt_id=?",
                                     (now(), sid, attempt))
                 else:
                     self.db.execute("UPDATE submissions SET state='queued',tests_done=0 WHERE id=? AND attempt_id=?",

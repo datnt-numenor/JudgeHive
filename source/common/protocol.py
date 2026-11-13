@@ -25,6 +25,8 @@ async def receive(reader, max_line=MAX_LINE):
         raise ConnectionError("TCP đã đóng, hoặc message chưa đủ") from exc
     except asyncio.LimitOverrunError as exc:
         raise ValueError("Message quá lớn") from exc
+    # Server đặt limit của reader = 64 KiB nên dòng dài bị chặn ngay ở readuntil (LimitOverrunError).
+    # Dòng dưới dành cho reader có limit lớn hơn giới hạn cần áp.
     if len(line) > max_line:
         raise ValueError("Message quá lớn")
     message = json.loads(line.decode("utf-8"))
@@ -41,4 +43,5 @@ async def send(writer, message):
 def job_timeout(job):
     # Đây là hạn hoàn thành công việc, không phải kiểm tra kết nối định kỳ.
     # Mỗi test cộng 10s tạo/xóa container; thêm 60s chuẩn bị volume và dọn bài.
+    # Ví dụ: 2 test, giới hạn 2 giây → 20 + 2 × (2 + 10) + 60 = 104 giây.
     return 20 + len(job["tests"]) * (job["time_limit_ms"] / 1000 + 10) + 60

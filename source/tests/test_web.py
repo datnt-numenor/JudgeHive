@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
 from common.protocol import receive, send
 from server.db import Database
@@ -89,6 +90,7 @@ def test_no_problem_editing_on_web(tmp_path):
         draft = {"title": "T", "statement": "S", "tests": [{"input": "1", "output": "1"}]}
         assert client.post("/api/admin/problems", json=draft).status_code == 405
         assert client.put("/api/admin/problems/1", json=draft).status_code == 405
+        assert client.get("/api/admin/problems/1").status_code == 404
 
 
 def test_problem_files(tmp_path):
@@ -122,15 +124,24 @@ def test_websocket_events_scoreboard_and_privacy(tmp_path):
                     await asyncio.sleep(0.3)
                     writer.close()
                 client.portal.call(judge)
-                while True:
+                # WebSocket chỉ báo có thay đổi; client tải lại bằng REST.
+                while client.get(f"/api/submissions/{sid}").json()["state"] != "done":
                     message = alice_ws.receive_json()
-                    if message["type"] == "submission" and message["data"]["state"] == "done":
-                        assert message["data"]["id"] == sid and "code" not in message["data"]
-                        break
+                    assert message in ({"type": "submission", "id": sid}, {"type": "scoreboard"}), message
                 # Bob chỉ nhận bảng xếp hạng, không nhận sự kiện bài của Alice.
-                assert {bob_ws.receive_json()["type"] for _ in range(3)} == {"scoreboard"}
+                assert [bob_ws.receive_json() for _ in range(3)] == [{"type": "scoreboard"}] * 3
         board = client.get("/api/scoreboard").json()
         assert board[0] == {"username": "alice", "solved": 1, "last_ac": board[0]["last_ac"]}
+
+
+def test_websocket_of_disabled_user_is_closed(tmp_path):
+    with system(tmp_path) as (client, app):
+        login(client)
+        with client.websocket_connect("/ws") as alice_ws:
+            login(client, "admin")
+            assert client.patch("/api/admin/users/2", json={"disabled": True}).status_code == 200
+            with pytest.raises(WebSocketDisconnect):
+                alice_ws.receive_json()
 
 
 def test_websocket_rejects_foreign_origin_and_anonymous(tmp_path):

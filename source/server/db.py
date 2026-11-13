@@ -14,6 +14,7 @@ class Database:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
+        # WAL: lệnh `manage` mở connection thứ hai trong lúc server chạy mà không bị khóa ghi.
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript("""
         CREATE TABLE IF NOT EXISTS users (
@@ -62,6 +63,8 @@ class Database:
                         "WHERE s.token_hash=? AND s.expires_at>? AND u.disabled=0", (hashed, now()))
 
     def scoreboard(self):
+        # solved: mỗi cặp (người, đề hiện) lấy thời điểm nộp lần AC đầu tiên, nên AC nhiều lần chỉ tính một.
+        # Sau đó mỗi USER: số đề giải được, và thời điểm của đề giải sau cùng (dùng để xếp khi bằng điểm).
         return self.all("""
         WITH solved AS (
           SELECT s.user_id,s.problem_id,MIN(s.submitted_at) AS first_ac

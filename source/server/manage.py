@@ -1,7 +1,7 @@
 """Lệnh quản trị chạy trong container server.
 
   python -m server.manage user admin --role admin   # tạo tài khoản, mật khẩu nhập kín
-  python -m server.manage problem problems/a.json   # nạp một đề từ file JSON ("-" = đọc stdin)
+  python -m server.manage problem problems/a.json   # nạp một đề từ file JSON
 """
 import argparse
 import getpass
@@ -42,12 +42,8 @@ def create_user(parser, args):
 
 def load_problem(parser, args):
     try:
-        if args.file == "-":
-            text = sys.stdin.buffer.read().decode("utf-8")
-        else:
-            with open(args.file, encoding="utf-8") as stream:
-                text = stream.read()
-        problem = parse_problem(text)
+        with open(args.file, encoding="utf-8") as stream:
+            problem = parse_problem(stream.read())
     except (OSError, UnicodeDecodeError) as exc:
         parser.error(f"Không đọc được file đề: {exc}")
     except ValidationError as exc:
@@ -64,7 +60,7 @@ def load_problem(parser, args):
 
 
 def main(argv=None):
-    if hasattr(sys.stdout, "reconfigure"):
+    if hasattr(sys.stdout, "reconfigure"):  # console Windows mặc định không phải UTF-8
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="python -m server.manage")
     commands = parser.add_subparsers(dest="command", required=True)
