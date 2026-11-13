@@ -1,10 +1,11 @@
 import asyncio
+import logging
 import socket
 from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 import pytest
-from common.protocol import MAX_LINE, encode, receive, send
+from common.protocol import MAX_LINE, MAX_LINE_TO_SERVER, encode, receive, send
 from server.auth import hash_password
 from server.db import Database, now
 from server.main import create_app
@@ -41,6 +42,14 @@ async def worker(app, secret=SECRET):
     await send(w, {"type": "REGISTER", "name": "test-worker", "secret": secret})
     message = await receive(r)
     return r, w, message
+
+
+async def closed_by_server(reader, timeout=2):
+    """Server đóng kết nối: EOF, hoặc RST khi server đóng lúc còn byte chưa đọc."""
+    try:
+        return await asyncio.wait_for(reader.read(), timeout) == b""
+    except ConnectionError:
+        return True
 
 
 async def until(predicate):
@@ -224,4 +233,72 @@ def test_protocol_fragmentation_combining_and_errors():
             r = asyncio.StreamReader(limit=MAX_LINE); r.feed_data(bad)
             with pytest.raises((ValueError, UnicodeDecodeError)):
                 await receive(r)
+    asyncio.run(scenario())
+
+
+def test_register_line_over_server_limit_closes(tmp_path):
+    with system(tmp_path) as (client, app):
+        async def scenario():
+            # Không có newline: StreamReader dừng ở giới hạn, không đệm tới 8 MiB.
+            r, w = await asyncio.open_connection("127.0.0.1", app.state.worker_port)
+            w.write(b"x" * (MAX_LINE_TO_SERVER + 1024))
+            assert await closed_by_server(r)
+            w.close()
+            # JSON hợp lệ có newline nhưng dài hơn giới hạn chiều vào server.
+            r, w = await asyncio.open_connection("127.0.0.1", app.state.worker_port)
+            line = encode({"type": "REGISTER", "name": "x" * MAX_LINE_TO_SERVER, "secret": SECRET})
+            w.write(line)
+            assert await closed_by_server(r)
+            w.close()
+            assert app.state.engine.workers == {}
+        client.portal.call(scenario)
+
+
+def test_unregistered_connection_cap(tmp_path):
+    with system(tmp_path) as (client, app):
+        async def scenario():
+            port = app.state.worker_port
+            idle = [await asyncio.open_connection("127.0.0.1", port) for _ in range(16)]
+            await until(lambda: app.state.engine.unregistered == 16)
+            r, w = await asyncio.open_connection("127.0.0.1", port)
+            await send(w, {"type": "REGISTER", "name": "late", "secret": SECRET})
+            assert await closed_by_server(r, 1)
+            w.close()
+            for _, idle_writer in idle:
+                idle_writer.close()
+            # Đếm phải được giảm cả khi kết nối đóng giữa lúc chờ REGISTER.
+            await until(lambda: app.state.engine.unregistered == 0)
+            r, w, ack = await worker(app)
+            assert ack["type"] == "REGISTER_OK"
+            w.close()
+        client.portal.call(scenario)
+
+
+def test_register_non_ascii_or_surrogate_secret_gets_error(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    with system(tmp_path) as (client, app):
+        async def scenario():
+            r, w, ack = await worker(app, "é" * 20)
+            assert ack["type"] == "ERROR"
+            assert await closed_by_server(r)
+            w.close()
+            r, w = await asyncio.open_connection("127.0.0.1", app.state.worker_port, limit=MAX_LINE)
+            w.write(b'{"type":"REGISTER","name":"x","secret":"\\ud800"}\n')
+            assert (await asyncio.wait_for(receive(r), 2))["type"] == "ERROR"
+            w.close()
+        client.portal.call(scenario)
+    assert not [rec for rec in caplog.records if rec.levelno >= logging.ERROR]
+
+
+def test_receive_respects_max_line():
+    async def scenario():
+        small = encode({"type": "PROGRESS", "pad": "x" * 1000})
+        reader = asyncio.StreamReader(limit=MAX_LINE_TO_SERVER)
+        reader.feed_data(small)
+        assert (await receive(reader, MAX_LINE_TO_SERVER))["type"] == "PROGRESS"
+        big = encode({"type": "PROGRESS", "pad": "x" * MAX_LINE_TO_SERVER})
+        reader = asyncio.StreamReader(limit=MAX_LINE)
+        reader.feed_data(big)
+        with pytest.raises(ValueError):
+            await receive(reader, MAX_LINE_TO_SERVER)
     asyncio.run(scenario())

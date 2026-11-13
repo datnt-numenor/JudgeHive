@@ -2,7 +2,10 @@
 import asyncio
 import json
 
-MAX_LINE = 8 * 1024 * 1024  # JSON có thể escape dữ liệu test thành nhiều byte hơn.
+MAX_LINE = 8 * 1024 * 1024  # Chiều server → worker: JOB có code và test, JSON có thể escape thành nhiều byte hơn.
+# Chiều worker → server chỉ có REGISTER, PROGRESS, RESULT (message ≤ 8 KiB) nên buffer nhỏ,
+# kể cả trước khi worker xác thực.
+MAX_LINE_TO_SERVER = 64 * 1024
 TYPES = {"REGISTER", "REGISTER_OK", "JOB", "PROGRESS", "RESULT", "ERROR"}
 
 
@@ -15,14 +18,14 @@ def encode(message):
     return data
 
 
-async def receive(reader):
+async def receive(reader, max_line=MAX_LINE):
     try:
         line = await reader.readuntil(b"\n")
     except asyncio.IncompleteReadError as exc:
         raise ConnectionError("TCP đã đóng, hoặc message chưa đủ") from exc
     except asyncio.LimitOverrunError as exc:
         raise ValueError("Message quá lớn") from exc
-    if len(line) > MAX_LINE:
+    if len(line) > max_line:
         raise ValueError("Message quá lớn")
     message = json.loads(line.decode("utf-8"))
     if not isinstance(message, dict) or message.get("type") not in TYPES:

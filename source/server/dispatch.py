@@ -5,11 +5,13 @@ import hmac
 import itertools
 import logging
 import math
-from common.protocol import MAX_LINE, receive, send, job_timeout
+from common.protocol import MAX_LINE_TO_SERVER, receive, send, job_timeout
 from server.db import now
 
 log = logging.getLogger(__name__)
 VERDICTS = {"AC", "WA", "TLE", "MLE", "RE", "CE", "SE"}
+# Số kết nối TCP đang chờ REGISTER; vượt trần thì đóng ngay, không đọc byte nào.
+MAX_UNREGISTERED = 16
 
 
 class Engine:
@@ -20,6 +22,7 @@ class Engine:
         self.ids = itertools.count(1)
         self.tasks = set()
         self.stopping = False
+        self.unregistered = 0
 
     def recover(self):
         with self.db.conn:
@@ -34,15 +37,24 @@ class Engine:
         return [{k: v for k, v in worker.items() if k != "writer"} for worker in self.workers.values()]
 
     async def handle(self, reader, writer):
+        if self.unregistered >= MAX_UNREGISTERED:
+            writer.close()
+            return
         task = asyncio.current_task()
         self.tasks.add(task)
         worker = None
         job = None
         reading = taking = None
         try:
-            registration = await asyncio.wait_for(receive(reader), 10)
-            if (registration.get("type") != "REGISTER" or not isinstance(registration.get("secret"), str)
-                    or not hmac.compare_digest(registration["secret"], self.secret)
+            self.unregistered += 1
+            try:
+                registration = await asyncio.wait_for(receive(reader, MAX_LINE_TO_SERVER), 10)
+            finally:
+                self.unregistered -= 1
+            secret = registration.get("secret")
+            # So bytes: compare_digest với str ném TypeError khi có ký tự ngoài ASCII.
+            if (registration.get("type") != "REGISTER" or not isinstance(secret, str)
+                    or not hmac.compare_digest(secret.encode("utf-8", "surrogatepass"), self.secret.encode())
                     or not isinstance(registration.get("name"), str) or not 1 <= len(registration["name"]) <= 64):
                 await send(writer, {"type": "ERROR", "message": "Đăng ký worker không hợp lệ"})
                 return
@@ -52,7 +64,7 @@ class Engine:
             self.workers[wid] = worker
             await send(writer, {"type": "REGISTER_OK", "worker_id": wid})
             await self.hub.publish()
-            reading = asyncio.create_task(receive(reader))
+            reading = asyncio.create_task(receive(reader, MAX_LINE_TO_SERVER))
             while not self.stopping:
                 taking = asyncio.create_task(self.queue.get())
                 done, _ = await asyncio.wait([reading, taking], return_when=asyncio.FIRST_COMPLETED)
@@ -94,7 +106,7 @@ class Engine:
                             raise ValueError("Tiến độ không hợp lệ")
                         self.db.execute("UPDATE submissions SET tests_done=? WHERE id=?", (count, sid))
                         await self.hub.publish(sid)
-                        reading = asyncio.create_task(receive(reader))
+                        reading = asyncio.create_task(receive(reader, MAX_LINE_TO_SERVER))
                         continue
                     verdict, elapsed = message.get("verdict"), message.get("time_ms")
                     detail = message.get("message", "")
@@ -110,7 +122,7 @@ class Engine:
                     job = None
                     worker.update(state="idle", submission_id=None)
                     await self.hub.publish(sid)
-                    reading = asyncio.create_task(receive(reader))
+                    reading = asyncio.create_task(receive(reader, MAX_LINE_TO_SERVER))
                     break
         except (ConnectionError, OSError, ValueError, TimeoutError) as exc:
             log.info("Worker ngắt: %s", exc)

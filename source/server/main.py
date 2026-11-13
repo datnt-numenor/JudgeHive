@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocke
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
-from common.protocol import MAX_LINE
+from common.protocol import MAX_LINE_TO_SERVER
 from server.auth import hash_password, verify_password, token_hash
 from server.db import Database, now
 from server.dispatch import Engine
@@ -85,7 +85,7 @@ def create_app(db_path=None, secret=None, worker_port=None):
         app.state.db, app.state.hub, app.state.engine = db, hub, engine
         listener = await asyncio.start_server(engine.handle, os.environ.get("JH_TCP_HOST", "0.0.0.0"),
                                               worker_port if worker_port is not None else int(os.environ.get("JH_WORKER_PORT", "9000")),
-                                              limit=MAX_LINE)
+                                              limit=MAX_LINE_TO_SERVER)
         app.state.worker_port = listener.sockets[0].getsockname()[1]
         try:
             yield
