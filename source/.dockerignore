@@ -1,0 +1,7 @@
+**/node_modules
+**/dist
+**/__pycache__
+**/*.sqlite3*
+.env
+.pytest_cache
+tests

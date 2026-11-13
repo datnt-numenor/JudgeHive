@@ -1,141 +1,38 @@
-"""Script quản lý, chạy trong container server (DB nằm trong named volume):
-
-    docker compose exec server python -m server.manage users create NAME [--role admin] [--password-stdin]
-    docker compose exec server python -m server.manage users set-password NAME [--password-stdin]
-    docker compose exec server python -m server.manage problems reimport ID
-    docker compose exec server python -m server.manage submissions show ID
-
-Nộp bài qua REST (`POST /api/submissions`); `submissions show` chỉ để xem một dòng khi gỡ lỗi. Mật khẩu không bao giờ
-qua argv: nhắc nhập (getpass) hoặc `--password-stdin`."""
-
+"""Chạy: python -m server.manage admin --role admin (mật khẩu nhập kín)."""
 import argparse
 import getpass
 import os
-import sqlite3
+import re
 import sys
-
-from server import auth, problems
-from server.config import db_path_from_env, problems_dir_from_env
+from server.auth import hash_password
 from server.db import Database
 
-SHOW_FIELDS = ("id", "user_id", "problem_id", "language", "state", "is_rejudge", "attempt_id", "delivery_count",
-               "total_deliveries", "verdict", "time_ms", "memory_kib", "failed_test", "failed_is_sample", "re_kind",
-               "rejudge_failed", "delivered_test_hash", "verdict_test_hash")
 
-
-class CommandError(Exception):
-    pass
-
-
-def build_parser():
-    parser = argparse.ArgumentParser(prog="manage")
-    groups = parser.add_subparsers(dest="group", required=True)
-
-    users = groups.add_parser("users").add_subparsers(dest="command", required=True)
-    create = users.add_parser("create")
-    create.add_argument("username")
-    create.add_argument("--role", choices=("user", "admin"), default="user")
-    create.add_argument("--password-stdin", action="store_true", help="đọc mật khẩu từ dòng đầu của stdin")
-    setpw = users.add_parser("set-password")
-    setpw.add_argument("username")
-    setpw.add_argument("--password-stdin", action="store_true", help="đọc mật khẩu từ dòng đầu của stdin")
-
-    probs = groups.add_parser("problems").add_subparsers(dest="command", required=True)
-    probs.add_parser("reimport").add_argument("problem_id")
-
-    subs = groups.add_parser("submissions").add_subparsers(dest="command", required=True)
-    subs.add_parser("show").add_argument("submission_id", type=int)
-    return parser
-
-
-def _read_password(args, stdin):
-    if args.password_stdin:
-        # Windows PowerShell 5.1 chèn BOM (U+FEFF) vào đầu dữ liệu pipe; không bỏ thì mật khẩu lưu ra là "﻿..." và
-        # đăng nhập bằng mật khẩu đúng bị từ chối. `utf-8-sig` bỏ BOM đầu luồng và ép UTF-8 bất kể locale của container;
-        # `lstrip` là lớp thứ hai cho luồng không có `reconfigure` (StringIO của test).
-        if hasattr(stdin, "reconfigure"):
-            stdin.reconfigure(encoding="utf-8-sig")
-        return stdin.readline().lstrip("﻿").rstrip("\r\n")
-    password = getpass.getpass("Mật khẩu: ")
+def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("username")
+    parser.add_argument("--role", choices=["user", "admin"], default="admin")
+    args = parser.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", args.username):
+        parser.error("Tên tài khoản chỉ gồm chữ, số, _, ., -; tối đa 32 ký tự")
+    password = getpass.getpass("Mật khẩu (8–128 byte): ")
     if password != getpass.getpass("Nhập lại: "):
-        raise CommandError("hai lần nhập mật khẩu không khớp")
-    return password
-
-
-def _hash(password):
+        parser.error("Mật khẩu không khớp")
     try:
-        return auth.hash_password(password)
-    except auth.PasswordError as e:
-        raise CommandError(str(e)) from e
-
-
-def cmd_users_create(db, args, stdin):
-    if not auth.is_valid_username(args.username):
-        raise CommandError("username chỉ gồm chữ, số, '_', '.', '-' và dài 1 đến 32 ký tự")
-    stored = _hash(_read_password(args, stdin))
+        hashed = hash_password(password)
+    except ValueError as exc:
+        parser.error(str(exc))
+    db = Database(os.environ.get("JH_DB", "/data/judgehive.sqlite3"))
     try:
-        db.create_user(args.username, stored, args.role)
-    except sqlite3.IntegrityError as e:
-        raise CommandError(f"username {args.username!r} đã tồn tại") from e
-    print(f"đã tạo {args.role} {args.username}")
-
-
-def cmd_users_set_password(db, args, stdin):
-    """Đặt lại mật khẩu và hủy mọi phiên của người đó trong cùng transaction (D30). `manage.py` chạy ở process khác server
-    nên không đóng được WebSocket đang mở: chúng đóng 4401 ở lần kiểm phiên định kỳ kế tiếp (tối đa khoảng 30 giây)."""
-    from server.rest import sessions  # nhập muộn: chỉ lệnh này cần FastAPI
-
-    if db.conn().execute("SELECT 1 FROM users WHERE username = ?", (args.username,)).fetchone() is None:
-        raise CommandError(f"không có user {args.username!r}")  # kiểm trước khi nhắc nhập mật khẩu
-    stored = _hash(_read_password(args, stdin))  # băm trước khi mở transaction ghi: scrypt mất hàng trăm ms
-    with db.write() as c:
-        row = c.execute("SELECT id FROM users WHERE username = ?", (args.username,)).fetchone()
-        if row is None:
-            raise CommandError(f"không có user {args.username!r}")
-        c.execute("UPDATE users SET password_hash = ? WHERE id = ?", (stored, row["id"]))
-        revoked = sessions.revoke_user_sessions(c, row["id"])
-    print(f"đã đặt lại mật khẩu của {args.username}; đã hủy {revoked} phiên")
-
-
-def cmd_problems_reimport(db, args, env):
-    try:
-        data = problems.reimport_problem(db, problems_dir_from_env(env), args.problem_id)
-    except problems.ProblemError as e:
-        raise CommandError(str(e)) from e
-    print(f"đã nạp lại {data.id}: {len(data.tests)} test, hash {problems.compute_tests_hash(data.tests)}")
-
-
-def cmd_submissions_show(db, args):
-    row = db.conn().execute("SELECT * FROM submissions WHERE id = ?", (args.submission_id,)).fetchone()
-    if row is None:
-        raise CommandError(f"không có bài nộp {args.submission_id}")
-    for key in SHOW_FIELDS:
-        print(f"{key}={row[key]}")
-    for key in ("ce_message", "sample_stdout"):
-        if row[key]:
-            print(f"{key}=" + row[key].replace("\n", "\\n")[:2000])
-
-
-def main(argv=None, env=None, stdin=None):
-    env = os.environ if env is None else env
-    stdin = sys.stdin if stdin is None else stdin
-    args = build_parser().parse_args(argv)
-    db = Database(db_path_from_env(env))
-    try:
-        db.migrate()
-        if args.group == "users":
-            (cmd_users_create if args.command == "create" else cmd_users_set_password)(db, args, stdin)
-        elif args.group == "problems":
-            cmd_problems_reimport(db, args, env)
-        else:
-            cmd_submissions_show(db, args)
-    except CommandError as e:
-        print(f"lỗi: {e}", file=sys.stderr)
-        return 1
+        if db.one("SELECT id FROM users WHERE username=?", (args.username,)):
+            parser.error("Tài khoản đã tồn tại; đặt lại mật khẩu qua trang admin")
+        db.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", (args.username, hashed, args.role))
+        print("Đã tạo tài khoản", args.username)
     finally:
-        db.close_thread()
-    return 0
+        db.conn.close()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

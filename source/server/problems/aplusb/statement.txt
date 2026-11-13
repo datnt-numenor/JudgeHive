@@ -1,3 +1,0 @@
-cho hai so nguyen a va b tren mot dong. in ra tong a + b.
-
-gioi han: |a|, |b| <= 10^9.
