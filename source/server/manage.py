@@ -1,20 +1,26 @@
-"""Chạy: python -m server.manage admin --role admin (mật khẩu nhập kín)."""
+"""Lệnh quản trị chạy trong container server.
+
+  python -m server.manage user admin --role admin   # tạo tài khoản, mật khẩu nhập kín
+  python -m server.manage problem problems/a.json   # nạp một đề từ file JSON ("-" = đọc stdin)
+"""
 import argparse
 import getpass
 import os
 import re
 import sys
+
+from pydantic import ValidationError
+
 from server.auth import hash_password
 from server.db import Database
+from server.problems import insert_problem, parse_problem
 
 
-def main():
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser()
-    parser.add_argument("username")
-    parser.add_argument("--role", choices=["user", "admin"], default="admin")
-    args = parser.parse_args()
+def open_db():
+    return Database(os.environ.get("JH_DB", "/data/judgehive.sqlite3"))
+
+
+def create_user(parser, args):
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", args.username):
         parser.error("Tên tài khoản chỉ gồm chữ, số, _, ., -; tối đa 32 ký tự")
     password = getpass.getpass("Mật khẩu (8–128 byte): ")
@@ -24,7 +30,7 @@ def main():
         hashed = hash_password(password)
     except ValueError as exc:
         parser.error(str(exc))
-    db = Database(os.environ.get("JH_DB", "/data/judgehive.sqlite3"))
+    db = open_db()
     try:
         if db.one("SELECT id FROM users WHERE username=?", (args.username,)):
             parser.error("Tài khoản đã tồn tại; đặt lại mật khẩu qua trang admin")
@@ -32,6 +38,43 @@ def main():
         print("Đã tạo tài khoản", args.username)
     finally:
         db.conn.close()
+
+
+def load_problem(parser, args):
+    try:
+        if args.file == "-":
+            text = sys.stdin.buffer.read().decode("utf-8")
+        else:
+            with open(args.file, encoding="utf-8") as stream:
+                text = stream.read()
+        problem = parse_problem(text)
+    except (OSError, UnicodeDecodeError) as exc:
+        parser.error(f"Không đọc được file đề: {exc}")
+    except ValidationError as exc:
+        parser.error("File đề không hợp lệ:\n" + str(exc))
+    except ValueError as exc:
+        parser.error(str(exc))
+    db = open_db()
+    try:
+        pid = insert_problem(db, problem)
+        print(f"Đã nạp đề #{pid}: {problem.title} ({len(problem.tests)} test, "
+              f"{'ẩn' if problem.hidden else 'hiện'})")
+    finally:
+        db.conn.close()
+
+
+def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    parser = argparse.ArgumentParser(prog="python -m server.manage")
+    commands = parser.add_subparsers(dest="command", required=True)
+    user = commands.add_parser("user", help="Tạo tài khoản")
+    user.add_argument("username")
+    user.add_argument("--role", choices=["user", "admin"], default="admin")
+    problem = commands.add_parser("problem", help="Nạp đề từ file JSON")
+    problem.add_argument("file")
+    args = parser.parse_args(argv)
+    (create_user if args.command == "user" else load_problem)(parser, args)
 
 
 if __name__ == "__main__":

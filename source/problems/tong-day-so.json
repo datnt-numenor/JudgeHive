@@ -1,0 +1,11 @@
+{
+  "title": "Tổng dãy số",
+  "statement": "Dòng đầu là số nguyên n (1 ≤ n ≤ 100000). Dòng sau gồm n số nguyên có trị tuyệt đối không quá 10^9. In tổng của n số.\nVí dụ: input \"3\\n1 2 3\" thì output \"6\".",
+  "time_limit_ms": 2000,
+  "memory_limit_kib": 262144,
+  "tests": [
+    {"input": "3\n1 2 3\n", "output": "6\n", "is_sample": true},
+    {"input": "1\n-1000000000\n", "output": "-1000000000\n"},
+    {"input": "5\n1000000000 1000000000 1000000000 1000000000 1000000000\n", "output": "5000000000\n"}
+  ]
+}

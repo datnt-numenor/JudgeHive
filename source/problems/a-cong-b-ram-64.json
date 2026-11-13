@@ -1,0 +1,10 @@
+{
+  "title": "A + B (RAM 64 MiB)",
+  "statement": "Đọc hai số nguyên a, b. In tổng a + b. Đề này giới hạn bộ nhớ 64 MiB và thời gian 10 giây để minh họa kết quả MLE (nộp samples/mle.py hoặc samples/MainMle.java).",
+  "time_limit_ms": 10000,
+  "memory_limit_kib": 65536,
+  "tests": [
+    {"input": "2 3\n", "output": "5\n", "is_sample": true},
+    {"input": "-7 9\n", "output": "2\n"}
+  ]
+}

@@ -137,47 +137,25 @@ function Users() {
       <label>Mật khẩu mới (bỏ trống để giữ)<input name="password" type="password" autoComplete="new-password" /></label><label className="check"><input name="disabled" type="checkbox" defaultChecked={!!u.disabled} disabled={u.id === user.id} />Khóa tài khoản</label></div><button disabled={busy}>Lưu tài khoản</button></form>)}</Loading></>;
 }
 
-const emptyProblem = { title: "", statement: "", time_limit_ms: 2000, memory_limit_kib: 262144,
-  tests: [{ input: "2 3\n", output: "5\n", is_sample: true }] };
-
+// Đề được nạp bằng lệnh `python -m server.manage problem FILE.json`; web chỉ xem và ẩn/hiện.
 function AdminProblems() {
   const { refresh } = useApp();
   const result = useData("/problems");
-  const [editing, setEditing] = useState(null);
-  const [draft, setDraft] = useState(emptyProblem);
-  const [testText, setTestText] = useState(JSON.stringify(emptyProblem.tests, null, 2));
-  const [locked, setLocked] = useState(false);
+  const [viewing, setViewing] = useState(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  function startNew() { setEditing(null); setDraft(emptyProblem); setTestText(JSON.stringify(emptyProblem.tests, null, 2)); setLocked(false); setError(""); }
   async function load(id) {
     setError("");
-    try {
-      const p = await api(`/admin/problems/${id}`); setEditing(id); setDraft(p); setTestText(JSON.stringify(p.tests, null, 2)); setLocked(p.locked);
-    } catch (e) { setError(e.message); }
+    try { setViewing(await api(`/admin/problems/${id}`)); } catch (e) { setError(e.message); }
   }
   async function hide(p) {
     setError("");
     try { await api(`/admin/problems/${p.id}`, "PATCH", { hidden: !p.hidden }); refresh(); }
     catch (e) { setError(e.message); }
   }
-  async function save(event) {
-    event.preventDefault(); setError(""); setBusy(true);
-    try {
-      const body = { title: draft.title, statement: draft.statement, time_limit_ms: Number(draft.time_limit_ms),
-        memory_limit_kib: Number(draft.memory_limit_kib), tests: JSON.parse(testText) };
-      await api(`/admin/problems${editing ? `/${editing}` : ""}`, editing ? "PUT" : "POST", body);
-      startNew(); refresh();
-    } catch (e) { setError(e.message); } finally { setBusy(false); }
-  }
-  const change = field => event => setDraft({ ...draft, [field]: event.target.value });
-  return <><h1>Quản lý đề bài</h1><Loading result={result}>{rows => <div className="table-wrap"><table><thead><tr><th>Đề</th><th>Hiển thị</th><th>Thao tác</th></tr></thead><tbody>{rows.map(p => <tr key={p.id}><td>{p.title}</td><td>{p.hidden ? "Ẩn" : "Hiện"}</td><td className="actions"><button onClick={() => load(p.id)}>Xem / sửa</button><button onClick={() => hide(p)}>{p.hidden ? "Hiện đề" : "Ẩn đề"}</button></td></tr>)}</tbody></table></div>}</Loading>
-    <form className="card" onSubmit={save}><div className="actions"><h2>{editing ? `Đề #${editing}` : "Tạo đề mới"}</h2><button type="button" onClick={startNew}>Tạo mới</button></div>
-      {locked && <p className="muted">Đề đã có bài nộp nên không sửa nội dung/test. Hãy tạo đề mới.</p>}<ErrorText message={error} />
-      <fieldset disabled={locked || busy}><label>Tiêu đề<input value={draft.title} onChange={change("title")} required /></label><label>Nội dung<textarea rows="5" value={draft.statement} onChange={change("statement")} required /></label><div className="grid">
-      <label>Thời gian/test (ms)<input type="number" min="100" max="10000" value={draft.time_limit_ms} onChange={change("time_limit_ms")} required /></label>
-      <label>Bộ nhớ/test (KiB)<input type="number" min="65536" max="524288" value={draft.memory_limit_kib} onChange={change("memory_limit_kib")} required /></label></div>
-      <label>Tests JSON · tối đa 20 test, tổng 1 MiB<textarea rows="12" spellCheck="false" value={testText} onChange={e => setTestText(e.target.value)} required /></label><button>{busy ? "Đang lưu…" : "Lưu đề"}</button></fieldset></form></>;
+  return <><h1>Quản lý đề bài</h1><p className="muted">Thêm đề bằng lệnh nạp file JSON ở server (xem README). Đề đang ẩn không hiện với USER và không tính vào bảng xếp hạng.</p><ErrorText message={error} />
+    <Loading result={result}>{rows => <div className="table-wrap"><table><thead><tr><th>Đề</th><th>Giới hạn</th><th>Hiển thị</th><th>Thao tác</th></tr></thead><tbody>{rows.map(p => <tr key={p.id}><td>#{p.id} {p.title}</td><td>{p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB</td><td>{p.hidden ? "Ẩn" : "Hiện"}</td><td className="actions"><button onClick={() => load(p.id)}>Xem test</button><button onClick={() => hide(p)}>{p.hidden ? "Hiện đề" : "Ẩn đề"}</button></td></tr>)}</tbody></table></div>}</Loading>
+    {viewing && <section className="card"><div className="actions"><h2>Đề #{viewing.id}: {viewing.title}</h2><button onClick={() => setViewing(null)}>Đóng</button></div>
+      {viewing.tests.map((t, i) => <div className="grid" key={i}><div><h3>Test {i + 1}{t.is_sample ? " (mẫu)" : ""} · input</h3><pre>{t.input}</pre></div><div><h3>Output</h3><pre>{t.output}</pre></div></div>)}</section>}</>;
 }
 
 function App() {

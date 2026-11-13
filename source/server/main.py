@@ -34,20 +34,6 @@ class EditUser(Model):
     password: str | None = Field(default=None, max_length=128)
 
 
-class Case(Model):
-    input: str
-    output: str
-    is_sample: bool = False
-
-
-class Problem(Model):
-    title: str = Field(min_length=1, max_length=160)
-    statement: str = Field(min_length=1, max_length=20000)
-    time_limit_ms: int = Field(default=2000, ge=100, le=10000)
-    memory_limit_kib: int = Field(default=262144, ge=65536, le=524288)
-    tests: list[Case] = Field(min_length=1, max_length=20)
-
-
 MAX_PENDING_PER_USER = 3
 
 
@@ -196,44 +182,13 @@ def create_app(db_path=None, secret=None, worker_port=None):
     async def scoreboard(user=Depends(current_user)):
         return app.state.db.scoreboard()
 
-    def validate_problem(body):
-        size = sum(len(t.input.encode()) + len(t.output.encode()) for t in body.tests)
-        if size > 1024 * 1024:
-            raise HTTPException(400, "Tổng dữ liệu test quá 1 MiB")
-
-    def save_problem(body, pid=None):
-        db = app.state.db
-        validate_problem(body)
-        with db.conn:
-            values = (body.title, body.statement, body.time_limit_ms, body.memory_limit_kib)
-            if pid is None:
-                pid = db.conn.execute("INSERT INTO problems(title,statement,time_limit_ms,memory_limit_kib) VALUES(?,?,?,?)", values).lastrowid
-            else:
-                db.conn.execute("UPDATE problems SET title=?,statement=?,time_limit_ms=?,memory_limit_kib=? WHERE id=?", (*values, pid))
-                db.conn.execute("DELETE FROM tests WHERE problem_id=?", (pid,))
-            db.conn.executemany("INSERT INTO tests(problem_id,position,input,output,is_sample) VALUES(?,?,?,?,?)",
-                                [(pid, i, t.input, t.output, t.is_sample) for i, t in enumerate(body.tests)])
-        return {"id": pid}
-
-    @app.post("/api/admin/problems", status_code=201)
-    async def add_problem(body: Problem, user=Depends(admin_user)):
-        return save_problem(body)
-
     @app.get("/api/admin/problems/{pid}")
     async def admin_problem(pid: int, user=Depends(admin_user)):
         row = get_problem(pid, user)
         row["tests"] = app.state.db.all("SELECT input,output,is_sample FROM tests WHERE problem_id=? ORDER BY position", (pid,))
         for case in row["tests"]:
             case["is_sample"] = bool(case["is_sample"])
-        row["locked"] = bool(app.state.db.one("SELECT id FROM submissions WHERE problem_id=? LIMIT 1", (pid,)))
         return row
-
-    @app.put("/api/admin/problems/{pid}")
-    async def edit_problem(pid: int, body: Problem, user=Depends(admin_user)):
-        get_problem(pid, user)
-        if app.state.db.one("SELECT id FROM submissions WHERE problem_id=? LIMIT 1", (pid,)):
-            raise HTTPException(409, "Đề đã có bài nộp; hãy tạo đề mới")
-        return save_problem(body, pid)
 
     @app.patch("/api/admin/problems/{pid}")
     async def visibility(pid: int, body: Visibility, user=Depends(admin_user)):

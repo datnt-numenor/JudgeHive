@@ -11,6 +11,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY common common
 COPY server server
+COPY problems problems
 COPY --from=frontend /client/dist /app/client/dist
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 JH_DB=/data/judgehive.sqlite3
 EXPOSE 8000 9000

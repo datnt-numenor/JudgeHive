@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+from pathlib import Path
 import socket
 from contextlib import contextmanager
 
@@ -9,6 +11,7 @@ from common.protocol import MAX_LINE, MAX_LINE_TO_SERVER, encode, receive, send
 from server.auth import hash_password
 from server.db import Database, now
 from server.main import create_app
+from server.problems import insert_problem, parse_problem
 
 SECRET = "test-secret-only-123456789"
 
@@ -71,10 +74,9 @@ def test_auth_access_admin_and_hidden_tests(tmp_path):
         assert client.get(f"/api/submissions/{sid}").status_code == 404
         login(client, "admin")
         assert client.get(f"/api/submissions/{sid}").status_code == 200
-        draft = {"title": "T", "statement": "Add", "tests": [{"input": "1 2", "output": "3"}]}
-        assert client.put("/api/admin/problems/1", json=draft).status_code == 409
-        pid = client.post("/api/admin/problems", json=draft).json()["id"]
-        assert client.put(f"/api/admin/problems/{pid}", json=draft).status_code == 200
+        pid = client.portal.call(lambda: insert_problem(app.state.db, parse_problem(
+            '{"title": "T", "statement": "Add", "tests": [{"input": "1 2", "output": "3"}]}')))
+        assert client.get(f"/api/admin/problems/{pid}").json()["tests"] == [{"input": "1 2", "output": "3", "is_sample": False}]
         assert client.patch(f"/api/admin/problems/{pid}", json={"hidden": True}).status_code == 200
         login(client)
         assert client.get(f"/api/problems/{pid}").status_code == 404
@@ -94,15 +96,34 @@ def test_disable_reset_sessions_and_origin(tmp_path):
         assert client.post("/api/auth/logout", json={}, headers={"Origin": "http://evil.test"}).status_code == 403
 
 
-def test_limits_and_problem_locks(tmp_path):
+def test_limits_and_no_problem_editing_on_web(tmp_path):
     with system(tmp_path) as (client, app):
         login(client)
         assert client.post("/api/submissions", json={"problem_id": 1, "language": "python", "code": "ấ" * 30000}).status_code == 400
         login(client, "admin")
-        draft = {"title": "T", "statement": "S", "tests": [{"input": "a" * 1048577, "output": ""}]}
-        assert client.post("/api/admin/problems", json=draft).status_code == 400
-        draft["tests"] = [{"input": "", "output": ""}] * 21
-        assert client.post("/api/admin/problems", json=draft).status_code == 422
+        draft = {"title": "T", "statement": "S", "tests": [{"input": "1", "output": "1"}]}
+        assert client.post("/api/admin/problems", json=draft).status_code == 405
+        assert client.put("/api/admin/problems/1", json=draft).status_code == 405
+
+
+def test_problem_file_validation():
+    def problem(**changes):
+        return json.dumps({"title": "T", "statement": "S", "tests": [{"input": "1", "output": "1"}], **changes})
+    assert parse_problem(problem()).time_limit_ms == 2000
+    for bad in (problem(tests=[{"input": "a" * 1048577, "output": ""}]), problem(tests=[{"input": "", "output": ""}] * 21),
+                problem(tests=[]), problem(memory_limit_kib=1024), problem(time_limit_ms="2000"), problem(extra=1), "{"):
+        with pytest.raises(ValueError):
+            parse_problem(bad)
+
+
+def test_bundled_problem_files_are_valid(tmp_path):
+    db = Database(str(tmp_path / "p.sqlite3"))
+    files = sorted((Path(__file__).parents[1] / "problems").glob("*.json"))
+    assert files
+    for path in files:
+        insert_problem(db, parse_problem(path.read_text(encoding="utf-8")))
+    assert any(row["memory_limit_kib"] == 65536 for row in db.all("SELECT memory_limit_kib FROM problems"))
+    db.conn.close()
 
 
 def test_parallel_results_and_websocket_privacy(tmp_path):
