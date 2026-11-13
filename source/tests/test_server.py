@@ -346,6 +346,6 @@ def test_pending_submissions_capped_per_user(tmp_path):
             submit(client)
         response = client.post("/api/submissions", json={"problem_id": 1, "language": "python", "code": "pass"})
         assert response.status_code == 429
-        assert app.state.db.one("SELECT COUNT(*) AS n FROM submissions")["n"] == 3
+        assert client.portal.call(lambda: app.state.db.one("SELECT COUNT(*) AS n FROM submissions"))["n"] == 3
         login(client, "bob")
         submit(client)

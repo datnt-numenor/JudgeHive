@@ -41,3 +41,11 @@ def test_docker_cancel_cleans_containers_and_volume():
     finally:
         assert not runner.cleanup()
     assert subprocess.run(["docker", "volume", "inspect", volume], capture_output=True).returncode != 0
+
+
+def test_time_excludes_docker_start():
+    # Đo 20 lần (13/11): wall của `docker start --attach` khoảng 150–200 ms, thời gian trong container 70–110 ms.
+    job = {"code": (SAMPLES / "ac.py").read_text(encoding="utf-8"), "language": "python", "time_limit_ms": 1000,
+           "memory_limit_kib": 262144, "tests": [{"input": "2 3\n", "output": "5\n"}]}
+    result = grade(job, threading.Event(), lambda count: None)
+    assert result["verdict"] == "AC" and 0 < result["time_ms"] < 500, result
