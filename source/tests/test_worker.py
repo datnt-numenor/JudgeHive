@@ -126,3 +126,15 @@ def test_time_uses_container_timestamps_not_cli_wall(monkeypatch):
 def test_tle_decided_by_container_time(monkeypatch):
     result = run_with_state(monkeypatch, docker_state("2026-11-13T01:00:00Z", "2026-11-13T01:00:02.1Z"))
     assert result["reason"] == "timeout" and result["time_ms"] == 2100
+
+
+def test_time_ms_is_slowest_test(monkeypatch):
+    times = iter([30, 70, 20])
+    monkeypatch.setattr(Runner, "command", lambda self, *args, check=True: b"")
+    monkeypatch.setattr(Runner, "create", lambda self, suffix, *args, **kwargs: self.prefix + "-" + suffix)
+    monkeypatch.setattr(Runner, "remove", lambda self, name: None)
+    monkeypatch.setattr(Runner, "run", lambda self, name, stdin, timeout: outcome(time_ms=next(times)))
+    job = {"language": "python", "code": "x", "time_limit_ms": 2000, "memory_limit_kib": 65536,
+           "tests": [{"input": "", "output": "5\n"}] * 3}
+    result = grade(job, threading.Event(), lambda count: None)
+    assert result == {"verdict": "AC", "message": "", "time_ms": 70}

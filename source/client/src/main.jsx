@@ -94,7 +94,7 @@ function SubmissionDetail() {
   const { id } = useParams();
   const result = useData(`/submissions/${id}`);
   return <Loading result={result}>{s => <><h1>Bài nộp #{s.id}</h1><section className="card"><div className="actions"><Verdict value={s.verdict} /><strong>{stateName[s.state]}</strong></div>
-    <p>Ngôn ngữ: {s.language} · Lần giao: {s.attempt_id} · Test đã qua: {s.tests_done}</p><p>Thời gian chạy các test: {s.time_ms ?? "—"} ms</p>
+    <p>Ngôn ngữ: {s.language} · Lần giao: {s.attempt_id} · Test đã qua: {s.tests_done}</p><p>Thời gian test chậm nhất: {s.time_ms ?? "—"} ms</p>
     <p>{s.message}</p><p className="muted">Nộp lúc {date(s.submitted_at)}</p></section><h2>Mã nguồn</h2><pre>{s.code}</pre></>}</Loading>;
 }
 

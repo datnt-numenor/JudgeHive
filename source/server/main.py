@@ -48,6 +48,9 @@ class Problem(Model):
     tests: list[Case] = Field(min_length=1, max_length=20)
 
 
+MAX_PENDING_PER_USER = 3
+
+
 class Visibility(Model):
     hidden: bool
 
@@ -167,6 +170,10 @@ def create_app(db_path=None, secret=None, worker_port=None):
         get_problem(body.problem_id, user)
         if body.language not in {"python", "cpp", "java"} or len(body.code.encode()) > 65536:
             raise HTTPException(400, "Ngôn ngữ không hợp lệ hoặc code quá 64 KiB")
+        pending = app.state.db.one("SELECT COUNT(*) AS n FROM submissions WHERE user_id=? AND state IN ('queued','judging')",
+                                   (user["id"],))["n"]
+        if pending >= MAX_PENDING_PER_USER:
+            raise HTTPException(429, f"Bạn đang có {pending} bài chờ chấm; hãy đợi có kết quả rồi nộp tiếp")
         sid = app.state.db.execute("INSERT INTO submissions(user_id,problem_id,language,code,submitted_at) VALUES(?,?,?,?,?)",
                                    (user["id"], body.problem_id, body.language, body.code, now()))
         app.state.engine.queue.put_nowait(sid)

@@ -136,7 +136,8 @@ class Engine:
                         await pending
             writer.close()
             if worker:
-                worker.update(state="disconnected", submission_id=None)
+                # Worker nối lại sẽ nhận id mới; không giữ bản ghi cũ trong danh sách.
+                self.workers.pop(worker["id"], None)
             if job and not self.stopping:
                 sid, attempt = job["submission_id"], job["attempt_id"]
                 if attempt >= 3:

@@ -302,3 +302,29 @@ def test_receive_respects_max_line():
         with pytest.raises(ValueError):
             await receive(reader, MAX_LINE_TO_SERVER)
     asyncio.run(scenario())
+
+
+def test_disconnected_worker_is_removed_from_list(tmp_path):
+    with system(tmp_path) as (client, app):
+        login(client, "admin")
+
+        async def scenario():
+            r, w, ack = await worker(app)
+            assert ack["type"] == "REGISTER_OK"
+            await until(lambda: len(app.state.engine.workers) == 1)
+            w.close()
+            await until(lambda: not app.state.engine.workers)
+        client.portal.call(scenario)
+        assert client.get("/api/admin/workers").json()["workers"] == []
+
+
+def test_pending_submissions_capped_per_user(tmp_path):
+    with system(tmp_path) as (client, app):
+        login(client, "alice")
+        for _ in range(3):
+            submit(client)
+        response = client.post("/api/submissions", json={"problem_id": 1, "language": "python", "code": "pass"})
+        assert response.status_code == 429
+        assert app.state.db.one("SELECT COUNT(*) AS n FROM submissions")["n"] == 3
+        login(client, "bob")
+        submit(client)

@@ -162,10 +162,10 @@ class Runner:
         source = SOURCES[language]
         compile_command = {"python": ["true"], "cpp": ["g++", "main.cpp", "-O2", "-std=c++17", "-o", "main"],
                            "java": ["javac", "-J-Xmx256m", "-J-XX:ActiveProcessorCount=1", "Main.java"]}[language]
-        total_ms = 0
+        max_ms = 0  # thời gian của test chậm nhất
 
         def result(verdict, message=""):
-            return {"verdict": verdict, "message": message[:2000], "time_ms": total_ms}
+            return {"verdict": verdict, "message": message[:2000], "time_ms": max_ms}
 
         # Docker copy-up từ /work của image tạo volume với owner 1000.
         self.command("volume", "create", self.volume)
@@ -187,7 +187,7 @@ class Runner:
         for index, case in enumerate(job["tests"], 1):
             container = self.create(f"test-{index}", job["memory_limit_kib"], run_command, readonly=True)
             outcome = self.run(container, case["input"], job["time_limit_ms"] / 1000)
-            total_ms += outcome["time_ms"]
+            max_ms = max(max_ms, outcome["time_ms"])
             self.remove(container)
             if outcome["oom"]:
                 return result("MLE", f"Test {index}: Docker xác nhận OOM")
