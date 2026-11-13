@@ -14,7 +14,8 @@ SAMPLES = Path(__file__).parents[1] / "samples"
 @pytest.mark.parametrize("file,language,expected", [
     ("ac.py", "python", "AC"), ("ac.cpp", "cpp", "AC"), ("Main.java", "java", "AC"),
     ("wa.py", "python", "WA"), ("tle.py", "python", "TLE"), ("mle.py", "python", "MLE"),
-    ("re.py", "python", "RE"), ("ce.cpp", "cpp", "CE"), ("output.py", "python", "WA")])
+    ("re.py", "python", "RE"), ("ce.cpp", "cpp", "CE"), ("output.py", "python", "WA"),
+    ("MainMle.java", "java", "MLE")])
 def test_real_verdicts(file, language, expected):
     job = {"code": (SAMPLES / file).read_text(encoding="utf-8"), "language": language,
            "time_limit_ms": 10000 if expected == "MLE" else 2000,

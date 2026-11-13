@@ -16,6 +16,8 @@ import uuid
 IMAGE = os.environ.get("JH_RUNNER_IMAGE", "judgehive-simple-runner:local")
 OUTPUT_CAP = 1024 * 1024
 SOURCES = {"python": "main.py", "cpp": "main.cpp", "java": "Main.java"}
+# JVM in chữ ký này ở cuối stderr khi OutOfMemoryError không được bắt.
+JAVA_OOM = "java.lang.OutOfMemoryError"
 
 
 class Cancelled(Exception):
@@ -103,8 +105,11 @@ class Runner:
                 stdout = stream.read(OUTPUT_CAP).decode("utf-8", errors="replace")
             with error_path.open("rb") as stream:
                 stderr = stream.read(4096).decode("utf-8", errors="replace")
+                # Lỗi biên dịch đọc ở đầu; chữ ký lỗi lúc chạy nằm ở cuối.
+                stream.seek(max(0, error_path.stat().st_size - 4096))
+                stderr_tail = stream.read(4096).decode("utf-8", errors="replace")
             return {"reason": reason, "oom": state.get("OOMKilled", False), "exit": state["ExitCode"],
-                    "stdout": stdout, "stderr": stderr, "time_ms": elapsed_ms}
+                    "stdout": stdout, "stderr": stderr, "stderr_tail": stderr_tail, "time_ms": elapsed_ms}
 
     def remove(self, name):
         self.command("rm", "--force", name)
@@ -148,7 +153,7 @@ class Runner:
         memory_mib = job["memory_limit_kib"] // 1024
         run_command = {"python": ["python3", "-B", "main.py"], "cpp": ["./main"],
                        "java": ["java", "-XX:ActiveProcessorCount=1", "-XX:+UseSerialGC",
-                                "-XX:+ExitOnOutOfMemoryError", f"-Xmx{max(16, memory_mib // 2)}m", "-Xss512k",
+                                f"-Xmx{max(16, memory_mib // 2)}m", "-Xss512k",
                                 "-XX:MaxMetaspaceSize=48m", "-XX:ReservedCodeCacheSize=16m", "Main"]}[language]
         for index, case in enumerate(job["tests"], 1):
             container = self.create(f"test-{index}", job["memory_limit_kib"], run_command, readonly=True)
@@ -161,6 +166,8 @@ class Runner:
                 return result("TLE", f"Test {index}: quá thời gian")
             if outcome["reason"] == "output":
                 return result("WA", f"Test {index}: output vượt 1 MiB")
+            if language == "java" and outcome["exit"] != 0 and JAVA_OOM in outcome["stderr_tail"]:
+                return result("MLE", f"Test {index}: Java hết bộ nhớ heap")
             if outcome["exit"] != 0:
                 # Không gửi stderr của test ẩn: chương trình có thể echo input vào stderr.
                 return result("RE", f"Test {index}: chương trình thoát mã {outcome['exit']}")
