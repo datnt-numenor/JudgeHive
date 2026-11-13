@@ -3,7 +3,8 @@ import asyncio
 
 import pytest
 
-from common.protocol import MAX_LINE, MAX_LINE_TO_SERVER, encode, receive
+from common.protocol import MAX_LINE, MAX_LINE_TO_SERVER, encode, job_timeout, receive
+from server.dispatch import REGISTER_TIMEOUT
 from conftest import SECRET, closed_by_server, connect, register, system
 
 
@@ -65,3 +66,9 @@ def test_server_closes_line_over_64_kib(tmp_path):
             writer.write(b"{not json}\n")  # JSON hỏng sau khi đã đăng ký
             assert await closed_by_server(reader)
         client.portal.call(scenario)
+
+
+def test_timeouts_match_readme():
+    assert REGISTER_TIMEOUT == 10
+    # README: 20 + số_test × (time_limit_ms/1000 + 10) + 60 giây; 2 test, 2 giây → 104.
+    assert job_timeout({"tests": [{}, {}], "time_limit_ms": 2000}) == 104

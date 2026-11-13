@@ -184,7 +184,7 @@ def test_wrong_attempt_or_submission_closes_and_is_ignored(tmp_path, kind, messa
 
 @pytest.mark.parametrize("bad", [{"tests_done": 0}, {"tests_done": 99}, {"tests_done": True}, {"tests_done": "1"},
                                  {"tests_done": 1, "repeat": True}, {"verdict": "PERFECT"}, {"time_ms": 1e300},
-                                 {"time_ms": -1}, {"message": "x" * 9000}])
+                                 {"time_ms": -1}, {"message": "x" * 9000}, {"message": None}])
 def test_invalid_progress_or_result_closes_and_requeues(tmp_path, bad, caplog):
     caplog.set_level(logging.INFO)
     with system(tmp_path) as (client, app):
@@ -199,7 +199,8 @@ def test_invalid_progress_or_result_closes_and_requeues(tmp_path, bad, caplog):
                     await send(writer, {"type": "PROGRESS", **ids(job), "tests_done": 1})
                 await send(writer, {"type": "PROGRESS", **ids(job), "tests_done": bad["tests_done"]})
             else:
-                await send(writer, {"type": "RESULT", **ids(job), "verdict": "AC", "time_ms": 1, "message": "", **bad})
+                result = {"type": "RESULT", **ids(job), "verdict": "AC", "time_ms": 1, "message": "", **bad}
+                await send(writer, {k: v for k, v in result.items() if v is not None})  # None = thiếu trường
             assert await closed_by_server(reader)
             await eventually(lambda: row(app, sid)["state"] == "queued")
         client.portal.call(scenario)
@@ -266,3 +267,14 @@ def test_restart_requeues_judging_and_final_attempt_is_se(tmp_path):
     with TestClient(app) as client:
         rows = client.portal.call(lambda: app.state.db.all("SELECT state,verdict FROM submissions ORDER BY id"))
     assert rows == [{"state": "queued", "verdict": None}] * 2 + [{"state": "done", "verdict": "SE"}]
+
+
+@pytest.mark.parametrize("message", [{"type": "REGISTER", "name": "again", "secret": SECRET},
+                                     {"type": "ERROR", "message": "x"}, {"type": "JOB"}])
+def test_registered_worker_sending_other_message_types_is_closed(tmp_path, message):
+    with system(tmp_path) as (client, app):
+        async def scenario():
+            reader, writer, _ = await register(app)
+            await send(writer, message)
+            assert await closed_by_server(reader)
+        client.portal.call(scenario)

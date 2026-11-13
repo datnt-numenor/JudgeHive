@@ -158,7 +158,7 @@ class Engine:
                 self.db.execute("UPDATE submissions SET tests_done=? WHERE id=?", (count, sid))
                 await self.hub.publish(sid)
                 continue
-            verdict, elapsed, detail = message.get("verdict"), message.get("time_ms"), message.get("message", "")
+            verdict, elapsed, detail = message.get("verdict"), message.get("time_ms"), message.get("message")
             if (message["type"] != "RESULT" or verdict not in VERDICTS
                     or type(elapsed) is not int or not 0 <= elapsed <= MAX_TIME_MS
                     or not isinstance(detail, str) or len(detail.encode()) > 8192):

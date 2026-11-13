@@ -81,8 +81,9 @@ def create_app(db_path=None, secret=None, worker_port=None):
             yield
         finally:
             listener.close()
-            await listener.wait_closed()
+            # Dừng các kết nối worker trước: từ Python 3.12.1 wait_closed chờ mọi kết nối đóng.
             await engine.stop()
+            await listener.wait_closed()
             for ws in list(hub.clients):
                 await ws.close(code=1001)
             db.conn.close()

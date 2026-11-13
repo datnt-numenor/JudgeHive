@@ -135,10 +135,17 @@ Chạy trong container, từ `source/`, sau khi `docker compose up --build -d` �
 docker run --rm --name judgehive-test -v "$PWD:/src" -w /src -v /var/run/docker.sock:/var/run/docker.sock -e JH_DOCKER_TESTS=1 judgehive-v2-worker sh -c "pip install -q -r requirements-dev.txt && python -m pytest -p no:cacheprovider -q tests"
 ```
 
-- `tests/invariants/`: test khóa contract (giao thức TCP, đăng ký, giao lại bài, không heartbeat, phân loại verdict, đo thời gian, quyền riêng tư).
-- `tests/test_server.py`, `tests/test_worker.py`: test thường, không cần Docker.
-- `tests/test_docker.py`: chấm thật trong container, bật bằng `JH_DOCKER_TESTS=1`.
-- `tests/test_compose.py`: smoke test toàn hệ thống đang chạy, bật bằng `JH_COMPOSE_TESTS=1`.
+| File | Nội dung | Cần Docker |
+|---|---|---|
+| `tests/conftest.py` | Hàm dùng chung: server thật trên loopback, worker giả qua TCP, Docker giả cho runner | Không |
+| `tests/test_protocol.py` | Framing: nửa message, message dính nhau, dòng sai, giới hạn 64 KiB/8 MiB | Không |
+| `tests/test_worker_link.py` | Đăng ký, trần 16 kết nối, không heartbeat, giao bài, `attempt_id`, hạn công việc, giao lại tối đa 3 lần | Không |
+| `tests/test_web.py` | Phân quyền, không lộ test ẩn, phiên, Origin, giới hạn nộp bài, file đề, WebSocket | Không |
+| `tests/test_grading.py` | Verdict, không lộ output/mã thoát, đo thời gian, worker hủy bài khi mất server | Không |
+| `tests/test_docker.py` | Chấm thật trong container (bật bằng `JH_DOCKER_TESTS=1`) | Có |
+| `tests/test_compose.py` | Smoke test hệ thống đang chạy (bật bằng `JH_COMPOSE_TESTS=1`) | Có |
+
+Năm file đầu là bộ test khóa contract của nhóm: sau khi đặt tag khóa thì không sửa test cũ, code phải theo test.
 
 ---
 
@@ -153,7 +160,7 @@ docker run --rm --name judgehive-test -v "$PWD:/src" -w /src -v /var/run/docker.
 
 ### 2. Giao thức JudgeHive (TCP, cổng 9000)
 
-**Framing.** Mỗi message là một object JSON mã hóa UTF-8, kết thúc bằng một byte `\n`. Xuống dòng bên trong code hay dữ liệu test được JSON escape nên không lẫn với dấu kết thúc. Bên nhận đệm byte tới khi gặp `\n` (TCP là luồng byte: một lần `recv` có thể chứa nửa message hoặc nhiều message).
+**Framing.** Mỗi message là một object JSON mã hóa UTF-8, kết thúc bằng một byte `\n` (giới hạn kích thước bên dưới tính cả byte này). Xuống dòng bên trong code hay dữ liệu test được JSON escape nên không lẫn với dấu kết thúc. Bên nhận đệm byte tới khi gặp `\n` (TCP là luồng byte: một lần `recv` có thể chứa nửa message hoặc nhiều message).
 
 **Giới hạn kích thước:** worker → server tối đa 64 KiB mỗi dòng; server → worker tối đa 8 MiB mỗi dòng (JOB chứa code và test). Vượt giới hạn, JSON sai, hoặc `type` lạ → đóng kết nối.
 

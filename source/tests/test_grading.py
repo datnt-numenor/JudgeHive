@@ -148,3 +148,51 @@ def test_worker_closes_on_oversized_line_or_invalid_job(monkeypatch, payload):
             listener.close(); await listener.wait_closed()
     asyncio.run(scenario())
     assert not graded
+
+
+@pytest.mark.parametrize("second_job", [False, True])
+def test_worker_sends_progress_in_order_then_result_and_rejects_job_while_busy(monkeypatch, second_job):
+    release = threading.Event()
+
+    def three_tests(job, cancel, progress):
+        for n in (1, 2, 3):
+            progress(n)
+        if second_job:
+            assert cancel.wait(3)  # server gửi JOB thứ hai: worker phải hủy bài và đóng kết nối
+            return None
+        release.wait(0.2)
+        return {"verdict": "AC", "message": "", "time_ms": 7}
+    monkeypatch.setattr("worker.main.grade", three_tests)
+    received = []
+    job = {"type": "JOB", "submission_id": 5, "attempt_id": 2, "language": "python", "code": "pass",
+           "tests": [{"input": "", "output": ""}] * 3, "time_limit_ms": 2000, "memory_limit_kib": 262144}
+
+    async def scenario():
+        async def server(reader, writer):
+            await receive(reader)
+            await send(writer, {"type": "REGISTER_OK", "worker_id": 1})
+            await send(writer, job)
+            if second_job:
+                await send(writer, job)
+            try:
+                while True:
+                    received.append(await asyncio.wait_for(receive(reader), 5))
+                    if received[-1]["type"] == "RESULT":
+                        break
+            except ConnectionError:
+                pass
+            writer.close()
+        listener = await asyncio.start_server(server, "127.0.0.1", 0, limit=MAX_LINE)
+        try:
+            with pytest.raises((ConnectionError, ValueError)):
+                await asyncio.wait_for(connection("127.0.0.1", listener.sockets[0].getsockname()[1], "s", "w",
+                                                  asyncio.Event()), 10)
+        finally:
+            listener.close(); await listener.wait_closed()
+    asyncio.run(scenario())
+    ids = {"submission_id": 5, "attempt_id": 2}
+    progress = [{"type": "PROGRESS", **ids, "tests_done": n} for n in (1, 2, 3)]
+    if second_job:
+        assert all(m["type"] == "PROGRESS" for m in received), "Bị hủy thì không được gửi RESULT"
+    else:
+        assert received == progress + [{"type": "RESULT", **ids, "verdict": "AC", "message": "", "time_ms": 7}]
