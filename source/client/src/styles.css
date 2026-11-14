@@ -91,3 +91,4 @@ footer { padding: 30px; text-align: center; font-size: 12px; border-top: 1px sol
 .difficulty-hard { color: #f63737; }
 .title-row { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
 .title-row .difficulty { padding: 2px 12px; border-radius: 999px; background: #232320; }
+.limits-note { margin: 18px 0 0; font-size: 13px; color: var(--muted); }
