@@ -53,7 +53,7 @@ def load_problem(parser, args):
     db = open_db()
     try:
         pid = insert_problem(db, problem)
-        print(f"Đã nạp đề #{pid}: {problem.title} ({len(problem.tests)} test, "
+        print(f"Đã nạp đề #{pid}: {problem.title} ({len(problem.tests)} test, {problem.difficulty}, "
               f"{'ẩn' if problem.hidden else 'hiện'})")
     finally:
         db.conn.close()

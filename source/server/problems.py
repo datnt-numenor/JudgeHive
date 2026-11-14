@@ -1,4 +1,6 @@
 """Định dạng file đề JSON và nạp đề vào database. Web không tạo/sửa đề; admin nạp bằng server.manage."""
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 MAX_TESTS_BYTES = 1024 * 1024
@@ -20,6 +22,7 @@ class Problem(Model):
     time_limit_ms: int = Field(default=2000, ge=100, le=10000)
     memory_limit_kib: int = Field(default=262144, ge=65536, le=524288)
     hidden: bool = False
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
     tests: list[Case] = Field(min_length=1, max_length=20)
 
 
@@ -35,8 +38,9 @@ def parse_problem(text):
 def insert_problem(db, problem):
     with db.conn:
         pid = db.conn.execute(
-            "INSERT INTO problems(title,statement,time_limit_ms,memory_limit_kib,hidden) VALUES(?,?,?,?,?)",
-            (problem.title, problem.statement, problem.time_limit_ms, problem.memory_limit_kib, problem.hidden),
+            "INSERT INTO problems(title,statement,time_limit_ms,memory_limit_kib,hidden,difficulty) VALUES(?,?,?,?,?,?)",
+            (problem.title, problem.statement, problem.time_limit_ms, problem.memory_limit_kib, problem.hidden,
+             problem.difficulty),
         ).lastrowid
         db.conn.executemany("INSERT INTO tests(problem_id,position,input,output,is_sample) VALUES(?,?,?,?,?)",
                             [(pid, i, t.input, t.output, t.is_sample) for i, t in enumerate(problem.tests)])
