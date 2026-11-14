@@ -8,12 +8,12 @@
 
 | STT | Họ và Tên | MSSV | Email | Đóng góp |
 |-----|-----------|------|-------|----------|
-| 1 | <Họ tên 1> | <MSSV 1> | <email 1> | <phần phụ trách> |
-| 2 | <Họ tên 2> | <MSSV 2> | <email 2> | <phần phụ trách> |
-| 3 | <Họ tên 3> | <MSSV 3> | <email 3> | <phần phụ trách> |
+| 1 | Nguyễn Tiến Đạt | B23DCCN139 | — | Giao thức TCP giữa server và worker (framing, đăng ký), điều phối và giao lại bài khi mất kết nối, WebSocket realtime |
+| 2 | Nguyễn Văn Phúc | B23DCCN957 | — | REST API, đăng nhập và phân quyền USER/ADMIN, cơ sở dữ liệu SQLite, chức năng quản trị |
+| 3 | Nguyễn Công Thành | B23DCCN771 | — | Worker chấm bài trong Docker, phân loại verdict, giao diện React |
 
-**Tên nhóm:** Nhóm 9 – Lập trình mạng
-**Chủ đề đã đăng ký:** Hệ thống chấm bài trực tuyến (online judge) với nhiều máy chấm kết nối qua TCP
+**Tên nhóm:** Nhóm 09
+**Chủ đề đã đăng ký:** Xây dựng hệ thống chấm code tự động JudgeHive
 
 ---
 
