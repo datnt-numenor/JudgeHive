@@ -579,7 +579,6 @@ function AdminProblems() {
               <thead>
                 <tr>
                   <th>Đề</th>
-                  <th>Giới hạn</th>
                   <th>Hiển thị</th>
                   <th>Thao tác</th>
                 </tr>
@@ -589,9 +588,6 @@ function AdminProblems() {
                   <tr key={p.id}>
                     <td>
                       #{p.id} {p.title}
-                    </td>
-                    <td>
-                      {p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB
                     </td>
                     <td>{p.hidden ? "Ẩn" : "Hiện"}</td>
                     <td className="actions">
