@@ -84,30 +84,94 @@ function Login() {
   );
 }
 
+// Trạng thái của chính người đang xem (server tính): đã AC, đã nộp nhưng chưa AC, chưa nộp.
+const problemStatus = {
+  solved: { icon: "✓", label: "Đã giải" },
+  attempted: { icon: "○", label: "Đã thử" },
+};
+const percent = (rate) => (rate === null ? "—" : `${Math.round(rate * 1000) / 10}%`);
+
 function Problems() {
   const result = useData("/problems");
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const [sort, setSort] = useState("id");
   return (
     <>
       <h1>Kho đề bài</h1>
       <p className="muted">Chọn một bài và gửi lời giải bằng Python, C++ hoặc Java.</p>
       <Loading result={result}>
-        {(rows) => (
-          <div className="grid">
-            {rows.map((p) => (
-              <Link className="card problem" key={p.id} to={`/problems/${p.id}`}>
-                <span className="eyebrow">
-                  BÀI {p.id}
-                  {p.hidden ? " · ĐANG ẨN" : ""}
+        {(rows) => {
+          // Lọc và sắp xếp hoàn toàn ở client trên danh sách đã tải.
+          const text = query.trim().toLowerCase();
+          const shown = rows
+            .filter((p) => !text || p.title.toLowerCase().includes(text) || String(p.id).startsWith(text))
+            .filter((p) => status === "all" || (p.status ?? "todo") === status)
+            .sort((a, b) =>
+              sort === "rate" ? (b.ac_rate ?? -1) - (a.ac_rate ?? -1) || a.id - b.id : a.id - b.id,
+            );
+          const solved = rows.filter((p) => p.status === "solved").length;
+          return (
+            <>
+              <div className="toolbar">
+                <input
+                  type="search"
+                  placeholder="Tìm theo tên hoặc số đề"
+                  aria-label="Tìm đề"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <select aria-label="Lọc trạng thái" value={status} onChange={(e) => setStatus(e.target.value)}>
+                  <option value="all">Tất cả</option>
+                  <option value="solved">Đã giải</option>
+                  <option value="attempted">Đã thử</option>
+                  <option value="todo">Chưa làm</option>
+                </select>
+                <select aria-label="Sắp xếp" value={sort} onChange={(e) => setSort(e.target.value)}>
+                  <option value="id">Theo số đề</option>
+                  <option value="rate">Theo tỉ lệ AC</option>
+                </select>
+                <span className="solved-count">
+                  <span className="status-solved">✓</span> {solved}/{rows.length} đã giải
                 </span>
-                <h2>{p.title}</h2>
-                <p className="muted">
-                  {p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB
-                </p>
-                <strong>Giải bài →</strong>
-              </Link>
-            ))}
-          </div>
-        )}
+              </div>
+              <div className="table-wrap">
+                <table className="problem-table">
+                  <thead>
+                    <tr>
+                      <th className="status-col">Trạng thái</th>
+                      <th>Đề</th>
+                      <th>Tỉ lệ AC</th>
+                      <th>Giới hạn</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shown.map((p) => (
+                      // Cả hàng bấm được; link trong ô tên để dùng được bàn phím.
+                      <tr key={p.id} className="row-link" onClick={() => navigate(`/problems/${p.id}`)}>
+                        <td className="status-col" title={problemStatus[p.status]?.label ?? "Chưa làm"}>
+                          <span className={`status-${p.status ?? "todo"}`}>{problemStatus[p.status]?.icon ?? ""}</span>
+                        </td>
+                        <td>
+                          <Link to={`/problems/${p.id}`} onClick={(e) => e.stopPropagation()}>
+                            {p.id}. {p.title}
+                          </Link>
+                          {p.hidden ? <span className="badge">Ẩn</span> : null}
+                        </td>
+                        <td>{percent(p.ac_rate)}</td>
+                        <td className="muted">
+                          {p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!shown.length && <p className="muted">Không có đề nào khớp bộ lọc.</p>}
+            </>
+          );
+        }}
       </Loading>
     </>
   );
