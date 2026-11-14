@@ -104,12 +104,22 @@ const problemStatus = {
   attempted: { icon: "○", label: "Đã thử" },
 };
 const percent = (rate) => (rate === null ? "—" : `${Math.round(rate * 1000) / 10}%`);
+// Độ khó do server trả (easy/medium/hard); rank dùng để sắp xếp Dễ → Khó.
+const difficulties = {
+  easy: { label: "Dễ", rank: 0 },
+  medium: { label: "Trung bình", rank: 1 },
+  hard: { label: "Khó", rank: 2 },
+};
+function Difficulty({ value }) {
+  return <span className={`difficulty difficulty-${value}`}>{difficulties[value]?.label ?? value}</span>;
+}
 
 function Problems() {
   const result = useData("/problems");
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
+  const [level, setLevel] = useState("all");
   const [sort, setSort] = useState("id");
   return (
     <>
@@ -122,9 +132,13 @@ function Problems() {
           const shown = rows
             .filter((p) => !text || p.title.toLowerCase().includes(text) || String(p.id).startsWith(text))
             .filter((p) => status === "all" || (p.status ?? "todo") === status)
-            .sort((a, b) =>
-              sort === "rate" ? (b.ac_rate ?? -1) - (a.ac_rate ?? -1) || a.id - b.id : a.id - b.id,
-            );
+            .filter((p) => level === "all" || p.difficulty === level)
+            .sort((a, b) => {
+              if (sort === "rate") return (b.ac_rate ?? -1) - (a.ac_rate ?? -1) || a.id - b.id;
+              if (sort === "difficulty")
+                return difficulties[a.difficulty].rank - difficulties[b.difficulty].rank || a.id - b.id;
+              return a.id - b.id;
+            });
           const solved = rows.filter((p) => p.status === "solved").length;
           return (
             <>
@@ -146,9 +160,16 @@ function Problems() {
                   <option value="attempted">Đã thử</option>
                   <option value="todo">Chưa làm</option>
                 </select>
+                <select aria-label="Lọc độ khó" value={level} onChange={(e) => setLevel(e.target.value)}>
+                  <option value="all">Mọi độ khó</option>
+                  <option value="easy">Dễ</option>
+                  <option value="medium">Trung bình</option>
+                  <option value="hard">Khó</option>
+                </select>
                 <select aria-label="Sắp xếp" value={sort} onChange={(e) => setSort(e.target.value)}>
                   <option value="id">Theo số đề</option>
                   <option value="rate">Theo tỉ lệ AC</option>
+                  <option value="difficulty">Theo độ khó</option>
                 </select>
                 <span className="solved-count">
                   <span className="status-solved">✓</span> {solved}/{rows.length} đã giải
@@ -161,6 +182,7 @@ function Problems() {
                       <th className="status-col">Trạng thái</th>
                       <th>Đề</th>
                       <th>Tỉ lệ AC</th>
+                      <th>Độ khó</th>
                       <th>Giới hạn</th>
                     </tr>
                   </thead>
@@ -180,6 +202,9 @@ function Problems() {
                           {p.hidden ? <span className="badge">Ẩn</span> : null}
                         </td>
                         <td>{percent(p.ac_rate)}</td>
+                        <td>
+                          <Difficulty value={p.difficulty} />
+                        </td>
                         <td className="muted">
                           {p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB
                         </td>
@@ -222,7 +247,10 @@ function ProblemDetail() {
     <Loading result={result}>
       {(p) => (
         <>
-          <h1>{p.title}</h1>
+          <div className="title-row">
+            <h1>{p.title}</h1>
+            <Difficulty value={p.difficulty} />
+          </div>
           <p className="muted">
             {p.time_limit_ms} ms/test · {p.memory_limit_kib / 1024} MiB/test
           </p>
