@@ -26,7 +26,8 @@ class Database:
         CREATE TABLE IF NOT EXISTS problems (
             id INTEGER PRIMARY KEY, title TEXT NOT NULL, statement TEXT NOT NULL,
             time_limit_ms INTEGER NOT NULL, memory_limit_kib INTEGER NOT NULL,
-            hidden INTEGER NOT NULL DEFAULT 0);
+            hidden INTEGER NOT NULL DEFAULT 0,
+            difficulty TEXT NOT NULL DEFAULT 'medium' CHECK(difficulty IN ('easy','medium','hard')));
         CREATE TABLE IF NOT EXISTS tests (
             id INTEGER PRIMARY KEY, problem_id INTEGER NOT NULL REFERENCES problems(id),
             position INTEGER NOT NULL, input TEXT NOT NULL, output TEXT NOT NULL,
@@ -39,10 +40,17 @@ class Database:
             tests_done INTEGER NOT NULL DEFAULT 0, time_ms INTEGER, message TEXT NOT NULL DEFAULT '');
         CREATE INDEX IF NOT EXISTS submission_user ON submissions(user_id, id);
         """)
+        # DB tạo trước khi có độ khó thì CREATE TABLE IF NOT EXISTS ở trên không thêm cột mới:
+        # thêm bằng ALTER TABLE, đề có sẵn nhận giá trị mặc định 'medium'.
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(problems)")}
+        if "difficulty" not in columns:
+            with self.conn:
+                self.conn.execute("ALTER TABLE problems ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'medium' CHECK(difficulty IN ('easy','medium','hard'))")
         if not self.one("SELECT id FROM problems LIMIT 1"):
             with self.conn:
-                cur = self.conn.execute("INSERT INTO problems(title,statement,time_limit_ms,memory_limit_kib) VALUES(?,?,?,?)",
-                                        ("A + B", "Đọc hai số nguyên a, b. In tổng a + b. Ví dụ: 2 3 → 5.", 2000, 262144))
+                cur = self.conn.execute("INSERT INTO problems(title,statement,time_limit_ms,memory_limit_kib,difficulty) "
+                                        "VALUES(?,?,?,?,?)",
+                                        ("A + B", "Đọc hai số nguyên a, b. In tổng a + b. Ví dụ: 2 3 → 5.", 2000, 262144, "easy"))
                 self.conn.executemany("INSERT INTO tests(problem_id,position,input,output,is_sample) VALUES(?,?,?,?,?)",
                                       [(cur.lastrowid, 1, "2 3\n", "5\n", 1),
                                        (cur.lastrowid, 2, "-7 9\n", "2\n", 0)])

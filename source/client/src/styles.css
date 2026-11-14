@@ -28,9 +28,6 @@ main { max-width: 1160px; margin: 0 auto; padding: 24px; min-height: 78vh; } h1 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; box-shadow: 0 8px 24px #00000024; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 22px; } .grid .card { margin: 0; }
 .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--honey); }
-.problem { display: block; color: var(--text); transition: border-color .2s, background .2s; }
-.problem strong { color: var(--honey); }
-.problem:hover { color: var(--text); border-color: var(--honey); background: #222017; text-decoration: none; }
 .muted, footer { color: var(--muted); }
 .statusbar { display: flex; justify-content: flex-end; align-items: center; gap: 16px; font-size: 12px; color: var(--muted); }
 button { background: var(--honey); border: 1px solid transparent; color: #191507; border-radius: 7px; padding: 9px 15px; cursor: pointer; font: inherit; font-size: 14px; font-weight: 650; }
@@ -51,11 +48,46 @@ th { background: #292519; font-size: 12px; text-transform: uppercase; color: #e7
 th, td { padding: 15px 18px; border-bottom: 1px solid var(--border); }
 tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #222119; }
-.verdict { display: inline-block; padding: 3px 12px; border-radius: 6px; font-weight: 700; background: #39231f; color: #ffb4a3; }
-.verdict.good { background: #233326; color: #a8e1ac; }
+/* Mỗi verdict một màu. */
+.verdict { display: inline-block; padding: 3px 12px; border-radius: 6px; font-weight: 700; background: #2a2a27; color: #b8b4a6; }
+.v-ac { background: #1f3a26; color: #8fe0a2; }
+.v-wa { background: #45201d; color: #ff9f90; }
+.v-tle { background: #46301a; color: #ffb766; }
+.v-mle { background: #33224a; color: #c9a6ff; }
+.v-re { background: #4a1f36; color: #ff9cc8; }
+.v-ce, .v-se { background: #2e2e2b; color: #c4c0b2; }
+.state-queued, .state-judging { color: var(--honey); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .state-queued, .state-judging { animation: none; } }
+nav a.active { color: var(--honey); font-weight: 700; border-bottom: 2px solid var(--honey); padding-bottom: 2px; }
 .error { color: #ffc1b1; background: #321e1b; border-left: 3px solid #f38e70; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .login { max-width: 440px; margin: 10vh auto; padding: 36px; border-top: 3px solid var(--honey); box-shadow: 0 16px 64px #00000055; }
 .login h1 { color: var(--honey); }
 .login button { width: 100%; }
 footer { padding: 30px; text-align: center; font-size: 12px; border-top: 1px solid var(--border); }
 @media(max-width: 650px) { main { padding: 16px; } header { gap: 14px; } nav { order: 3; flex-basis: 100%; } h1 { font-size: 26px; } .card { padding: 18px; } }
+
+/* Danh sách đề dạng hàng: hai tông nền xen kẽ, rê chuột sáng lên, cả hàng bấm được. */
+.toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 20px; }
+.toolbar input { flex: 1 1 260px; width: auto; }
+.toolbar select { width: auto; }
+.solved-count { margin-left: auto; color: var(--muted); font-size: 14px; white-space: nowrap; }
+.problem-table th, .problem-table td { padding: 12px 18px; border-bottom: 0; }
+.problem-table tbody tr:nth-child(odd) { background: #1d1c19; }
+.problem-table tbody tr:nth-child(even) { background: #151513; }
+.problem-table tbody tr.row-link { cursor: pointer; transition: background .15s; }
+.problem-table tbody tr.row-link:hover { background: #2a2719; }
+.problem-table td a { color: var(--text); font-weight: 600; }
+.problem-table tr:hover td a { color: var(--honey); text-decoration: none; }
+.status-col { width: 90px; text-align: center; }
+.status-solved { color: #6fd38a; font-weight: 800; font-size: 18px; }
+.status-attempted { color: #e7b85a; font-size: 18px; }
+.badge { display: inline-block; margin-left: 10px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #3a3424; color: #e7ca7b; border: 1px solid #6c5b2d; }
+
+/* Độ khó, màu giống LeetCode: Dễ xanh ngọc, Trung bình vàng cam, Khó đỏ. */
+.difficulty { font-weight: 700; font-size: 14px; }
+.difficulty-easy { color: #1cbaba; }
+.difficulty-medium { color: #ffb700; }
+.difficulty-hard { color: #f63737; }
+.title-row { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.title-row .difficulty { padding: 2px 12px; border-radius: 999px; background: #232320; }

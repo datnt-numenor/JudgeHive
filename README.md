@@ -93,7 +93,7 @@ docker compose exec server python -m server.manage problem problems/tong-day-so.
 docker compose exec server python -m server.manage problem problems/a-cong-b-ram-64.json
 ```
 
-Định dạng file đề: `title`, `statement`, `time_limit_ms` (100–10000), `memory_limit_kib` (65536–524288), `hidden` (tùy chọn), `tests` là 1–20 phần tử `{input, output, is_sample}`, tổng input/output tối đa 1 MiB.
+Định dạng file đề: `title`, `statement`, `time_limit_ms` (100–10000), `memory_limit_kib` (65536–524288), `hidden` (tùy chọn), `difficulty` (tùy chọn: `easy`, `medium` hoặc `hard`, mặc định `medium`), `tests` là 1–20 phần tử `{input, output, is_sample}`, tổng input/output tối đa 1 MiB.
 
 Lệnh hay dùng:
 
@@ -220,7 +220,8 @@ Mỗi test chạy trong container mới: không mạng, RAM theo đề (không s
 | Method / URL | Quyền | Mô tả |
 |---|---|---|
 | POST `/api/auth/login` · POST `/api/auth/logout` · GET `/api/auth/me` | — | Đăng nhập, đăng xuất, thông tin phiên |
-| GET `/api/problems` · GET `/api/problems/{id}` | Đăng nhập | Danh sách đề, đề + test mẫu |
+| GET `/api/problems` | Đăng nhập | Danh sách đề; mỗi đề có `difficulty` (`easy`/`medium`/`hard`), và thêm `status` (`"solved"` nếu người đang đăng nhập đã AC, `"attempted"` nếu đã nộp mà chưa AC, `null` nếu chưa nộp) và `ac_rate` (số bài AC / số bài đã chấm xong của đề, từ 0 đến 1; `null` nếu chưa có bài chấm xong) |
+| GET `/api/problems/{id}` | Đăng nhập | Đề (kèm `difficulty`) + test mẫu |
 | POST `/api/submissions` | Đăng nhập | Nộp `{problem_id, language, code}`; 429 nếu đã có 3 bài chờ chấm |
 | GET `/api/submissions` · GET `/api/submissions/{id}` | Đăng nhập | 100 bài mới nhất và chi tiết bài của mình |
 | GET `/api/scoreboard` | Đăng nhập | Bảng xếp hạng |

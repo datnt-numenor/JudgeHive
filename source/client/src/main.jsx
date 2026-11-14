@@ -1,6 +1,15 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import {
+  BrowserRouter,
+  Link,
+  NavLink,
+  Navigate,
+  Route,
+  Routes,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import { api } from "./api";
 import "./styles.css";
 
@@ -38,8 +47,13 @@ function ErrorText({ message }) {
     </p>
   ) : null;
 }
+// Mỗi verdict một màu (CSS .v-ac, .v-wa, ...); bài chưa có kết quả hiện "—".
 function Verdict({ value }) {
-  return <span className={`verdict ${value === "AC" ? "good" : ""}`}>{value || "—"}</span>;
+  return <span className={`verdict v-${(value || "none").toLowerCase()}`}>{value || "—"}</span>;
+}
+// Trạng thái bài nộp; "Đang chờ/Đang chấm" có hiệu ứng nhấp nháy nhẹ.
+function SubmissionState({ value }) {
+  return <span className={`state state-${value}`}>{stateName[value]}</span>;
 }
 function Loading({ result, children }) {
   if (result.error) return <ErrorText message={result.error} />;
@@ -84,30 +98,125 @@ function Login() {
   );
 }
 
+// Trạng thái của chính người đang xem (server tính): đã AC, đã nộp nhưng chưa AC, chưa nộp.
+const problemStatus = {
+  solved: { icon: "✓", label: "Đã giải" },
+  attempted: { icon: "○", label: "Đã thử" },
+};
+const percent = (rate) => (rate === null ? "—" : `${Math.round(rate * 1000) / 10}%`);
+// Độ khó do server trả (easy/medium/hard); rank dùng để sắp xếp Dễ → Khó.
+const difficulties = {
+  easy: { label: "Dễ", rank: 0 },
+  medium: { label: "Trung bình", rank: 1 },
+  hard: { label: "Khó", rank: 2 },
+};
+function Difficulty({ value }) {
+  return <span className={`difficulty difficulty-${value}`}>{difficulties[value]?.label ?? value}</span>;
+}
+
 function Problems() {
   const result = useData("/problems");
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const [level, setLevel] = useState("all");
+  const [sort, setSort] = useState("id");
   return (
     <>
       <h1>Kho đề bài</h1>
       <p className="muted">Chọn một bài và gửi lời giải bằng Python, C++ hoặc Java.</p>
       <Loading result={result}>
-        {(rows) => (
-          <div className="grid">
-            {rows.map((p) => (
-              <Link className="card problem" key={p.id} to={`/problems/${p.id}`}>
-                <span className="eyebrow">
-                  BÀI {p.id}
-                  {p.hidden ? " · ĐANG ẨN" : ""}
+        {(rows) => {
+          // Lọc và sắp xếp hoàn toàn ở client trên danh sách đã tải.
+          const text = query.trim().toLowerCase();
+          const shown = rows
+            .filter((p) => !text || p.title.toLowerCase().includes(text) || String(p.id).startsWith(text))
+            .filter((p) => status === "all" || (p.status ?? "todo") === status)
+            .filter((p) => level === "all" || p.difficulty === level)
+            .sort((a, b) => {
+              if (sort === "rate") return (b.ac_rate ?? -1) - (a.ac_rate ?? -1) || a.id - b.id;
+              if (sort === "difficulty")
+                return difficulties[a.difficulty].rank - difficulties[b.difficulty].rank || a.id - b.id;
+              return a.id - b.id;
+            });
+          const solved = rows.filter((p) => p.status === "solved").length;
+          return (
+            <>
+              <div className="toolbar">
+                <input
+                  type="search"
+                  placeholder="Tìm theo tên hoặc số đề"
+                  aria-label="Tìm đề"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <select
+                  aria-label="Lọc trạng thái"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                >
+                  <option value="all">Tất cả</option>
+                  <option value="solved">Đã giải</option>
+                  <option value="attempted">Đã thử</option>
+                  <option value="todo">Chưa làm</option>
+                </select>
+                <select aria-label="Lọc độ khó" value={level} onChange={(e) => setLevel(e.target.value)}>
+                  <option value="all">Mọi độ khó</option>
+                  <option value="easy">Dễ</option>
+                  <option value="medium">Trung bình</option>
+                  <option value="hard">Khó</option>
+                </select>
+                <select aria-label="Sắp xếp" value={sort} onChange={(e) => setSort(e.target.value)}>
+                  <option value="id">Theo số đề</option>
+                  <option value="rate">Theo tỉ lệ AC</option>
+                  <option value="difficulty">Theo độ khó</option>
+                </select>
+                <span className="solved-count">
+                  <span className="status-solved">✓</span> {solved}/{rows.length} đã giải
                 </span>
-                <h2>{p.title}</h2>
-                <p className="muted">
-                  {p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB
-                </p>
-                <strong>Giải bài →</strong>
-              </Link>
-            ))}
-          </div>
-        )}
+              </div>
+              <div className="table-wrap">
+                <table className="problem-table">
+                  <thead>
+                    <tr>
+                      <th className="status-col">Trạng thái</th>
+                      <th>Đề</th>
+                      <th>Tỉ lệ AC</th>
+                      <th>Độ khó</th>
+                      <th>Giới hạn</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shown.map((p) => (
+                      // Cả hàng bấm được; link trong ô tên để dùng được bàn phím.
+                      <tr key={p.id} className="row-link" onClick={() => navigate(`/problems/${p.id}`)}>
+                        <td className="status-col" title={problemStatus[p.status]?.label ?? "Chưa làm"}>
+                          <span className={`status-${p.status ?? "todo"}`}>
+                            {problemStatus[p.status]?.icon ?? ""}
+                          </span>
+                        </td>
+                        <td>
+                          <Link to={`/problems/${p.id}`} onClick={(e) => e.stopPropagation()}>
+                            {p.id}. {p.title}
+                          </Link>
+                          {p.hidden ? <span className="badge">Ẩn</span> : null}
+                        </td>
+                        <td>{percent(p.ac_rate)}</td>
+                        <td>
+                          <Difficulty value={p.difficulty} />
+                        </td>
+                        <td className="muted">
+                          {p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!shown.length && <p className="muted">Không có đề nào khớp bộ lọc.</p>}
+            </>
+          );
+        }}
       </Loading>
     </>
   );
@@ -138,7 +247,10 @@ function ProblemDetail() {
     <Loading result={result}>
       {(p) => (
         <>
-          <h1>{p.title}</h1>
+          <div className="title-row">
+            <h1>{p.title}</h1>
+            <Difficulty value={p.difficulty} />
+          </div>
           <p className="muted">
             {p.time_limit_ms} ms/test · {p.memory_limit_kib / 1024} MiB/test
           </p>
@@ -183,8 +295,10 @@ function ProblemDetail() {
 }
 
 function Submissions({ admin = false }) {
-  // Server trả 100 bài mới nhất.
+  // Server trả 100 bài mới nhất. Tên đề lấy từ danh sách đề (không đổi API bài nộp).
   const result = useData(`${admin ? "/admin" : ""}/submissions`);
+  const problems = useData("/problems");
+  const titles = Object.fromEntries((problems.data ?? []).map((p) => [p.id, p.title]));
   return (
     <>
       <h1>{admin ? "Tất cả bài nộp" : "Bài nộp của tôi"}</h1>
@@ -211,9 +325,17 @@ function Submissions({ admin = false }) {
                         <Link to={`/submissions/${s.id}`}>#{s.id}</Link>
                       </td>
                       {admin && <td>{s.username}</td>}
-                      <td>{s.problem_id}</td>
+                      <td>
+                        <Link to={`/problems/${s.problem_id}`}>
+                          {titles[s.problem_id]
+                            ? `${s.problem_id}. ${titles[s.problem_id]}`
+                            : `#${s.problem_id}`}
+                        </Link>
+                      </td>
                       <td>{s.language}</td>
-                      <td>{stateName[s.state]}</td>
+                      <td>
+                        <SubmissionState value={s.state} />
+                      </td>
                       <td>
                         <Verdict value={s.verdict} />
                       </td>
@@ -234,6 +356,8 @@ function Submissions({ admin = false }) {
 function SubmissionDetail() {
   const { id } = useParams();
   const result = useData(`/submissions/${id}`);
+  const problems = useData("/problems");
+  const limitOf = (pid) => (problems.data ?? []).find((p) => p.id === pid)?.time_limit_ms;
   return (
     <Loading result={result}>
       {(s) => (
@@ -242,13 +366,19 @@ function SubmissionDetail() {
           <section className="card">
             <div className="actions">
               <Verdict value={s.verdict} />
-              <strong>{stateName[s.state]}</strong>
+              <SubmissionState value={s.state} />
             </div>
             <p>
               Ngôn ngữ: {s.language} · Lần giao: {s.attempt_id} · Test đã qua: {s.tests_done}
             </p>
-            <p>Thời gian test chậm nhất: {s.time_ms ?? "—"} ms</p>
-            <p>{s.message}</p>
+            <p>
+              Thời gian test chậm nhất:{" "}
+              {/* Bài TLE bị dừng sau giới hạn, nên thời gian thật là "lớn hơn giới hạn". */}
+              {s.verdict === "TLE" && limitOf(s.problem_id)
+                ? `> ${limitOf(s.problem_id)} ms`
+                : `${s.time_ms ?? "—"} ms`}
+            </p>
+            {s.verdict === "CE" ? <pre>{s.message}</pre> : <p>{s.message}</p>}
             <p className="muted">Nộp lúc {date(s.submitted_at)}</p>
           </section>
           <h2>Mã nguồn</h2>
@@ -551,15 +681,18 @@ function App() {
               ⬡ JudgeHive
             </Link>
             <nav>
-              <Link to="/">Đề bài</Link>
-              <Link to="/submissions">Bài nộp</Link>
-              <Link to="/scoreboard">Xếp hạng</Link>
+              {/* NavLink tự gắn class "active" cho trang đang mở. */}
+              <NavLink to="/" end>
+                Đề bài
+              </NavLink>
+              <NavLink to="/submissions">Bài nộp</NavLink>
+              <NavLink to="/scoreboard">Xếp hạng</NavLink>
               {user.role === "admin" && (
                 <>
-                  <Link to="/admin/problems">Quản lý đề</Link>
-                  <Link to="/admin/users">Người dùng</Link>
-                  <Link to="/admin/workers">Worker</Link>
-                  <Link to="/admin/submissions">Tất cả bài</Link>
+                  <NavLink to="/admin/problems">Quản lý đề</NavLink>
+                  <NavLink to="/admin/users">Người dùng</NavLink>
+                  <NavLink to="/admin/workers">Worker</NavLink>
+                  <NavLink to="/admin/submissions">Tất cả bài</NavLink>
                 </>
               )}
             </nav>
