@@ -183,7 +183,6 @@ function Problems() {
                       <th>Đề</th>
                       <th>Tỉ lệ AC</th>
                       <th>Độ khó</th>
-                      <th>Giới hạn</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -204,9 +203,6 @@ function Problems() {
                         <td>{percent(p.ac_rate)}</td>
                         <td>
                           <Difficulty value={p.difficulty} />
-                        </td>
-                        <td className="muted">
-                          {p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB
                         </td>
                       </tr>
                     ))}
@@ -251,9 +247,6 @@ function ProblemDetail() {
             <h1>{p.title}</h1>
             <Difficulty value={p.difficulty} />
           </div>
-          <p className="muted">
-            {p.time_limit_ms} ms/test · {p.memory_limit_kib / 1024} MiB/test
-          </p>
           <article className="card">
             <p className="statement">{p.statement}</p>
             {p.samples.map((sample, index) => (
@@ -268,6 +261,9 @@ function ProblemDetail() {
                 </div>
               </div>
             ))}
+            <p className="limits-note">
+              Giới hạn: {p.time_limit_ms} ms và {p.memory_limit_kib / 1024} MiB cho mỗi test.
+            </p>
           </article>
           <section className="card">
             <h2>Nộp lời giải</h2>
@@ -583,7 +579,6 @@ function AdminProblems() {
               <thead>
                 <tr>
                   <th>Đề</th>
-                  <th>Giới hạn</th>
                   <th>Hiển thị</th>
                   <th>Thao tác</th>
                 </tr>
@@ -593,9 +588,6 @@ function AdminProblems() {
                   <tr key={p.id}>
                     <td>
                       #{p.id} {p.title}
-                    </td>
-                    <td>
-                      {p.time_limit_ms} ms · {p.memory_limit_kib / 1024} MiB
                     </td>
                     <td>{p.hidden ? "Ẩn" : "Hiện"}</td>
                     <td className="actions">
