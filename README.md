@@ -86,11 +86,17 @@ docker compose exec server python -m server.manage user admin --role admin
 - Lệnh cuối tạo tài khoản ADMIN tên `admin`, hỏi mật khẩu hai lần.
 - Mở **http://localhost:8000**, đăng nhập admin, tạo tài khoản USER ở trang **Người dùng**. Đề A + B có sẵn.
 
-Nạp thêm đề từ file JSON (thư mục `source/problems/` có sẵn hai đề, trong đó một đề RAM 64 MiB để minh họa MLE):
+Nạp thêm đề từ file JSON. Thư mục `source/problems/` có sẵn 8 đề: `a-cong-b-ram-64` (đề RAM 64 MiB để minh họa MLE), `tong-day-so`, và 6 đề chia đủ ba độ khó: Dễ (`so-lon-nhat`, `dao-nguoc-chuoi`), Trung bình (`tong-day-con-lon-nhat`, `dem-so-nguyen-to`), Khó (`day-con-tang-dai-nhat`, `duong-di-ngan-nhat`). Lời giải mẫu của 6 đề này nằm ở `source/samples/solutions/`. Nạp từng đề:
 
 ```bash
 docker compose exec server python -m server.manage problem problems/tong-day-so.json
 docker compose exec server python -m server.manage problem problems/a-cong-b-ram-64.json
+```
+
+hoặc nạp cả thư mục (mỗi lần nạp tạo một đề mới, nên chỉ chạy một lần):
+
+```bash
+docker compose exec server sh -c 'for f in problems/*.json; do python -m server.manage problem "$f"; done'
 ```
 
 Định dạng file đề: `title`, `statement`, `time_limit_ms` (100–10000), `memory_limit_kib` (65536–524288), `hidden` (tùy chọn), `difficulty` (tùy chọn: `easy`, `medium` hoặc `hard`, mặc định `medium`), `tests` là 1–20 phần tử `{input, output, is_sample}`, tổng input/output tối đa 1 MiB.

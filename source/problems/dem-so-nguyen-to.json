@@ -1,0 +1,44 @@
+{
+ "title": "Đếm số nguyên tố",
+ "statement": "Cho số nguyên N. Hãy đếm có bao nhiêu số nguyên tố không vượt quá N.\n\nInput: một số nguyên N (1 ≤ N ≤ 10^7).\nOutput: số lượng số nguyên tố p thỏa 2 ≤ p ≤ N.\n\nVí dụ: input \"10\" thì output \"4\" (các số 2, 3, 5, 7).\nGợi ý: kiểm tra từng số bằng phép chia sẽ quá thời gian khi N = 10^7; hãy dùng sàng Eratosthenes.",
+ "time_limit_ms": 2000,
+ "memory_limit_kib": 262144,
+ "difficulty": "medium",
+ "tests": [
+  {
+   "input": "10\n",
+   "output": "4\n",
+   "is_sample": true
+  },
+  {
+   "input": "1\n",
+   "output": "0\n",
+   "is_sample": false
+  },
+  {
+   "input": "2\n",
+   "output": "1\n",
+   "is_sample": false
+  },
+  {
+   "input": "100\n",
+   "output": "25\n",
+   "is_sample": false
+  },
+  {
+   "input": "1000000\n",
+   "output": "78498\n",
+   "is_sample": false
+  },
+  {
+   "input": "9999991\n",
+   "output": "664579\n",
+   "is_sample": false
+  },
+  {
+   "input": "10000000\n",
+   "output": "664579\n",
+   "is_sample": false
+  }
+ ]
+}
