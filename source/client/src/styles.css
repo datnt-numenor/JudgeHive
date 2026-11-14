@@ -48,8 +48,18 @@ th { background: #292519; font-size: 12px; text-transform: uppercase; color: #e7
 th, td { padding: 15px 18px; border-bottom: 1px solid var(--border); }
 tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #222119; }
-.verdict { display: inline-block; padding: 3px 12px; border-radius: 6px; font-weight: 700; background: #39231f; color: #ffb4a3; }
-.verdict.good { background: #233326; color: #a8e1ac; }
+/* Mỗi verdict một màu. */
+.verdict { display: inline-block; padding: 3px 12px; border-radius: 6px; font-weight: 700; background: #2a2a27; color: #b8b4a6; }
+.v-ac { background: #1f3a26; color: #8fe0a2; }
+.v-wa { background: #45201d; color: #ff9f90; }
+.v-tle { background: #46301a; color: #ffb766; }
+.v-mle { background: #33224a; color: #c9a6ff; }
+.v-re { background: #4a1f36; color: #ff9cc8; }
+.v-ce, .v-se { background: #2e2e2b; color: #c4c0b2; }
+.state-queued, .state-judging { color: var(--honey); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .state-queued, .state-judging { animation: none; } }
+nav a.active { color: var(--honey); font-weight: 700; border-bottom: 2px solid var(--honey); padding-bottom: 2px; }
 .error { color: #ffc1b1; background: #321e1b; border-left: 3px solid #f38e70; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .login { max-width: 440px; margin: 10vh auto; padding: 36px; border-top: 3px solid var(--honey); box-shadow: 0 16px 64px #00000055; }
 .login h1 { color: var(--honey); }

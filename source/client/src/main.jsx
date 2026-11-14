@@ -1,6 +1,15 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import {
+  BrowserRouter,
+  Link,
+  NavLink,
+  Navigate,
+  Route,
+  Routes,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import { api } from "./api";
 import "./styles.css";
 
@@ -38,8 +47,13 @@ function ErrorText({ message }) {
     </p>
   ) : null;
 }
+// Mỗi verdict một màu (CSS .v-ac, .v-wa, ...); bài chưa có kết quả hiện "—".
 function Verdict({ value }) {
-  return <span className={`verdict ${value === "AC" ? "good" : ""}`}>{value || "—"}</span>;
+  return <span className={`verdict v-${(value || "none").toLowerCase()}`}>{value || "—"}</span>;
+}
+// Trạng thái bài nộp; "Đang chờ/Đang chấm" có hiệu ứng nhấp nháy nhẹ.
+function SubmissionState({ value }) {
+  return <span className={`state state-${value}`}>{stateName[value]}</span>;
 }
 function Loading({ result, children }) {
   if (result.error) return <ErrorText message={result.error} />;
@@ -122,7 +136,11 @@ function Problems() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
-                <select aria-label="Lọc trạng thái" value={status} onChange={(e) => setStatus(e.target.value)}>
+                <select
+                  aria-label="Lọc trạng thái"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                >
                   <option value="all">Tất cả</option>
                   <option value="solved">Đã giải</option>
                   <option value="attempted">Đã thử</option>
@@ -151,7 +169,9 @@ function Problems() {
                       // Cả hàng bấm được; link trong ô tên để dùng được bàn phím.
                       <tr key={p.id} className="row-link" onClick={() => navigate(`/problems/${p.id}`)}>
                         <td className="status-col" title={problemStatus[p.status]?.label ?? "Chưa làm"}>
-                          <span className={`status-${p.status ?? "todo"}`}>{problemStatus[p.status]?.icon ?? ""}</span>
+                          <span className={`status-${p.status ?? "todo"}`}>
+                            {problemStatus[p.status]?.icon ?? ""}
+                          </span>
                         </td>
                         <td>
                           <Link to={`/problems/${p.id}`} onClick={(e) => e.stopPropagation()}>
@@ -247,8 +267,10 @@ function ProblemDetail() {
 }
 
 function Submissions({ admin = false }) {
-  // Server trả 100 bài mới nhất.
+  // Server trả 100 bài mới nhất. Tên đề lấy từ danh sách đề (không đổi API bài nộp).
   const result = useData(`${admin ? "/admin" : ""}/submissions`);
+  const problems = useData("/problems");
+  const titles = Object.fromEntries((problems.data ?? []).map((p) => [p.id, p.title]));
   return (
     <>
       <h1>{admin ? "Tất cả bài nộp" : "Bài nộp của tôi"}</h1>
@@ -275,9 +297,17 @@ function Submissions({ admin = false }) {
                         <Link to={`/submissions/${s.id}`}>#{s.id}</Link>
                       </td>
                       {admin && <td>{s.username}</td>}
-                      <td>{s.problem_id}</td>
+                      <td>
+                        <Link to={`/problems/${s.problem_id}`}>
+                          {titles[s.problem_id]
+                            ? `${s.problem_id}. ${titles[s.problem_id]}`
+                            : `#${s.problem_id}`}
+                        </Link>
+                      </td>
                       <td>{s.language}</td>
-                      <td>{stateName[s.state]}</td>
+                      <td>
+                        <SubmissionState value={s.state} />
+                      </td>
                       <td>
                         <Verdict value={s.verdict} />
                       </td>
@@ -298,6 +328,8 @@ function Submissions({ admin = false }) {
 function SubmissionDetail() {
   const { id } = useParams();
   const result = useData(`/submissions/${id}`);
+  const problems = useData("/problems");
+  const limitOf = (pid) => (problems.data ?? []).find((p) => p.id === pid)?.time_limit_ms;
   return (
     <Loading result={result}>
       {(s) => (
@@ -306,13 +338,19 @@ function SubmissionDetail() {
           <section className="card">
             <div className="actions">
               <Verdict value={s.verdict} />
-              <strong>{stateName[s.state]}</strong>
+              <SubmissionState value={s.state} />
             </div>
             <p>
               Ngôn ngữ: {s.language} · Lần giao: {s.attempt_id} · Test đã qua: {s.tests_done}
             </p>
-            <p>Thời gian test chậm nhất: {s.time_ms ?? "—"} ms</p>
-            <p>{s.message}</p>
+            <p>
+              Thời gian test chậm nhất:{" "}
+              {/* Bài TLE bị dừng sau giới hạn, nên thời gian thật là "lớn hơn giới hạn". */}
+              {s.verdict === "TLE" && limitOf(s.problem_id)
+                ? `> ${limitOf(s.problem_id)} ms`
+                : `${s.time_ms ?? "—"} ms`}
+            </p>
+            {s.verdict === "CE" ? <pre>{s.message}</pre> : <p>{s.message}</p>}
             <p className="muted">Nộp lúc {date(s.submitted_at)}</p>
           </section>
           <h2>Mã nguồn</h2>
@@ -615,15 +653,18 @@ function App() {
               ⬡ JudgeHive
             </Link>
             <nav>
-              <Link to="/">Đề bài</Link>
-              <Link to="/submissions">Bài nộp</Link>
-              <Link to="/scoreboard">Xếp hạng</Link>
+              {/* NavLink tự gắn class "active" cho trang đang mở. */}
+              <NavLink to="/" end>
+                Đề bài
+              </NavLink>
+              <NavLink to="/submissions">Bài nộp</NavLink>
+              <NavLink to="/scoreboard">Xếp hạng</NavLink>
               {user.role === "admin" && (
                 <>
-                  <Link to="/admin/problems">Quản lý đề</Link>
-                  <Link to="/admin/users">Người dùng</Link>
-                  <Link to="/admin/workers">Worker</Link>
-                  <Link to="/admin/submissions">Tất cả bài</Link>
+                  <NavLink to="/admin/problems">Quản lý đề</NavLink>
+                  <NavLink to="/admin/users">Người dùng</NavLink>
+                  <NavLink to="/admin/workers">Worker</NavLink>
+                  <NavLink to="/admin/submissions">Tất cả bài</NavLink>
                 </>
               )}
             </nav>
