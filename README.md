@@ -220,7 +220,8 @@ Mỗi test chạy trong container mới: không mạng, RAM theo đề (không s
 | Method / URL | Quyền | Mô tả |
 |---|---|---|
 | POST `/api/auth/login` · POST `/api/auth/logout` · GET `/api/auth/me` | — | Đăng nhập, đăng xuất, thông tin phiên |
-| GET `/api/problems` · GET `/api/problems/{id}` | Đăng nhập | Danh sách đề, đề + test mẫu |
+| GET `/api/problems` | Đăng nhập | Danh sách đề; mỗi đề có thêm `status` (`"solved"` nếu người đang đăng nhập đã AC, `"attempted"` nếu đã nộp mà chưa AC, `null` nếu chưa nộp) và `ac_rate` (số bài AC / số bài đã chấm xong của đề, từ 0 đến 1; `null` nếu chưa có bài chấm xong) |
+| GET `/api/problems/{id}` | Đăng nhập | Đề + test mẫu |
 | POST `/api/submissions` | Đăng nhập | Nộp `{problem_id, language, code}`; 429 nếu đã có 3 bài chờ chấm |
 | GET `/api/submissions` · GET `/api/submissions/{id}` | Đăng nhập | 100 bài mới nhất và chi tiết bài của mình |
 | GET `/api/scoreboard` | Đăng nhập | Bảng xếp hạng |

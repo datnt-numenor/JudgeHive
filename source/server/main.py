@@ -132,7 +132,17 @@ def create_app(db_path=None, secret=None, worker_port=None):
 
     @app.get("/api/problems")
     async def problems(user=Depends(current_user)):
-        return app.state.db.all("SELECT * FROM problems" + ("" if user["role"] == "admin" else " WHERE hidden=0") + " ORDER BY id")
+        # Một câu SQL cho cả danh sách: status chỉ tính bài của chính người đang đăng nhập;
+        # ac_rate = số bài AC / số bài đã chấm xong của đề (mọi người), chưa có bài thì NULL.
+        return app.state.db.all(
+            "SELECT p.*,"
+            " CASE WHEN SUM(s.user_id=:uid AND s.verdict='AC') > 0 THEN 'solved'"
+            "      WHEN SUM(s.user_id=:uid) > 0 THEN 'attempted' END AS status,"
+            " CAST(SUM(s.state='done' AND s.verdict='AC') AS REAL) / NULLIF(SUM(s.state='done'), 0) AS ac_rate"
+            " FROM problems p LEFT JOIN submissions s ON s.problem_id=p.id"
+            + ("" if user["role"] == "admin" else " WHERE p.hidden=0")
+            + " GROUP BY p.id ORDER BY p.id",
+            {"uid": user["id"]})
 
     @app.get("/api/problems/{pid}")
     async def problem(pid: int, user=Depends(current_user)):
