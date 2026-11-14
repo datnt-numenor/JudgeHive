@@ -8,9 +8,9 @@
 
 | STT | Họ và Tên | MSSV | Email | Đóng góp |
 |-----|-----------|------|-------|----------|
-| 1 | Nguyễn Tiến Đạt | B23DCCN139 | — | Giao thức TCP giữa server và worker (framing, đăng ký), điều phối và giao lại bài khi mất kết nối, WebSocket realtime |
-| 2 | Nguyễn Văn Phúc | B23DCCN957 | — | REST API, đăng nhập và phân quyền USER/ADMIN, cơ sở dữ liệu SQLite, chức năng quản trị |
-| 3 | Nguyễn Công Thành | B23DCCN771 | — | Worker chấm bài trong Docker, phân loại verdict, giao diện React |
+| 1 | Nguyễn Tiến Đạt | B23DCCN139 | datksnb2005@gmail.com | Giao thức TCP giữa server và worker (framing, đăng ký), điều phối và giao lại bài khi mất kết nối, WebSocket realtime |
+| 2 | Nguyễn Văn Phúc | B23DCCN957 | phucmilalo@gmail.com | REST API, đăng nhập và phân quyền USER/ADMIN, cơ sở dữ liệu SQLite, chức năng quản trị |
+| 3 | Nguyễn Công Thành | B23DCCN771 | thanhnguyencong2005@gmail.com | Worker chấm bài trong Docker, phân loại verdict, giao diện React |
 
 **Tên nhóm:** Nhóm 09
 **Chủ đề đã đăng ký:** Xây dựng hệ thống chấm code tự động JudgeHive
