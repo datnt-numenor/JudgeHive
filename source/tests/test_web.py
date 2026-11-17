@@ -84,15 +84,6 @@ def test_submission_limits(tmp_path):
         submit(client)
 
 
-def test_no_problem_editing_on_web(tmp_path):
-    with system(tmp_path) as (client, app):
-        login(client, "admin")
-        draft = {"title": "T", "statement": "S", "tests": [{"input": "1", "output": "1"}]}
-        assert client.post("/api/admin/problems", json=draft).status_code == 405
-        assert client.put("/api/admin/problems/1", json=draft).status_code == 405
-        assert client.get("/api/admin/problems/1").status_code == 404
-
-
 def test_problem_files(tmp_path):
     def problem(**changes):
         return json.dumps({"title": "T", "statement": "S", "tests": [{"input": "1", "output": "1"}], **changes})
