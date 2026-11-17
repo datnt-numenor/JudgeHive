@@ -38,7 +38,6 @@ export function ProblemDetail() {
         <div className="solve-layout">
           <article className="problem-statement">
             <h1>{String(p.id).padStart(2, "0")}. {p.title}</h1>
-            <p className="problem-limits">◷ {p.time_limit_ms / 1000} giây <span>·</span> ▦ {p.memory_limit_kib / 1024} MB</p>
             <h2>Mô tả</h2>
             <p className="statement">{p.statement}</p>
             {p.samples.map((sample, index) => (
