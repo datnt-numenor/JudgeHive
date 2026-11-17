@@ -5,6 +5,7 @@ import { Loading } from "../components/Loading";
 import { SubmissionState } from "../components/SubmissionState";
 import { Verdict } from "../components/Verdict";
 import { date } from "../utils";
+import { CodeBlock } from "../components/CodeBlock";
 
 export function SubmissionDetail() {
   const { id } = useParams();
@@ -19,7 +20,7 @@ export function SubmissionDetail() {
           <h1>Bài nộp #{s.id}</h1>
           <section className="card">
             <div className="actions">
-              <Verdict value={s.verdict} />
+              <Verdict value={s.verdict} full />
               <SubmissionState value={s.state} />
             </div>
             <p>
@@ -36,7 +37,7 @@ export function SubmissionDetail() {
             <p className="muted">Nộp lúc {date(s.submitted_at)}</p>
           </section>
           <h2>Mã nguồn</h2>
-          <pre>{s.code}</pre>
+          <CodeBlock code={s.code}/>
         </>
       )}
     </Loading>

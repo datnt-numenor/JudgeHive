@@ -9,6 +9,7 @@ export function AdminUsers() {
   const result = useData("/admin/users");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState(null);
 
   async function create(event) {
     event.preventDefault();
@@ -47,11 +48,12 @@ export function AdminUsers() {
 
   return (
     <>
-      <h1>Người dùng</h1>
+      <h1>Quản lý người dùng</h1>
       <ErrorText message={error} />
-      <form className="card" onSubmit={create}>
+      <div className="admin-split users-split"><section><Loading result={result}>{rows => <div className="table-wrap"><table><thead><tr><th>ID</th><th>Tên đăng nhập</th><th>Vai trò</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{rows.map(u => <tr key={u.id} className={selected === u.id ? "selected-row" : ""}><td>{u.id}</td><td>{u.username} {u.id === user.id && <span className="you-label">Bạn</span>}</td><td>{u.role.toUpperCase()}</td><td className={u.disabled ? "muted" : "positive"}>{u.disabled ? "Đã khóa" : "Hoạt động"}</td><td><button className="text-button" onClick={() => setSelected(u.id)}>Chỉnh sửa</button></td></tr>)}</tbody></table></div>}</Loading></section><aside className="admin-panel">
+      <form onSubmit={create}>
         <h2>Tạo tài khoản</h2>
-        <div className="grid">
+        <div>
           <label>
             Tên đăng nhập
             <input name="username" pattern="[A-Za-z0-9_.\-]{1,32}" required />
@@ -73,15 +75,15 @@ export function AdminUsers() {
       {/* key gồm cả disabled để React tạo lại form khi dữ liệu đổi: defaultChecked chỉ được đọc lúc tạo. */}
       <Loading result={result}>
         {(rows) =>
-          rows.map((u) => (
-            <form className="card" key={`${u.id}-${u.disabled}`} onSubmit={(e) => edit(e, u.id)}>
+          rows.filter(u => u.id === selected).map((u) => (
+            <form className="edit-user" key={`${u.id}-${u.disabled}`} onSubmit={(e) => edit(e, u.id)}>
               <h3>
-                {u.username} · {u.role.toUpperCase()}
+                Tài khoản: {u.username}
               </h3>
-              <div className="grid">
+              <div>
                 <label>
                   Mật khẩu mới (bỏ trống để giữ)
-                  <input name="password" type="password" autoComplete="new-password" />
+                  <input name="password" type="password" autoComplete="new-password" placeholder="Bỏ trống để giữ nguyên" />
                 </label>
                 <label className="check">
                   <input
@@ -98,6 +100,7 @@ export function AdminUsers() {
           ))
         }
       </Loading>
+      </aside></div>
     </>
   );
 }
