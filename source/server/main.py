@@ -15,7 +15,7 @@ from common.protocol import MAX_LINE_TO_SERVER
 from server.auth import hash_password, verify_password, token_hash
 from server.db import Database, now
 from server.dispatch import Engine
-from server.problems import Model
+from server.problems import Model, Problem, check_size, insert_problem, update_problem
 from server.realtime import Hub
 
 MAX_PENDING_PER_USER = 3
@@ -181,6 +181,41 @@ def create_app(db_path=None, secret=None, worker_port=None):
     @app.get("/api/scoreboard")
     async def scoreboard(user=Depends(current_user)):
         return app.state.db.scoreboard()
+
+    def has_submissions(pid):
+        return app.state.db.one("SELECT id FROM submissions WHERE problem_id=? LIMIT 1", (pid,)) is not None
+
+    def checked(body):
+        try:
+            return check_size(body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.get("/api/admin/problems/{pid}")
+    async def admin_problem(pid: int, user=Depends(admin_user)):
+        # Đề kèm toàn bộ test (cả test ẩn) để form Sửa đề nạp lại; chỉ admin.
+        row = get_problem(pid, user)
+        row["tests"] = app.state.db.all("SELECT input,output,is_sample FROM tests WHERE problem_id=? ORDER BY position", (pid,))
+        for case in row["tests"]:
+            case["is_sample"] = bool(case["is_sample"])
+        row["locked"] = has_submissions(pid)
+        return row
+
+    @app.post("/api/admin/problems", status_code=201)
+    async def add_problem(body: Problem, user=Depends(admin_user)):
+        pid = insert_problem(app.state.db, checked(body))
+        await app.state.hub.publish()
+        return {"id": pid}
+
+    @app.put("/api/admin/problems/{pid}")
+    async def edit_problem(pid: int, body: Problem, user=Depends(admin_user)):
+        get_problem(pid, user)
+        # Đề đã có bài nộp thì không đổi nội dung/test: kết quả cũ sẽ không còn khớp đề. Ẩn/hiện vẫn dùng PATCH.
+        if has_submissions(pid):
+            raise HTTPException(409, "Đề đã có bài nộp nên không sửa được nội dung; hãy tạo đề mới")
+        update_problem(app.state.db, pid, checked(body))
+        await app.state.hub.publish()
+        return {"id": pid}
 
     @app.patch("/api/admin/problems/{pid}")
     async def visibility(pid: int, body: Visibility, user=Depends(admin_user)):

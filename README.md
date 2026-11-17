@@ -41,7 +41,7 @@ Chức năng:
 - **Giao lại khi mất kết nối**: worker mất kết nối hoặc quá hạn công việc thì bài được giao cho worker khác; tối đa 3 lần giao, quá thì kết quả là SE.
 - **Kết quả**: 6 verdict của bài làm `AC`, `WA`, `TLE`, `MLE`, `RE`, `CE`, cộng `SE` khi lỗi hệ thống.
 - **Realtime**: trạng thái bài nộp, tiến độ từng test và bảng xếp hạng cập nhật qua WebSocket, không cần tải lại trang.
-- **ADMIN**: quản lý đề (ẩn/hiện trên web; thêm đề bằng lệnh nạp file JSON), quản lý người dùng (tạo, khóa, đặt lại mật khẩu), theo dõi máy chấm và hàng đợi, xem mọi bài nộp.
+- **ADMIN**: quản lý đề (thêm, sửa khi chưa có bài nộp, ẩn/hiện ngay trên web; bộ test lớn nạp bằng lệnh file JSON), quản lý người dùng (tạo, khóa, đặt lại mật khẩu), theo dõi máy chấm và hàng đợi, xem mọi bài nộp.
 
 ---
 
@@ -86,7 +86,7 @@ docker compose exec server python -m server.manage user admin --role admin
 - Lệnh cuối tạo tài khoản ADMIN tên `admin`, hỏi mật khẩu hai lần.
 - Mở **http://localhost:8000**, đăng nhập admin, tạo tài khoản USER ở trang **Người dùng**. Đề A + B có sẵn.
 
-Nạp thêm đề từ file JSON. Thư mục `source/problems/` có sẵn 8 đề: `a-cong-b-ram-64` (đề RAM 64 MiB để minh họa MLE), `tong-day-so`, và 6 đề chia đủ ba độ khó: Dễ (`so-lon-nhat`, `dao-nguoc-chuoi`), Trung bình (`tong-day-con-lon-nhat`, `dem-so-nguyen-to`), Khó (`day-con-tang-dai-nhat`, `duong-di-ngan-nhat`). Lời giải mẫu của 6 đề này nằm ở `source/samples/solutions/`. Nạp từng đề:
+Nạp thêm đề từ file JSON. Thư mục `source/problems/` có sẵn 8 đề: `a-cong-b-ram-64` (đề RAM 64 MiB để minh họa MLE), `tong-day-so`, và 6 đề chia đủ ba độ khó: Dễ (`so-lon-nhat`, `dao-nguoc-chuoi`), Vừa (`tong-day-con-lon-nhat`, `dem-so-nguyen-to`), Khó (`day-con-tang-dai-nhat`, `duong-di-ngan-nhat`). Lời giải mẫu của 6 đề này nằm ở `source/samples/solutions/`. Nạp từng đề:
 
 ```bash
 docker compose exec server python -m server.manage problem problems/tong-day-so.json
@@ -231,6 +231,9 @@ Mỗi test chạy trong container mới: không mạng, RAM theo đề (không s
 | POST `/api/submissions` | Đăng nhập | Nộp `{problem_id, language, code}`; 429 nếu đã có 3 bài chờ chấm |
 | GET `/api/submissions` · GET `/api/submissions/{id}` | Đăng nhập | 100 bài mới nhất và chi tiết bài của mình |
 | GET `/api/scoreboard` | Đăng nhập | Bảng xếp hạng |
+| GET `/api/admin/problems/{id}` | Admin | Đề kèm toàn bộ test và `locked` (đề đã có bài nộp) |
+| POST `/api/admin/problems` | Admin | Thêm đề: cùng định dạng file đề (`title`, `statement`, `time_limit_ms`, `memory_limit_kib`, `difficulty`, `hidden`, `tests`) → 201 `{id}` |
+| PUT `/api/admin/problems/{id}` | Admin | Sửa nội dung và bộ test; 409 nếu đề đã có bài nộp (khi đó chỉ ẩn/hiện được) |
 | PATCH `/api/admin/problems/{id}` | Admin | Ẩn/hiện đề `{hidden}` |
 | GET/POST `/api/admin/users` · PATCH `/api/admin/users/{id}` | Admin | Quản lý người dùng |
 | GET `/api/admin/workers` | Admin | Worker đang kết nối và độ dài hàng đợi |
