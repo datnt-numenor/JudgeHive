@@ -113,7 +113,7 @@ export function App() {
             <NavLink to="/admin/problems">Quản lý đề</NavLink><NavLink to="/admin/users">Người dùng</NavLink><NavLink to="/admin/workers">Máy chấm</NavLink><NavLink to="/admin/submissions">Tất cả bài nộp</NavLink>
           </nav>}
           <main className={`${adminPage ? "admin-page" : ""} ${solving ? "solve-page" : ""}`}>
-            <div className="breadcrumb">judgehive <span>/</span> {pathname === "/" ? "problems" : pathname.slice(1).split("/").join(" / ")}</div>
+            <div className="breadcrumb">{solving ? <>Trang chủ <span>/</span> Bài tập <span>/</span> Đề {pathname.split("/")[2]}</> : <>judgehive <span>/</span> {pathname === "/" ? "problems" : pathname.slice(1).split("/").join(" / ")}</>}</div>
             <ErrorText message={error} />
             <Routes>
               <Route path="/" element={<Problems />} />

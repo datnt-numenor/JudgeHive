@@ -145,3 +145,10 @@ footer { display: flex; align-items: center; justify-content: space-between; gap
 .users-split .admin-panel label { margin-bottom: 12px; }
 .users-split .admin-panel input:not([type='checkbox']), .users-split .admin-panel select { font-size: 18px; padding: 6px 14px; }
 @media(min-width:1101px) { .users-split { margin-top: -60px; }.users-split > section { padding-top: 76px; }.users-split .admin-panel { padding-top: 0; } }
+
+/* Biểu tượng trạng thái đề: ✓ trong vòng xanh (đã giải), chấm vàng đặc (đã thử), vòng rỗng (chưa giải). */
+.status-col span.status-solved, .status-col span.status-attempted, .status-col span.status-todo { width: 24px; height: 24px; border-radius: 50%; font-size: 15px !important; font-weight: 700; }
+.status-col span.status-solved { border: 2px solid #afe67e; color: #afe67e; }
+.status-col span.status-attempted { background: var(--honey); transform: scale(.6); }
+.status-col span.status-todo { border: 2px solid #d6d6d0; transform: scale(.85); }
+.admin-split .you-label { border: 1px solid var(--border); padding: 0 6px; color: var(--text); }

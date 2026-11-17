@@ -83,7 +83,7 @@ export function Problems() {
                       <tr key={p.id} className="row-link" onClick={() => navigate(`/problems/${p.id}`)}>
                         <td className="status-col" title={problemStatus[p.status]?.label ?? "Chưa làm"}>
                           <span className={`status-${p.status ?? "todo"}`}>
-                            {problemStatus[p.status]?.icon ?? "○"}
+                            {problemStatus[p.status]?.icon ?? ""}
                           </span> {problemStatus[p.status]?.label ?? "Chưa giải"}
                         </td>
                         <td>

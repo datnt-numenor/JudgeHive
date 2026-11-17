@@ -13,5 +13,5 @@ export const difficulties = {
 // Trạng thái của chính người đang xem (server tính): đã AC, đã nộp nhưng chưa AC, chưa nộp.
 export const problemStatus = {
   solved: { icon: "✓", label: "Đã giải" },
-  attempted: { icon: "●", label: "Đã thử" },
+  attempted: { icon: "", label: "Đã thử" },
 };
