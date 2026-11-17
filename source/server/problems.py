@@ -1,4 +1,4 @@
-"""Định dạng file đề JSON và nạp đề vào database. Web không tạo/sửa đề; admin nạp bằng server.manage."""
+"""Định dạng đề (file JSON của server.manage và form Thêm/Sửa đề của admin) và ghi đề vào database."""
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,7 +28,11 @@ class Problem(Model):
 
 def parse_problem(text):
     """Trả Problem đã kiểm tra; ném ValueError (gồm pydantic.ValidationError) nếu sai."""
-    problem = Problem.model_validate_json(text)
+    return check_size(Problem.model_validate_json(text))
+
+
+def check_size(problem):
+    """Tổng test ≤ 1 MiB để JOB gửi worker luôn dưới giới hạn 8 MiB, kể cả khi JSON escape."""
     size = sum(len(t.input.encode()) + len(t.output.encode()) for t in problem.tests)
     if size > MAX_TESTS_BYTES:
         raise ValueError("Tổng input/output của các test vượt 1 MiB")
@@ -45,3 +49,14 @@ def insert_problem(db, problem):
         db.conn.executemany("INSERT INTO tests(problem_id,position,input,output,is_sample) VALUES(?,?,?,?,?)",
                             [(pid, i, t.input, t.output, t.is_sample) for i, t in enumerate(problem.tests)])
     return pid
+
+
+def update_problem(db, pid, problem):
+    """Thay toàn bộ nội dung và bộ test của đề trong một transaction."""
+    with db.conn:
+        db.conn.execute("UPDATE problems SET title=?,statement=?,time_limit_ms=?,memory_limit_kib=?,hidden=?,difficulty=? "
+                        "WHERE id=?", (problem.title, problem.statement, problem.time_limit_ms, problem.memory_limit_kib,
+                                       problem.hidden, problem.difficulty, pid))
+        db.conn.execute("DELETE FROM tests WHERE problem_id=?", (pid,))
+        db.conn.executemany("INSERT INTO tests(problem_id,position,input,output,is_sample) VALUES(?,?,?,?,?)",
+                            [(pid, i, t.input, t.output, t.is_sample) for i, t in enumerate(problem.tests)])
