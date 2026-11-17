@@ -161,7 +161,7 @@ export function AdminProblems() {
                       Độ khó
                       <select value={draft.difficulty} onChange={set("difficulty")} disabled={locked}>
                         <option value="easy">Dễ</option>
-                        <option value="medium">Trung bình</option>
+                        <option value="medium">Vừa</option>
                         <option value="hard">Khó</option>
                       </select>
                     </label>

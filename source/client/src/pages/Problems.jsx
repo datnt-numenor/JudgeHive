@@ -58,7 +58,7 @@ export function Problems() {
                 <select aria-label="Lọc độ khó" value={level} onChange={(e) => { setLevel(e.target.value); setPage(1); }}>
                   <option value="all">Mọi độ khó</option>
                   <option value="easy">Dễ</option>
-                  <option value="medium">Trung bình</option>
+                  <option value="medium">Vừa</option>
                   <option value="hard">Khó</option>
                 </select>
                 <select aria-label="Sắp xếp" value={sort} onChange={(e) => setSort(e.target.value)}>

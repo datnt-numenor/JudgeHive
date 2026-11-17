@@ -6,7 +6,7 @@ export const percent = (rate) => (rate === null ? "—" : `${Math.round(rate * 1
 // Độ khó do server trả (easy/medium/hard); rank dùng để sắp xếp Dễ → Khó.
 export const difficulties = {
   easy: { label: "Dễ", rank: 0 },
-  medium: { label: "Trung bình", rank: 1 },
+  medium: { label: "Vừa", rank: 1 },
   hard: { label: "Khó", rank: 2 },
 };
 

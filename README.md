@@ -86,7 +86,7 @@ docker compose exec server python -m server.manage user admin --role admin
 - Lệnh cuối tạo tài khoản ADMIN tên `admin`, hỏi mật khẩu hai lần.
 - Mở **http://localhost:8000**, đăng nhập admin, tạo tài khoản USER ở trang **Người dùng**. Đề A + B có sẵn.
 
-Nạp thêm đề từ file JSON. Thư mục `source/problems/` có sẵn 8 đề: `a-cong-b-ram-64` (đề RAM 64 MiB để minh họa MLE), `tong-day-so`, và 6 đề chia đủ ba độ khó: Dễ (`so-lon-nhat`, `dao-nguoc-chuoi`), Trung bình (`tong-day-con-lon-nhat`, `dem-so-nguyen-to`), Khó (`day-con-tang-dai-nhat`, `duong-di-ngan-nhat`). Lời giải mẫu của 6 đề này nằm ở `source/samples/solutions/`. Nạp từng đề:
+Nạp thêm đề từ file JSON. Thư mục `source/problems/` có sẵn 8 đề: `a-cong-b-ram-64` (đề RAM 64 MiB để minh họa MLE), `tong-day-so`, và 6 đề chia đủ ba độ khó: Dễ (`so-lon-nhat`, `dao-nguoc-chuoi`), Vừa (`tong-day-con-lon-nhat`, `dem-so-nguyen-to`), Khó (`day-con-tang-dai-nhat`, `duong-di-ngan-nhat`). Lời giải mẫu của 6 đề này nằm ở `source/samples/solutions/`. Nạp từng đề:
 
 ```bash
 docker compose exec server python -m server.manage problem problems/tong-day-so.json
