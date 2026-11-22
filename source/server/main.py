@@ -106,12 +106,18 @@ def create_app(db_path=None, secret=None, worker_port=None):
         if not user or user["disabled"] or not await asyncio.to_thread(verify_password, body.password, user["password_hash"]):
             raise HTTPException(401, "Sai tên đăng nhập hoặc mật khẩu")
         token = secrets.token_urlsafe(32)
-        db.execute("DELETE FROM sessions WHERE expires_at<=?", (now(),))
-        # DB chỉ lưu SHA-256 của token: lộ DB cũng không dùng được phiên.
-        db.execute("INSERT INTO sessions VALUES(?,?,?)", (token_hash(token), user["id"], now() + 86400000))
+        with db.conn:
+            # Chặn writer từ connection khác trong lúc kiểm tra lại và cấp session.
+            db.conn.execute("BEGIN IMMEDIATE")
+            current = db.one("SELECT id,username,role,password_hash,disabled FROM users WHERE id=?", (user["id"],))
+            if not current or current["disabled"] or current["password_hash"] != user["password_hash"]:
+                raise HTTPException(401, "Sai tên đăng nhập hoặc mật khẩu")
+            db.conn.execute("DELETE FROM sessions WHERE expires_at<=?", (now(),))
+            # DB chỉ lưu SHA-256 của token: lộ DB cũng không dùng được phiên.
+            db.conn.execute("INSERT INTO sessions VALUES(?,?,?)", (token_hash(token), current["id"], now() + 86400000))
         response.set_cookie("session", token, httponly=True, samesite="strict", max_age=86400,
                             secure=request.url.scheme == "https")
-        return {k: user[k] for k in ("id", "username", "role")}
+        return {k: current[k] for k in ("id", "username", "role")}
 
     @app.post("/api/auth/logout")
     async def logout(request: Request, response: Response):
