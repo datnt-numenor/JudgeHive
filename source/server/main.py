@@ -1,11 +1,14 @@
 """App FastAPI: REST, WebSocket /ws, mở cổng TCP cho worker trong lifespan, phục vụ client đã build."""
 import asyncio
+from collections import deque
+from math import ceil
 import os
 import re
 import secrets
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import monotonic
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -19,6 +22,68 @@ from server.problems import Model
 from server.realtime import Hub
 
 MAX_PENDING_PER_USER = 3
+LOGIN_WINDOW_SECONDS = 60
+LOGIN_IP_LIMIT = 20
+LOGIN_USERNAME_LIMIT = 5
+LOGIN_SCRYPT_SLOTS = 4
+LOGIN_MAX_KEYS = 8192
+DUMMY_PASSWORD_HASH = hash_password("invalid-password")
+
+
+class LoginLimiter:
+    def __init__(self):
+        self.attempts = {}
+        self.clock = monotonic
+
+    def check(self, ip, username):
+        instant = self.clock()
+        keys = (("ip", ip, LOGIN_IP_LIMIT), ("username", username, LOGIN_USERNAME_LIMIT))
+        retry = 0
+        for kind, value, limit in keys:
+            key = (kind, value)
+            entries = self.attempts.get(key)
+            if entries is None:
+                continue
+            while entries and entries[0] <= instant - LOGIN_WINDOW_SECONDS:
+                entries.popleft()
+            if entries:
+                if len(entries) >= limit:
+                    retry = max(retry, ceil(entries[0] + LOGIN_WINDOW_SECONDS - instant))
+            else:
+                del self.attempts[key]
+        if retry:
+            raise HTTPException(429, "Quá nhiều lần đăng nhập", headers={"Retry-After": str(max(1, retry))})
+
+        if len(self.attempts) + sum((kind, value) not in self.attempts for kind, value, _ in keys) > LOGIN_MAX_KEYS:
+            # Xóa khóa hết hạn khi bộ nhớ đầy; từ chối khóa mới nếu tải vẫn vượt trần.
+            for key, entries in list(self.attempts.items()):
+                if entries[-1] <= instant - LOGIN_WINDOW_SECONDS:
+                    del self.attempts[key]
+            if len(self.attempts) + sum((kind, value) not in self.attempts for kind, value, _ in keys) > LOGIN_MAX_KEYS:
+                raise HTTPException(429, "Quá nhiều lần đăng nhập", headers={"Retry-After": str(LOGIN_WINDOW_SECONDS)})
+
+        for kind, value, _ in keys:
+            self.attempts.setdefault((kind, value), deque()).append(instant)
+
+
+async def limited_verify(password, stored, slots):
+    if slots.locked():
+        raise HTTPException(429, "Quá nhiều lần đăng nhập", headers={"Retry-After": "1"})
+    await slots.acquire()
+    try:
+        task = asyncio.create_task(asyncio.to_thread(verify_password, password, stored))
+    except BaseException:
+        slots.release()
+        raise
+
+    def release_slot(done):
+        # Cancellation của request không dừng scrypt trong thread; giữ slot tới khi thread kết thúc.
+        if not done.cancelled():
+            done.exception()
+        slots.release()
+
+    task.add_done_callback(release_slot)
+    return await asyncio.shield(task)
 
 
 class Login(Model):
@@ -89,6 +154,8 @@ def create_app(db_path=None, secret=None, worker_port=None):
             db.conn.close()
 
     app = FastAPI(lifespan=lifespan)
+    app.state.login_limiter = LoginLimiter()
+    app.state.login_slots = asyncio.Semaphore(LOGIN_SCRYPT_SLOTS)
 
     @app.middleware("http")
     async def same_origin_writes(request, call_next):
@@ -101,9 +168,14 @@ def create_app(db_path=None, secret=None, worker_port=None):
     @app.post("/api/auth/login")
     async def login(body: Login, request: Request, response: Response):
         db = app.state.db
+        # Chỉ dùng địa chỉ peer trực tiếp; proxy header do client tự gửi không đáng tin.
+        ip = request.client.host if request.client else "<unknown>"
+        app.state.login_limiter.check(ip, body.username)
         user = db.one("SELECT * FROM users WHERE username=?", (body.username,))
         # scrypt tốn vài chục ms CPU: chạy ở thread để không chặn event loop (và cổng worker).
-        if not user or user["disabled"] or not await asyncio.to_thread(verify_password, body.password, user["password_hash"]):
+        stored = user["password_hash"] if user and not user["disabled"] else DUMMY_PASSWORD_HASH
+        verified = await limited_verify(body.password, stored, app.state.login_slots)
+        if not user or user["disabled"] or not verified:
             raise HTTPException(401, "Sai tên đăng nhập hoặc mật khẩu")
         token = secrets.token_urlsafe(32)
         with db.conn:
