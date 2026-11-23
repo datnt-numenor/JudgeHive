@@ -7,7 +7,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
@@ -167,9 +167,15 @@ def create_app(db_path=None, secret=None, worker_port=None):
         return {"id": sid}
 
     @app.get("/api/submissions")
-    async def submissions(user=Depends(current_user)):
-        return app.state.db.all("SELECT id,problem_id,language,state,verdict,submitted_at FROM submissions "
-                                "WHERE user_id=? ORDER BY id DESC LIMIT 100", (user["id"],))
+    async def submissions(limit: int = Query(100, ge=1, le=100),
+                          before_id: int | None = Query(None, gt=0, le=9223372036854775807), user=Depends(current_user)):
+        # Giữ điều kiện chủ sở hữu trong mọi trang; ID nhỏ hơn cursor tránh lặp khi có bài mới.
+        sql = "SELECT id,problem_id,language,state,verdict,submitted_at FROM submissions WHERE user_id=?"
+        args = [user["id"]]
+        if before_id is not None:
+            sql += " AND id<?"
+            args.append(before_id)
+        return app.state.db.all(sql + " ORDER BY id DESC LIMIT ?", (*args, limit))
 
     @app.get("/api/submissions/{sid}")
     async def submission(sid: int, user=Depends(current_user)):
@@ -271,9 +277,16 @@ def create_app(db_path=None, secret=None, worker_port=None):
         return {"workers": app.state.engine.view(), "queue": app.state.engine.queue.qsize()}
 
     @app.get("/api/admin/submissions")
-    async def admin_submissions(user=Depends(admin_user)):
-        return app.state.db.all("SELECT s.id,s.user_id,u.username,s.problem_id,s.language,s.state,s.verdict,s.submitted_at "
-                                "FROM submissions s JOIN users u ON u.id=s.user_id ORDER BY s.id DESC LIMIT 100")
+    async def admin_submissions(limit: int = Query(100, ge=1, le=100),
+                                before_id: int | None = Query(None, gt=0, le=9223372036854775807), user=Depends(admin_user)):
+        sql = ("SELECT s.id,s.user_id,u.username,s.problem_id,s.language,s.state,s.verdict,s.submitted_at "
+               "FROM submissions s JOIN users u ON u.id=s.user_id")
+        args = []
+        if before_id is not None:
+            # Cursor trên khóa chính giữ thứ tự ổn định khi duyệt lịch sử của mọi USER.
+            sql += " WHERE s.id<?"
+            args.append(before_id)
+        return app.state.db.all(sql + " ORDER BY s.id DESC LIMIT ?", (*args, limit))
 
     @app.websocket("/ws")
     async def websocket(ws: WebSocket):
