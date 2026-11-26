@@ -1,4 +1,5 @@
 """Một connection, chỉ dùng ở event loop server. SQL ngắn và không có await giữa transaction."""
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -38,6 +39,14 @@ class Database:
             state TEXT NOT NULL DEFAULT 'queued', attempt_id INTEGER NOT NULL DEFAULT 0,
             submitted_at INTEGER NOT NULL, finished_at INTEGER, verdict TEXT,
             tests_done INTEGER NOT NULL DEFAULT 0, time_ms INTEGER, message TEXT NOT NULL DEFAULT '');
+        CREATE TABLE IF NOT EXISTS admin_audit_logs (
+            id INTEGER PRIMARY KEY,
+            actor_id INTEGER NOT NULL REFERENCES users(id),
+            action TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}');
         CREATE INDEX IF NOT EXISTS submission_user ON submissions(user_id, id);
         """)
         # DB tạo trước khi có độ khó thì CREATE TABLE IF NOT EXISTS ở trên không thêm cột mới:
@@ -65,6 +74,19 @@ class Database:
     def execute(self, sql, args=()):
         with self.conn:
             return self.conn.execute(sql, args).lastrowid
+
+    def insert_admin_audit(self, actor_id, action, target_type, target_id, metadata=None):
+        """Chèn audit vào transaction hiện tại; hàm cố ý không tự commit.
+
+        Metadata chỉ nhận dữ liệu nghiệp vụ an toàn do server tạo, không nhận mật khẩu,
+        password hash, token phiên hoặc secret từ request.
+        """
+        payload = json.dumps(metadata or {}, ensure_ascii=False, separators=(",", ":"))
+        return self.conn.execute(
+            "INSERT INTO admin_audit_logs(actor_id,action,target_type,target_id,created_at,metadata_json) "
+            "VALUES(?,?,?,?,?,?)",
+            (actor_id, action, target_type, target_id, now(), payload),
+        ).lastrowid
 
     def user_for_token(self, hashed):
         return self.one("SELECT u.id,u.username,u.role FROM sessions s JOIN users u ON u.id=s.user_id "

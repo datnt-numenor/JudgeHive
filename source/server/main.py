@@ -7,7 +7,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
@@ -219,8 +219,15 @@ def create_app(db_path=None, secret=None, worker_port=None):
 
     @app.patch("/api/admin/problems/{pid}")
     async def visibility(pid: int, body: Visibility, user=Depends(admin_user)):
-        get_problem(pid, user)
-        app.state.db.execute("UPDATE problems SET hidden=? WHERE id=?", (body.hidden, pid))
+        problem = get_problem(pid, user)
+        if bool(problem["hidden"]) != body.hidden:
+            # Thay đổi hiển thị và audit cùng commit; lỗi audit sẽ rollback trạng thái đề.
+            with app.state.db.conn:
+                app.state.db.conn.execute("UPDATE problems SET hidden=? WHERE id=?", (body.hidden, pid))
+                app.state.db.insert_admin_audit(
+                    user["id"], "problem.hide" if body.hidden else "problem.show", "problem", pid,
+                    {"hidden": body.hidden},
+                )
         await app.state.hub.publish()
         return {"ok": True}
 
@@ -237,15 +244,27 @@ def create_app(db_path=None, secret=None, worker_port=None):
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         try:
+            # User và audit phải cùng transaction để không tồn tại user không có vết quản trị.
+            with app.state.db.conn:
+                uid = app.state.db.conn.execute(
+                    "INSERT INTO users(username,password_hash,role) VALUES(?,?,?)",
+                    (body.username, hashed, body.role),
+                ).lastrowid
+                app.state.db.insert_admin_audit(
+                    user["id"], "user.create", "user", uid,
+                    {"username": body.username, "role": body.role},
+                )
+        except sqlite3.IntegrityError as exc:
             # Cột username là UNIQUE: hai request cùng tên thì request sau nhận 409.
-            uid = app.state.db.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", (body.username, hashed, body.role))
-        except sqlite3.IntegrityError:
-            raise HTTPException(409, "Tên tài khoản đã tồn tại")
+            if "users.username" in str(exc):
+                raise HTTPException(409, "Tên tài khoản đã tồn tại")
+            raise
         return {"id": uid}
 
     @app.patch("/api/admin/users/{uid}")
     async def edit_user(uid: int, body: EditUser, user=Depends(admin_user)):
-        if not app.state.db.one("SELECT id FROM users WHERE id=?", (uid,)):
+        target = app.state.db.one("SELECT id,username,disabled FROM users WHERE id=?", (uid,))
+        if not target:
             raise HTTPException(404, "Không tìm thấy tài khoản")
         if body.disabled and uid == user["id"]:
             raise HTTPException(400, "Không tự khóa tài khoản đang dùng")
@@ -255,16 +274,44 @@ def create_app(db_path=None, secret=None, worker_port=None):
                 hashed = await asyncio.to_thread(hash_password, body.password)
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
+        disabled_changed = body.disabled is not None and bool(target["disabled"]) != body.disabled
         with app.state.db.conn:
-            if hashed:
+            if hashed is not None:
                 app.state.db.conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hashed, uid))
             if body.disabled is not None:
                 app.state.db.conn.execute("UPDATE users SET disabled=? WHERE id=?", (body.disabled, uid))
-            if hashed or body.disabled:
+            # Giữ nguyên cơ chế thu hồi phiên: reset mật khẩu hoặc khóa tài khoản sẽ xóa session.
+            if hashed is not None or body.disabled:
                 app.state.db.conn.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+            if hashed is not None:
+                app.state.db.insert_admin_audit(
+                    user["id"], "user.reset_password", "user", uid,
+                    {"username": target["username"]},
+                )
+            if disabled_changed:
+                app.state.db.insert_admin_audit(
+                    user["id"], "user.disable" if body.disabled else "user.enable", "user", uid,
+                    {"username": target["username"], "disabled": body.disabled},
+                )
         # publish kiểm lại token của mọi WebSocket nên phiên vừa bị hủy cũng bị đóng tại đây.
         await app.state.hub.publish()
         return {"ok": True}
+
+    @app.get("/api/admin/audit-logs")
+    async def audit_logs(limit: int = Query(50, ge=1, le=100),
+                         before_id: int | None = Query(None, ge=1),
+                         user=Depends(admin_user)):
+        if before_id is None:
+            return app.state.db.all(
+                "SELECT id,actor_id,action,target_type,target_id,created_at,metadata_json "
+                "FROM admin_audit_logs ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+        return app.state.db.all(
+            "SELECT id,actor_id,action,target_type,target_id,created_at,metadata_json "
+            "FROM admin_audit_logs WHERE id<? ORDER BY id DESC LIMIT ?",
+            (before_id, limit),
+        )
 
     @app.get("/api/admin/workers")
     async def workers(user=Depends(admin_user)):
