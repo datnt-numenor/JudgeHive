@@ -1,5 +1,8 @@
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import threading
 
 import pytest
@@ -277,3 +280,171 @@ def test_second_audit_failure_rolls_back_password_disable_and_sessions(tmp_path)
         assert db_one(client, app, "SELECT COUNT(*) AS n FROM sessions WHERE user_id=2")["n"] == sessions
         assert db_one(client, app, "SELECT COUNT(*) AS n FROM admin_audit_logs")["n"] == 0
         assert client.get("/api/auth/me", headers={"Cookie": f"session={alice_cookie}"}).status_code == 200
+
+
+def problem_body():
+    return {
+        "title": "Đề kiểm tra audit", "statement": "Nội dung chỉ dành cho đề",
+        "difficulty": "medium", "hidden": False,
+        "tests": [
+            {"input": "sample-input\n", "output": "sample-output\n", "is_sample": True},
+            {"input": "hidden-input\n", "output": "hidden-output\n", "is_sample": False},
+        ],
+    }
+
+
+def test_http_problem_create_update_audit_and_private_tests(tmp_path):
+    db_path = tmp_path / "test.sqlite3"
+    with system(tmp_path) as (client, app):
+        body = problem_body()
+        assert client.post("/api/admin/problems", json=body).status_code == 401
+        assert client.put("/api/admin/problems/1", json=body).status_code == 401
+        login(client, "alice")
+        assert client.post("/api/admin/problems", json=body).status_code == 403
+        assert client.put("/api/admin/problems/1", json=body).status_code == 403
+        login(client, "admin")
+
+        created = client.post("/api/admin/problems", json=body)
+        assert created.status_code == 201
+        pid = created.json()["id"]
+        assert client.get(f"/api/admin/problems/{pid}").json()["tests"] == body["tests"]
+        row = audit_rows(client)[0]
+        assert (row["actor_id"], row["action"], row["target_type"], row["target_id"]) == (
+            1, "problem.create", "problem", pid,
+        )
+        assert json.loads(row["metadata_json"]) == {
+            "title": body["title"], "difficulty": "medium", "test_count": 2,
+        }
+
+        changed = {**body, "title": "Đề đã sửa", "difficulty": "hard", "hidden": True, "tests": [
+            {"input": "new-sample\n", "output": "new-output\n", "is_sample": True},
+        ]}
+        updated = client.put(f"/api/admin/problems/{pid}", json=changed)
+        assert updated.status_code == 200 and updated.json() == {"id": pid}
+        detail = client.get(f"/api/admin/problems/{pid}").json()
+        assert detail["title"] == changed["title"]
+        assert detail["tests"] == changed["tests"]
+        assert db_one(client, app, "SELECT COUNT(*) AS n FROM tests WHERE problem_id=?", (pid,))["n"] == 1
+        rows = audit_rows(client)
+        assert [row["action"] for row in rows] == ["problem.update", "problem.create"]
+        assert all(row["actor_id"] == 1 and row["target_id"] == pid for row in rows)
+        assert [row["action"] for row in client.get(
+            "/api/admin/audit-logs", params={"before_id": rows[0]["id"]}
+        ).json()] == ["problem.create"]
+        serialized = json.dumps(rows, ensure_ascii=False)
+        for sensitive in (body["statement"], "sample-input", "hidden-input", "hidden-output", "new-sample"):
+            assert sensitive not in serialized
+
+        login(client, "alice")
+        assert client.get(f"/api/problems/{pid}").status_code == 404
+        login(client, "admin")
+        assert client.patch(f"/api/admin/problems/{pid}", json={"hidden": False}).status_code == 200
+        assert [row["action"] for row in audit_rows(client)] == [
+            "problem.show", "problem.update", "problem.create",
+        ]
+        login(client, "alice")
+        public = client.get(f"/api/problems/{pid}")
+        assert public.status_code == 200
+        assert public.json()["samples"] == [{"input": "new-sample\n", "output": "new-output\n"}]
+        assert "hidden-input" not in public.text
+
+    reopened = Database(str(db_path))
+    try:
+        assert [row["action"] for row in reopened.all(
+            "SELECT action FROM admin_audit_logs ORDER BY id DESC"
+        )] == ["problem.show", "problem.update", "problem.create"]
+    finally:
+        reopened.conn.close()
+
+
+def test_invalid_and_locked_problem_requests_do_not_audit(tmp_path):
+    from conftest import submit
+
+    with system(tmp_path) as (client, app):
+        body = problem_body()
+        login(client, "admin")
+        assert client.post("/api/admin/problems", json={**body, "tests": []}).status_code == 422
+        assert client.put("/api/admin/problems/1", json={**body, "tests": []}).status_code == 422
+        assert audit_rows(client) == []
+
+        login(client, "alice")
+        submit(client)
+        login(client, "admin")
+        assert client.put("/api/admin/problems/1", json=body).status_code == 409
+        assert audit_rows(client) == []
+        assert client.get("/api/admin/problems/1").json()["title"] == "A + B"
+
+
+def test_problem_create_audit_failure_rolls_back_and_does_not_publish(tmp_path, monkeypatch):
+    with system(tmp_path) as (client, app):
+        login(client, "admin")
+        before_problems = db_one(client, app, "SELECT COUNT(*) AS n FROM problems")["n"]
+        before_tests = db_one(client, app, "SELECT COUNT(*) AS n FROM tests")["n"]
+        published = []
+
+        async def record_publish(*args):
+            published.append(args)
+
+        monkeypatch.setattr(app.state.hub, "publish", record_publish)
+        client.portal.call(lambda: app.state.db.execute("""
+            CREATE TRIGGER fail_problem_audit BEFORE INSERT ON admin_audit_logs
+            BEGIN SELECT RAISE(ABORT, 'audit insert failed'); END
+        """))
+        with pytest.raises(sqlite3.IntegrityError, match="audit insert failed"):
+            client.post("/api/admin/problems", json=problem_body())
+        assert db_one(client, app, "SELECT COUNT(*) AS n FROM problems")["n"] == before_problems
+        assert db_one(client, app, "SELECT COUNT(*) AS n FROM tests")["n"] == before_tests
+        assert db_one(client, app, "SELECT COUNT(*) AS n FROM admin_audit_logs")["n"] == 0
+        assert published == []
+
+
+def test_problem_update_audit_failure_restores_problem_and_testcases(tmp_path, monkeypatch):
+    with system(tmp_path) as (client, app):
+        login(client, "admin")
+        created = client.post("/api/admin/problems", json=problem_body())
+        assert created.status_code == 201
+        pid = created.json()["id"]
+        original = client.get(f"/api/admin/problems/{pid}").json()
+        published = []
+
+        async def record_publish(*args):
+            published.append(args)
+
+        monkeypatch.setattr(app.state.hub, "publish", record_publish)
+        client.portal.call(lambda: app.state.db.execute("""
+            CREATE TRIGGER fail_update_audit BEFORE INSERT ON admin_audit_logs
+            WHEN NEW.action='problem.update'
+            BEGIN SELECT RAISE(ABORT, 'audit insert failed'); END
+        """))
+        changed = {**problem_body(), "title": "Sửa nhưng phải rollback", "tests": [
+            {"input": "replacement", "output": "replacement", "is_sample": True},
+        ]}
+        with pytest.raises(sqlite3.IntegrityError, match="audit insert failed"):
+            client.put(f"/api/admin/problems/{pid}", json=changed)
+        assert client.get(f"/api/admin/problems/{pid}").json() == original
+        assert db_one(client, app, "SELECT COUNT(*) AS n FROM tests WHERE problem_id=?", (pid,))["n"] == 2
+        assert [row["action"] for row in audit_rows(client)] == ["problem.create"]
+        assert published == []
+
+
+def test_cli_problem_import_needs_no_http_actor(tmp_path):
+    from pathlib import Path
+
+    problem_file = tmp_path / "problem.json"
+    problem_file.write_text(json.dumps(problem_body(), ensure_ascii=False), encoding="utf-8")
+    db_path = tmp_path / "cli.sqlite3"
+    environment = {**os.environ, "JH_DB": str(db_path)}
+    result = subprocess.run(
+        [sys.executable, "-m", "server.manage", "problem", str(problem_file)],
+        cwd=Path(__file__).resolve().parents[1], env=environment,
+        capture_output=True, text=True, encoding="utf-8", timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Đã nạp đề #" in result.stdout
+    db = Database(str(db_path))
+    try:
+        assert db.one("SELECT id FROM problems WHERE title=?", (problem_body()["title"],)) is not None
+        assert db.one("SELECT COUNT(*) AS n FROM admin_audit_logs")["n"] == 0
+        assert db.one("SELECT COUNT(*) AS n FROM users")["n"] == 0
+    finally:
+        db.conn.close()

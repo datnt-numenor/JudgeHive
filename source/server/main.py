@@ -203,7 +203,14 @@ def create_app(db_path=None, secret=None, worker_port=None):
 
     @app.post("/api/admin/problems", status_code=201)
     async def add_problem(body: Problem, user=Depends(admin_user)):
-        pid = insert_problem(app.state.db, checked(body))
+        problem = checked(body)
+        pid = insert_problem(
+            app.state.db, problem,
+            audit_callback=lambda target_id: app.state.db.insert_admin_audit(
+                user["id"], "problem.create", "problem", target_id,
+                {"title": problem.title, "difficulty": problem.difficulty, "test_count": len(problem.tests)},
+            ),
+        )
         await app.state.hub.publish()
         return {"id": pid}
 
@@ -213,7 +220,14 @@ def create_app(db_path=None, secret=None, worker_port=None):
         # Đề đã có bài nộp thì không đổi nội dung/test: kết quả cũ sẽ không còn khớp đề. Ẩn/hiện vẫn dùng PATCH.
         if has_submissions(pid):
             raise HTTPException(409, "Đề đã có bài nộp nên không sửa được nội dung; hãy tạo đề mới")
-        update_problem(app.state.db, pid, checked(body))
+        problem = checked(body)
+        update_problem(
+            app.state.db, pid, problem,
+            audit_callback=lambda target_id: app.state.db.insert_admin_audit(
+                user["id"], "problem.update", "problem", target_id,
+                {"title": problem.title, "difficulty": problem.difficulty, "test_count": len(problem.tests)},
+            ),
+        )
         await app.state.hub.publish()
         return {"id": pid}
 

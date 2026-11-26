@@ -39,7 +39,7 @@ def check_size(problem):
     return problem
 
 
-def insert_problem(db, problem):
+def insert_problem(db, problem, audit_callback=None):
     with db.conn:
         pid = db.conn.execute(
             "INSERT INTO problems(title,statement,time_limit_ms,memory_limit_kib,hidden,difficulty) VALUES(?,?,?,?,?,?)",
@@ -48,10 +48,13 @@ def insert_problem(db, problem):
         ).lastrowid
         db.conn.executemany("INSERT INTO tests(problem_id,position,input,output,is_sample) VALUES(?,?,?,?,?)",
                             [(pid, i, t.input, t.output, t.is_sample) for i, t in enumerate(problem.tests)])
+        # Audit chạy trước commit để lỗi ghi log cũng hoàn tác đề và toàn bộ testcases.
+        if audit_callback is not None:
+            audit_callback(pid)
     return pid
 
 
-def update_problem(db, pid, problem):
+def update_problem(db, pid, problem, audit_callback=None):
     """Thay toàn bộ nội dung và bộ test của đề trong một transaction."""
     with db.conn:
         db.conn.execute("UPDATE problems SET title=?,statement=?,time_limit_ms=?,memory_limit_kib=?,hidden=?,difficulty=? "
@@ -60,3 +63,5 @@ def update_problem(db, pid, problem):
         db.conn.execute("DELETE FROM tests WHERE problem_id=?", (pid,))
         db.conn.executemany("INSERT INTO tests(problem_id,position,input,output,is_sample) VALUES(?,?,?,?,?)",
                             [(pid, i, t.input, t.output, t.is_sample) for i, t in enumerate(problem.tests)])
+        if audit_callback is not None:
+            audit_callback(pid)
