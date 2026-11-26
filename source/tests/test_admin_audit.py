@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 
 import pytest
 
@@ -165,3 +166,114 @@ def test_audit_api_permissions_cursor_and_persistence(tmp_path):
         assert reopened.one("SELECT COUNT(*) AS n FROM admin_audit_logs")["n"] == 5
     finally:
         reopened.conn.close()
+
+
+@pytest.mark.parametrize("before_id", ["0", "-1", "abc", "9223372036854775808"])
+def test_audit_cursor_rejects_invalid_sqlite_integers(tmp_path, before_id):
+    with system(tmp_path) as (client, app):
+        login(client, "admin")
+        assert client.get("/api/admin/audit-logs", params={"before_id": before_id}).status_code == 422
+        assert client.get("/api/admin/audit-logs", params={"before_id": "9223372036854775807"}).status_code == 200
+
+
+def test_concurrent_disable_during_password_hash_gets_enable_audit(tmp_path, monkeypatch):
+    import server.main as main
+
+    hashing_started = threading.Event()
+    release_hash = threading.Event()
+    original_hash = main.hash_password
+
+    def delayed_hash(password):
+        if password == "replacement-password":
+            hashing_started.set()
+            assert release_hash.wait(5)
+        return original_hash(password)
+
+    monkeypatch.setattr(main, "hash_password", delayed_hash)
+    with system(tmp_path) as (client, app):
+        login(client, "admin")
+        result = {}
+
+        def reset_password():
+            try:
+                result["response"] = client.patch(
+                    "/api/admin/users/2",
+                    json={"password": "replacement-password", "disabled": False},
+                )
+            except BaseException as exc:
+                result["error"] = exc
+
+        request_thread = threading.Thread(target=reset_password)
+        request_thread.start()
+        try:
+            assert hashing_started.wait(5)
+            # Connection thứ hai commit thao tác khóa khi request đang chờ scrypt.
+            with sqlite3.connect(tmp_path / "test.sqlite3", timeout=5) as other:
+                other.execute("UPDATE users SET disabled=1 WHERE id=2")
+        finally:
+            release_hash.set()
+            request_thread.join(10)
+
+        assert not request_thread.is_alive()
+        assert "error" not in result, result.get("error")
+        assert result["response"].status_code == 200
+        assert db_one(client, app, "SELECT disabled FROM users WHERE id=2")["disabled"] == 0
+        assert [row["action"] for row in audit_rows(client)] == [
+            "user.enable", "user.reset_password",
+        ]
+
+
+def test_create_user_rolls_back_when_audit_insert_fails(tmp_path):
+    with system(tmp_path) as (client, app):
+        login(client, "admin")
+        client.portal.call(lambda: app.state.db.execute("""
+            CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit_logs
+            BEGIN SELECT RAISE(ABORT, 'audit insert failed'); END
+        """))
+        with pytest.raises(sqlite3.IntegrityError, match="audit insert failed"):
+            client.post("/api/admin/users", json={
+                "username": "carol", "password": "password123", "role": "user",
+            })
+        assert db_one(client, app, "SELECT id FROM users WHERE username='carol'") is None
+        assert db_one(client, app, "SELECT COUNT(*) AS n FROM admin_audit_logs")["n"] == 0
+
+
+@pytest.mark.parametrize("initial_hidden,new_hidden", [(0, True), (1, False)])
+def test_visibility_rolls_back_when_audit_insert_fails(tmp_path, initial_hidden, new_hidden):
+    with system(tmp_path) as (client, app):
+        login(client, "admin")
+        client.portal.call(lambda: app.state.db.execute(
+            "UPDATE problems SET hidden=? WHERE id=1", (initial_hidden,)
+        ))
+        client.portal.call(lambda: app.state.db.execute("""
+            CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit_logs
+            BEGIN SELECT RAISE(ABORT, 'audit insert failed'); END
+        """))
+        with pytest.raises(sqlite3.IntegrityError, match="audit insert failed"):
+            client.patch("/api/admin/problems/1", json={"hidden": new_hidden})
+        assert db_one(client, app, "SELECT hidden FROM problems WHERE id=1")["hidden"] == initial_hidden
+        assert db_one(client, app, "SELECT COUNT(*) AS n FROM admin_audit_logs")["n"] == 0
+
+
+def test_second_audit_failure_rolls_back_password_disable_and_sessions(tmp_path):
+    with system(tmp_path) as (client, app):
+        login(client, "alice")
+        alice_cookie = client.cookies.get("session")
+        login(client, "admin")
+        original = db_one(client, app, "SELECT password_hash,disabled FROM users WHERE id=2")
+        sessions = db_one(client, app, "SELECT COUNT(*) AS n FROM sessions WHERE user_id=2")["n"]
+        client.portal.call(lambda: app.state.db.execute("""
+            CREATE TRIGGER fail_second_audit BEFORE INSERT ON admin_audit_logs
+            WHEN NEW.action='user.disable'
+            BEGIN SELECT RAISE(ABORT, 'second audit insert failed'); END
+        """))
+
+        with pytest.raises(sqlite3.IntegrityError, match="second audit insert failed"):
+            client.patch("/api/admin/users/2", json={
+                "password": "replacement-password", "disabled": True,
+            })
+
+        assert db_one(client, app, "SELECT password_hash,disabled FROM users WHERE id=2") == original
+        assert db_one(client, app, "SELECT COUNT(*) AS n FROM sessions WHERE user_id=2")["n"] == sessions
+        assert db_one(client, app, "SELECT COUNT(*) AS n FROM admin_audit_logs")["n"] == 0
+        assert client.get("/api/auth/me", headers={"Cookie": f"session={alice_cookie}"}).status_code == 200

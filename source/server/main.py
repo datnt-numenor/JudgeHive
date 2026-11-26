@@ -274,8 +274,13 @@ def create_app(db_path=None, secret=None, worker_port=None):
                 hashed = await asyncio.to_thread(hash_password, body.password)
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
-        disabled_changed = body.disabled is not None and bool(target["disabled"]) != body.disabled
         with app.state.db.conn:
+            # Khóa ghi sau khi scrypt hoàn tất để đọc trạng thái mới nhất và ghi audit cùng transaction.
+            app.state.db.conn.execute("BEGIN IMMEDIATE")
+            target = app.state.db.one("SELECT id,username,disabled FROM users WHERE id=?", (uid,))
+            if not target:
+                raise HTTPException(404, "Không tìm thấy tài khoản")
+            disabled_changed = body.disabled is not None and bool(target["disabled"]) != body.disabled
             if hashed is not None:
                 app.state.db.conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hashed, uid))
             if body.disabled is not None:
@@ -299,7 +304,7 @@ def create_app(db_path=None, secret=None, worker_port=None):
 
     @app.get("/api/admin/audit-logs")
     async def audit_logs(limit: int = Query(50, ge=1, le=100),
-                         before_id: int | None = Query(None, ge=1),
+                         before_id: int | None = Query(None, ge=1, le=9223372036854775807),
                          user=Depends(admin_user)):
         if before_id is None:
             return app.state.db.all(
